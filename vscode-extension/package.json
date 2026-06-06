@@ -1,0 +1,43 @@
+{
+  "name": "claude-theater",
+  "displayName": "Claude Theater",
+  "description": "A live, grouped office of your Claude Code subagents — inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "asafabram-ship-it",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/asafabram-ship-it/claude-theater" },
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Visualization", "Other"],
+  "keywords": ["claude", "claude code", "agents", "subagents", "visualization"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeTheater.open",
+        "title": "Open Theater",
+        "category": "Claude Theater"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Theater",
+      "properties": {
+        "claudeTheater.port": {
+          "type": "number",
+          "default": 7333,
+          "description": "Port the Claude Theater server listens on (127.0.0.1)."
+        },
+        "claudeTheater.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "If the server isn't already running, start it automatically with `python -m claude_theater`."
+        },
+        "claudeTheater.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Python interpreter used to auto-start the server. Empty = try `python`, then `py`, then `python3`."
+        }
+      }
+    }
+  }
+}

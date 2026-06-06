@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Internal launch/strategy notes — must NOT ship to a public repo.
+# Remove this line if you decide to keep it in the private repo.
+DISTRIBUTION.md

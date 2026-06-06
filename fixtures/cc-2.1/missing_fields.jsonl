@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"sess-cccc-3333","timestamp":"2026-06-01T13:00:00.000Z","cwd":"/home/dev/demo-project","version":"2.1.0","message":{"content":""}}
+{"type":"assistant","timestamp":"2026-06-01T13:00:01.000Z","version":"2.1.0","message":{"content":[{"type":"tool_use","name":"Read"}]}}

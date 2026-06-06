@@ -1,0 +1,6 @@
+{"type":"user","agentId":"fixture-run-0001","sessionId":"sess-aaaa-1111","timestamp":"2026-06-01T10:00:00.000Z","cwd":"/home/dev/demo-project","version":"2.1.0","message":{"content":"Find all TODO comments in the repo and summarize them."}}
+{"type":"attachment","timestamp":"2026-06-01T10:00:00.500Z","version":"2.1.0"}
+{"type":"assistant","timestamp":"2026-06-01T10:00:02.000Z","version":"2.1.0","message":{"content":[{"type":"text","text":"I'll search the codebase for TODO markers."}]}}
+{"type":"assistant","timestamp":"2026-06-01T10:00:03.000Z","version":"2.1.0","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"TODO"}}]}}
+{"type":"user","timestamp":"2026-06-01T10:00:04.000Z","version":"2.1.0","message":{"content":[{"type":"tool_result","content":"12 matches"}]}}
+{"type":"assistant","timestamp":"2026-06-01T10:00:05.000Z","version":"2.1.0","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/app.py"}}]}}

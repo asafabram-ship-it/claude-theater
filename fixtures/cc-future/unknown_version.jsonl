@@ -1,0 +1,2 @@
+{"type":"user","agentId":"fixture-ver-0004","sessionId":"sess-dddd-4444","timestamp":"2026-06-01T14:00:00.000Z","cwd":"/home/dev/demo-project","version":"3.5.0","message":{"content":"A task recorded by an untested future Claude Code build."}}
+{"type":"assistant","timestamp":"2026-06-01T14:00:01.000Z","version":"3.5.0","message":{"content":[{"type":"text","text":"Finished."}],"stop_reason":"end_turn"}}

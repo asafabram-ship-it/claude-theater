@@ -37,5 +37,5 @@ SemVer policy for this tool:
 - Packaging for PyPI/pipx (`claude-theater` / `python -m claude_theater`) and
   CI across Windows/macOS/Linux × Python 3.9–3.13.
 
-[Unreleased]: https://github.com/asafabram/claude-theater/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/asafabram/claude-theater/releases/tag/v0.1.0
+[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/asafabram-ship-it/claude-theater/releases/tag/v0.1.0

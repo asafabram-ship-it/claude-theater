@@ -32,9 +32,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-# TODO(asaf): confirm the GitHub owner/repo before the first public release.
-Homepage = "https://github.com/asafabram/claude-theater"
-Issues = "https://github.com/asafabram/claude-theater/issues"
+Homepage = "https://github.com/asafabram-ship-it/claude-theater"
+Issues = "https://github.com/asafabram-ship-it/claude-theater/issues"
 
 [project.scripts]
 claude-theater = "claude_theater:main"

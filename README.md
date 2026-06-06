@@ -5,9 +5,8 @@
 
 **Watch your Claude Code subagents work — a live office for every conversation.**
 
-<!-- Absolute raw URL so the image renders on PyPI too (relative paths don't).
-     Update the owner/repo if it differs from asafabram/claude-theater. -->
-<img src="https://raw.githubusercontent.com/asafabram/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
+<!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
+<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
 
 <sub>The demo office (`claude-theater --demo`). A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
 

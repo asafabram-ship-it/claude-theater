@@ -9,10 +9,11 @@ and serves a small web page. Agents are grouped into a "room" per conversation
 timer. Click a character to see its full task and full result. Finished agents
 are hidden by default (a count stays in the room header).
 
-Run:  python theater.py     (start.cmd does this and opens the browser)
+Run:  python -m claude_theater     (start.cmd does this and opens the browser)
+  or: claude-theater                (after pip/pipx install)
 Then: http://localhost:7333
 
-Pure stdlib. No pip installs.
+Pure stdlib. No pip installs needed to run.
 """
 import json
 import os
@@ -20,6 +21,8 @@ import glob
 import time
 import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+__version__ = "0.1.0"
 
 PORT = 7333
 MAX_AGE_MIN = 180          # only show agents whose file changed in the last N minutes
@@ -695,12 +698,22 @@ def main():
     if not os.path.isdir(PROJECTS_DIR):
         print("!! projects dir not found:", PROJECTS_DIR)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print("Claude Theater -> http://localhost:%d   (Ctrl+C to stop)" % PORT)
+    url = "http://localhost:%d" % PORT
+    print("Claude Theater %s -> %s   (Ctrl+C to stop)" % (__version__, url))
     print("Watching:", PROJECTS_DIR)
+    # Open the browser only after the socket is bound (no first-load race), and
+    # so pipx/pip users get the same one-click UX as start.cmd. Set
+    # CLAUDE_THEATER_NO_BROWSER=1 to skip (e.g. headless / CI).
+    if not os.environ.get("CLAUDE_THEATER_NO_BROWSER"):
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\\nbye")
+        print("\nbye")
 
 
 if __name__ == "__main__":

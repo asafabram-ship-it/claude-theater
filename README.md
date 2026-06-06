@@ -27,18 +27,31 @@ quietly steps off the floor (a count stays in the room header).
 
 The UI is **bilingual** — English by default, Hebrew one click away (the choice
 is remembered, and the layout flips to RTL). Adding another language is a single
-edit to the `I18N` table in `theater.py`; the server stays language-neutral.
+edit to the `I18N` table in `claude_theater.py`; the server stays language-neutral.
 
 ## Quick start
 
-No installs, pure Python standard library.
+Zero install — run it straight from PyPI with [pipx](https://pipx.pypa.io/):
 
 ```bash
-python theater.py
+pipx run claude-theater
 ```
 
-Then open **http://localhost:7333**. On Windows you can just run `start.cmd`,
-which launches the server and opens your browser.
+Or install it:
+
+```bash
+pipx install claude-theater   # or: pip install claude-theater
+claude-theater
+```
+
+Or run from a clone (pure standard library, nothing to install):
+
+```bash
+python -m claude_theater
+```
+
+Then open **http://localhost:7333**. On Windows you can also just run
+`start.cmd`, which launches the server and opens your browser.
 
 > Requires Python 3.9+ and a Claude Code install that writes journals under
 > `~/.claude/projects/`.

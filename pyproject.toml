@@ -1,0 +1,68 @@
+[build-system]
+# >=1.27 guarantees PEP 639 (License-Expression + License-File) emission.
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claude-theater"
+dynamic = ["version"]
+description = "Watch your Claude Code subagents work — a live office for every conversation."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Asaf Abramzon", email = "asafabram@gmail.com" }]
+keywords = ["claude", "claude-code", "subagents", "agents", "visualizer", "dashboard", "dev-tools"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+# Pure standard library — no runtime dependencies.
+dependencies = []
+
+[project.urls]
+# TODO(asaf): confirm the GitHub owner/repo before the first public release.
+Homepage = "https://github.com/asafabram/claude-theater"
+Issues = "https://github.com/asafabram/claude-theater/issues"
+
+[project.scripts]
+claude-theater = "claude_theater:main"
+
+# Version is the single source of truth in claude_theater.py (__version__).
+[tool.hatch.version]
+path = "claude_theater.py"
+
+# Single top-level module — ship exactly that one file in the wheel.
+[tool.hatch.build.targets.wheel]
+include = ["claude_theater.py"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "claude_theater.py",
+    "start.cmd",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "tests/",
+    "fixtures/",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+# Catch real bugs (pyflakes + syntax), not style bikeshedding.
+select = ["E9", "F"]

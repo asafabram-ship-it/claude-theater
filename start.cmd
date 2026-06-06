@@ -1,5 +1,5 @@
 @echo off
-REM Launch Agent Theater and open it in the browser.
+REM Launch Claude Theater. The app opens the browser itself once the
+REM server is listening (no first-load race).
 cd /d "%~dp0"
-start "" http://localhost:7333
-python theater.py
+python -m claude_theater

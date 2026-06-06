@@ -18,7 +18,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-import theater  # noqa: E402
+import claude_theater as theater  # noqa: E402
 
 FIX = os.path.join(ROOT, "fixtures")
 

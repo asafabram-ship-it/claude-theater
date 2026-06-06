@@ -28,35 +28,23 @@ RUNNING_STALE_SEC = 90     # a "running" agent untouched this long is shown as i
 PROJECTS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 
 # Claude Code versions this parser was tested against (major.minor only).
-# Any other version seen at runtime raises a non-blocking banner.
+# Any other version seen at runtime raises a non-blocking banner (text built in
+# the browser, per the active language).
 KNOWN_CC_VERSIONS = ("2.1",)
-# Shown when an agent's first record carries no usable task description.
-UNKNOWN_TASK = "עובד — פרטים לא זמינים"
 
-PERSONAS = [
-    ("הבלש", "🕵️"), ("הסופר", "✍️"), ("השליח", "🏃"), ("החוקר", "🔬"),
-    ("הספרן", "📚"), ("הנווט", "🧭"), ("הצופה", "🔭"), ("הבנאי", "🔨"),
-    ("הקוסם", "🪄"), ("הצייד", "🎯"), ("הינשוף", "🦉"), ("השועל", "🦊"),
-    ("הדבורה", "🐝"), ("הרובוט", "🤖"), ("הנמר", "🐯"), ("הנשר", "🦅"),
-]
-
-TOOL_ACTIVITY = {
-    "WebSearch": "🔍 מחפש", "WebFetch": "🌐 קורא דף", "Read": "📖 קורא",
-    "Edit": "✏️ עורך", "Write": "✏️ כותב", "NotebookEdit": "✏️ מחברת",
-    "Bash": "⚙️ פקודה", "PowerShell": "⚙️ פקודה", "Grep": "🔎 מחפש קוד",
-    "Glob": "🔎 קבצים", "Task": "👥 סוכן", "Agent": "👥 סוכן",
-    "TodoWrite": "📝 משימות", "Skill": "🧩 מיומנות", "StructuredOutput": "🧾 מסכם",
-}
-DEFAULT_ACTIVITY = "🤔 חושב"
-DONE_ACTIVITY = "✅ סיים"
-STALE_ACTIVITY = "💤 ממתין"
+# Persona emojis, index-aligned with the client-side name tables (PERSONAS_EN /
+# PERSONAS_HE in PAGE). The server emits a persona_id; the browser localizes the
+# name. Activity labels and the "task unavailable" placeholder are also localized
+# client-side -- Python emits only language-neutral data and stable keys.
+PERSONA_EMOJI = ["🕵️", "✍️", "🏃", "🔬", "📚", "🧭", "🔭", "🔨",
+                 "🪄", "🎯", "🦉", "🦊", "🐝", "🤖", "🐯", "🦅"]
 
 
-def persona_for(agent_id):
+def persona_index(agent_id):
     h = 0
-    for ch in agent_id:
+    for ch in (agent_id or ""):
         h = (h * 31 + ord(ch)) & 0xFFFFFFFF
-    return PERSONAS[h % len(PERSONAS)]
+    return h % len(PERSONA_EMOJI)
 
 
 def iso_to_ms(s):
@@ -194,13 +182,16 @@ def major_minor(version):
     return ".".join(parts[:2]) if len(parts) >= 2 else (version or "")
 
 
-def version_banner(versions):
-    """Non-blocking banner text when a version outside KNOWN_CC_VERSIONS appears."""
-    unknown = sorted({major_minor(v) for v in versions if major_minor(v) not in KNOWN_CC_VERSIONS})
-    if not unknown:
-        return None
-    return ("נבדק עד Claude Code %s · זוהתה גרסה %s — ייתכן שהתצוגה חלקית"
-            % (KNOWN_CC_VERSIONS[-1], ", ".join(unknown)))
+def unknown_versions(versions):
+    """The major.minor versions seen at runtime that we have NOT tested against.
+    The browser turns this list into a localized, non-blocking banner. Blank /
+    unparseable stamps are dropped so the banner never shows 'detected ' empty."""
+    out = set()
+    for v in versions:
+        mm = major_minor(v)
+        if mm and mm not in KNOWN_CC_VERSIONS:
+            out.add(mm)
+    return sorted(out)
 
 
 _NAME_CACHE = {}  # parent_file -> (mtime, {prompt: {description, subagent_type}})
@@ -316,22 +307,23 @@ def scan_agents():
         tool = last_tool_use_name(events)
 
         if is_done:
-            status, activity = "done", DONE_ACTIVITY
+            status = "done"
         elif (now - mtime) > RUNNING_STALE_SEC:
-            status, activity = "stale", STALE_ACTIVITY
+            status = "stale"
         else:
-            status, activity = "running", TOOL_ACTIVITY.get(tool, DEFAULT_ACTIVITY)
+            status = "running"
 
-        name, emoji = persona_for(agent_id)
+        pid = persona_index(agent_id)
         info = name_map_for(parent_session_file(path, session)).get(task.strip()) if task.strip() else None
-        # degrade-not-crash: an agent with no readable task still shows up.
-        task_disp = task if task.strip() else UNKNOWN_TASK
+        # Language-neutral payload only: the browser localizes persona name,
+        # activity label and the placeholder for an agent with no readable task
+        # (degrade-not-crash -- it still shows up, just with a generic label).
         agents.append({
-            "id": agent_id, "name": name, "emoji": emoji,
+            "id": agent_id, "persona_id": pid, "emoji": PERSONA_EMOJI[pid],
             "role": info["description"] if info else "",
             "subagent_type": info["subagent_type"] if info else "",
-            "status": status, "activity": activity, "tool": tool or "",
-            "task": task_disp, "task_short": short_task(task_disp), "result": result,
+            "status": status, "tool": tool or "",
+            "task": task, "task_short": short_task(task), "result": result,
             "start_ms": start_ms, "end_ms": end_ms,
             "session": session[:8], "session_full": session,
             "cwd": first_ev.raw.get("cwd", ""), "mtime_ms": int(mtime * 1000),
@@ -341,18 +333,24 @@ def scan_agents():
     agents.sort(key=lambda a: (order.get(a["status"], 3), -(a["start_ms"] or 0)))
     return {
         "agents": agents,
+        # "versions" (full set seen) and "skipped" (malformed-line count) are
+        # diagnostic/reserved -- not consumed by the current UI, kept for debugging
+        # and possible future surfacing. The UI uses unknown_versions/tested_version.
         "versions": sorted(versions),
-        "banner": version_banner(versions),
+        "tested_version": KNOWN_CC_VERSIONS[-1],
+        "unknown_versions": unknown_versions(versions),
         "skipped": skipped,
     }
 
 
 PAGE = """<!DOCTYPE html>
-<html lang="he" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>משרד הסוכנים</title>
+<title>Claude Theater</title>
+<script>try{var L=localStorage.getItem("ct_lang")||"en";if(L!=="en"&&L!=="he")L="en";
+  document.documentElement.lang=L; document.documentElement.dir=(L==="he")?"rtl":"ltr";}catch(e){}</script>
 <style>
   :root{ color-scheme:dark; }
   *{ box-sizing:border-box; }
@@ -362,13 +360,16 @@ PAGE = """<!DOCTYPE html>
           border-bottom:1px solid #1d2746; position:sticky; top:0; z-index:40;
           background:rgba(8,11,22,.85); backdrop-filter:blur(8px); }
   header h1{ font-size:17px; margin:0; }
-  .counts span{ display:inline-block; padding:2px 10px; border-radius:999px; margin-left:6px; font-size:12px; }
+  .counts span{ display:inline-block; padding:2px 10px; border-radius:999px; margin-inline-start:6px; font-size:12px; }
   .c-run{ background:#16331f; color:#7ee29a; } .c-done{ background:#262b46; color:#9fb0e6; }
   .spacer{ flex:1; }
   header label{ font-size:12.5px; color:#a8b2da; display:flex; align-items:center; gap:6px; cursor:pointer; }
   .banner{ margin:0; padding:7px 20px; font-size:12.5px; text-align:center;
            background:#3a2d12; color:#e6c98a; border-bottom:1px solid #5a4a20; }
   .banner[hidden]{ display:none; }
+  #langBtn{ font-size:12px; background:#1a2138; border:1px solid #2a345c; color:#cdd6f6;
+            border-radius:8px; padding:4px 11px; cursor:pointer; }
+  #langBtn:hover{ background:#222a47; }
 
   #app{ padding:16px 18px 60px; display:flex; flex-direction:column; gap:14px; }
   .empty{ text-align:center; color:#6b78a8; font-size:15px; padding:60px 10px; }
@@ -376,7 +377,7 @@ PAGE = """<!DOCTYPE html>
   .room{ background:linear-gradient(180deg,#121a30,#0e1426); border:1px solid #20294a; border-radius:14px; overflow:hidden; }
   .rh{ display:flex; align-items:center; gap:10px; padding:8px 14px; background:rgba(255,255,255,.03);
        border-bottom:1px solid #1b2440; font-size:12.5px; }
-  .rt{ font-weight:700; color:#e2e8ff; } .rt small{ color:#7886b6; font-weight:400; margin-right:6px; }
+  .rt{ font-weight:700; color:#e2e8ff; } .rt small{ color:#7886b6; font-weight:400; margin-inline-start:6px; }
   .rc{ color:#9aa6d4; display:flex; gap:9px; }
   .rc b{ color:#7ee29a; } .rc i{ font-style:normal; color:#e0c07e; } .rc u{ text-decoration:none; color:#8f9ccb; }
   .floor{ display:flex; flex-wrap:wrap; gap:4px; padding:13px 12px 16px;
@@ -442,9 +443,13 @@ PAGE = """<!DOCTYPE html>
            border-left:1px solid #243056; box-shadow:-12px 0 40px rgba(0,0,0,.5); transform:translateX(105%);
            transition:transform .26s cubic-bezier(.3,.9,.3,1); display:flex; flex-direction:column; }
   #drawer.open{ transform:translateX(0); }
+  /* In RTL (Hebrew) the side panel mirrors to the left edge. */
+  html[dir="rtl"] #drawer{ right:auto; left:0; border-left:0; border-right:1px solid #243056;
+                           box-shadow:12px 0 40px rgba(0,0,0,.5); transform:translateX(-105%); }
+  html[dir="rtl"] #drawer.open{ transform:translateX(0); }
   .dhead{ display:flex; align-items:center; gap:12px; padding:16px 16px 12px; border-bottom:1px solid #1d2746; }
   .dhead .av{ font-size:34px; } .dhead .nm{ font-size:17px; font-weight:700; } .dhead .ro{ font-size:12px; color:#9aa6d4; margin-top:2px; }
-  #dclose{ margin-right:auto; background:#1a2138; border:1px solid #2a345c; color:#cdd6f6; border-radius:8px; width:30px; height:30px; cursor:pointer; }
+  #dclose{ margin-inline-start:auto; background:#1a2138; border:1px solid #2a345c; color:#cdd6f6; border-radius:8px; width:30px; height:30px; cursor:pointer; }
   #dbody{ padding:14px 16px; overflow:auto; }
   #dbody .row{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
   #dbody .chip{ font-size:11px; padding:3px 9px; border-radius:999px; background:#1a2138; color:#aeb9e6; border:1px solid #283156; }
@@ -456,13 +461,14 @@ PAGE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>🏢 משרד הסוכנים</h1>
+  <h1 id="h1">🏢 Claude Theater</h1>
   <div class="counts" id="counts"></div>
   <div class="spacer"></div>
-  <label><input type="checkbox" id="showDone"> הצג שהושלמו</label>
+  <button id="langBtn" type="button">עברית</button>
+  <label><input type="checkbox" id="showDone"> <span id="showDoneLbl">Show finished</span></label>
 </header>
 <div id="banner" class="banner" hidden></div>
-<div id="app"><div class="empty">המשרד ריק… הפעילו סוכן ב-Claude Code. 🚪</div></div>
+<div id="app"><div class="empty" data-boot="1">The office is empty… start an agent in Claude Code. 🚪</div></div>
 
 <div id="backdrop"></div>
 <aside id="drawer">
@@ -477,9 +483,62 @@ const POLL_MS=1500;
 const rooms={};   // session_full -> {section, floor, rt, rc}
 const els={};     // id -> {root, refs, data, status}
 const prevStatus={};
-let audioCtx=null, showDone=false, openId=null;
+let audioCtx=null, showDone=false, openId=null, openData=null;
 
-function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+// ---- i18n: the browser owns every display string in both languages. ----
+// To add a language, add an entry here (and personas/tools tables) -- nothing
+// in Python needs to change. Persona names are index-aligned with PERSONA_EMOJI.
+const PERSONAS_EN=["The Detective","The Writer","The Courier","The Researcher","The Librarian","The Navigator","The Scout","The Builder","The Wizard","The Marksman","The Owl","The Fox","The Bee","The Robot","The Tiger","The Eagle"];
+const PERSONAS_HE=["הבלש","הסופר","השליח","החוקר","הספרן","הנווט","הצופה","הבנאי","הקוסם","הצייד","הינשוף","השועל","הדבורה","הרובוט","הנמר","הנשר"];
+const TOOLS_EN={WebSearch:"🔍 Searching",WebFetch:"🌐 Reading page",Read:"📖 Reading",Edit:"✏️ Editing",Write:"✏️ Writing",NotebookEdit:"✏️ Notebook",Bash:"⚙️ Command",PowerShell:"⚙️ Command",BashOutput:"⚙️ Output",KillShell:"⚙️ Command",Grep:"🔎 Searching code",Glob:"🔎 Files",Task:"👥 Subagent",Agent:"👥 Subagent",TodoWrite:"📝 Todos",Skill:"🧩 Skill",ExitPlanMode:"📋 Plan",StructuredOutput:"🧾 Summarizing"};
+const TOOLS_HE={WebSearch:"🔍 מחפש",WebFetch:"🌐 קורא דף",Read:"📖 קורא",Edit:"✏️ עורך",Write:"✏️ כותב",NotebookEdit:"✏️ מחברת",Bash:"⚙️ פקודה",PowerShell:"⚙️ פקודה",BashOutput:"⚙️ פלט",KillShell:"⚙️ פקודה",Grep:"🔎 מחפש קוד",Glob:"🔎 קבצים",Task:"👥 סוכן",Agent:"👥 סוכן",TodoWrite:"📝 משימות",Skill:"🧩 מיומנות",ExitPlanMode:"📋 תכנון",StructuredOutput:"🧾 מסכם"};
+const I18N={
+  en:{ appTitle:"🏢 Claude Theater", docTitle:"Claude Theater", showDone:"Show finished", switchTo:"עברית",
+       emptyOffice:"The office is empty… start an agent in Claude Code. 🚪",
+       emptyNoActive:'No active agents. Tick "Show finished" to see history.',
+       emptyNoneInWindow:"No agents in the time window.",
+       working:"working", finished:"finished",
+       dWorking:"Working", dDone:"Done", dStale:"Idle",
+       dDuration:"Duration ", dElapsed:"Elapsed ",
+       dAction:"Activity", dTask:"Task", dResult:"Result",
+       taskUnavailable:"working — details unavailable",
+       actDone:"✅ Done", actStale:"💤 Idle", actThinking:"🤔 Thinking", actMcp:"🔌 MCP tool",
+       personas:PERSONAS_EN, tools:TOOLS_EN,
+       banner:function(tv,sv){ return "⚠ Tested up to Claude Code "+tv+" · detected "+sv+" — display may be partial"; } },
+  he:{ appTitle:"🏢 משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו", switchTo:"English",
+       emptyOffice:"המשרד ריק… הפעילו סוכן ב-Claude Code. 🚪",
+       emptyNoActive:'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',
+       emptyNoneInWindow:"אין סוכנים בחלון הזמן.",
+       working:"עובדים", finished:"סיימו",
+       dWorking:"עובד", dDone:"סיים", dStale:"ממתין",
+       dDuration:"משך ", dElapsed:"זמן ",
+       dAction:"פעולה", dTask:"משימה", dResult:"תוצאה",
+       taskUnavailable:"עובד — פרטים לא זמינים",
+       actDone:"✅ סיים", actStale:"💤 ממתין", actThinking:"🤔 חושב", actMcp:"🔌 כלי MCP",
+       personas:PERSONAS_HE, tools:TOOLS_HE,
+       banner:function(tv,sv){ return "⚠ נבדק עד Claude Code "+tv+" · זוהתה גרסה "+sv+" — ייתכן שהתצוגה חלקית"; } }
+};
+let lang=(function(){ try{ var L=localStorage.getItem("ct_lang"); return (L==="he"||L==="en")?L:"en"; }catch(e){ return "en"; } })();
+function t(k){ const v=I18N[lang][k]; return (v!==undefined&&v!==null)?v:((I18N.en[k]!==undefined)?I18N.en[k]:k); }
+function personaName(a){ const p=I18N[lang].personas; return (a&&typeof a.persona_id==="number"&&p[a.persona_id])||(lang==="he"?"סוכן":"Agent"); }
+function activityLabel(a){ const L=I18N[lang];
+  if(a.status==="done") return L.actDone;
+  if(a.status==="stale") return L.actStale;
+  if(a.tool&&a.tool.indexOf("mcp__")===0) return L.actMcp;
+  return L.tools[a.tool]||L.actThinking; }
+function bannerText(tv,sv){ return I18N[lang].banner(tv,sv); }
+function applyLang(){ const el=document.documentElement; el.lang=lang; el.dir=(lang==="he")?"rtl":"ltr";
+  document.getElementById("h1").textContent=t("appTitle");
+  document.getElementById("showDoneLbl").textContent=t("showDone");
+  document.getElementById("langBtn").textContent=t("switchTo");
+  document.title=t("docTitle");
+  const boot=document.querySelector('#app .empty[data-boot]'); if(boot) boot.textContent=t("emptyOffice");
+  // The drawer is the one surface render() may not refresh (an open 'done' agent
+  // can be filtered out of the floor), so re-translate it directly from cached data.
+  if(openId&&openData) fillDrawer(openData); }
+function setLang(l){ lang=(l==="he")?"he":"en"; try{ localStorage.setItem("ct_lang",lang); }catch(e){} applyLang(); poll(); }
+
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function fmt(ms){ if(ms==null||ms<0) return "--:--"; const s=Math.floor(ms/1000),m=Math.floor(s/60),x=s%60;
   return String(m).padStart(2,"0")+":"+String(x).padStart(2,"0"); }
 function baseName(p){ return (p||"").replace(/[\\\\/]+$/,"").split(/[\\\\/]/).pop()||"—"; }
@@ -516,13 +575,13 @@ function createWS(a){ const root=document.createElement("div"); root.className="
 function updateWS(e,a){ e.data=a;
   if(e.status!==a.status) e.root.className="ws "+a.status;
   e.refs.head.textContent=a.emoji;
-  e.refs.name.textContent=a.role||a.name; e.refs.name.title=a.role||a.name;
-  e.refs.act.textContent=a.activity;
+  const nm=a.role||personaName(a); e.refs.name.textContent=nm; e.refs.name.title=nm;
+  e.refs.act.textContent=activityLabel(a);
   e.refs.timer.dataset.start=a.start_ms||0; e.refs.timer.dataset.end=a.end_ms||0; e.refs.timer.dataset.status=a.status;
   if(prevStatus[a.id] && prevStatus[a.id]!=="done" && a.status==="done"){
     e.root.classList.add("justdone"); confetti(e.root); ding(); setTimeout(()=>e.root.classList.remove("justdone"),900); }
   prevStatus[a.id]=a.status; e.status=a.status;
-  if(openId===a.id) fillDrawer(a); }
+  if(openId===a.id){ openData=a; fillDrawer(a); } }
 
 function ensureRoom(sess){ let r=rooms[sess]; if(r) return r;
   const section=document.createElement("section"); section.className="room";
@@ -533,7 +592,8 @@ function ensureRoom(sess){ let r=rooms[sess]; if(r) return r;
 function render(payload){
   const all=(payload&&payload.agents)||[];
   const bn=document.getElementById("banner");
-  if(payload&&payload.banner){ bn.textContent="⚠ "+payload.banner; bn.hidden=false; }
+  const uv=(payload&&payload.unknown_versions)||[];
+  if(uv.length){ bn.textContent=bannerText((payload.tested_version||""),uv.join(", ")); bn.hidden=false; }
   else bn.hidden=true;
   const app=document.getElementById("app");
   const em=app.querySelector(".empty"); if(em) em.remove();
@@ -562,38 +622,39 @@ function render(payload){
 
   for(const s in rooms){ if(!sess.includes(s)){ rooms[s].section.remove(); delete rooms[s]; } }
   if(!visible.length){ const d=document.createElement("div"); d.className="empty";
-    d.textContent=showDone?"אין סוכנים בחלון הזמן.":"אין סוכנים פעילים. סמנו \\"הצג שהושלמו\\" כדי לראות היסטוריה."; app.appendChild(d); }
+    d.textContent=showDone?t("emptyNoneInWindow"):t("emptyNoActive"); app.appendChild(d); }
 
   const run=all.filter(a=>a.status==="running").length, done=all.filter(a=>a.status==="done").length;
-  document.getElementById("counts").innerHTML='<span class="c-run">🟢 '+run+' עובדים</span><span class="c-done">✅ '+done+' סיימו</span>';
+  document.getElementById("counts").innerHTML='<span class="c-run">🟢 '+run+' '+t("working")+'</span><span class="c-done">✅ '+done+' '+t("finished")+'</span>';
 }
 
 function fillDrawer(a){ document.getElementById("dav").textContent=a.emoji;
-  document.getElementById("dnm").textContent=a.name; document.getElementById("dro").textContent=a.role||a.task_short||"";
+  document.getElementById("dnm").textContent=personaName(a); document.getElementById("dro").textContent=a.role||a.task_short||"";
   const now=Date.now(); const dur=(a.status==="done"&&a.end_ms)?(a.end_ms-a.start_ms):(now-(a.start_ms||now));
-  const stx=a.status==="running"?"עובד":a.status==="done"?"סיים":"ממתין";
+  const stx=a.status==="running"?t("dWorking"):a.status==="done"?t("dDone"):t("dStale");
   let h='<div class="row"><span class="chip">'+esc(stx)+'</span>'+
     (a.subagent_type?'<span class="chip">'+esc(a.subagent_type)+'</span>':'')+
-    '<span class="chip">'+(a.status==="done"?"משך ":"זמן ")+fmt(dur)+'</span>'+
+    '<span class="chip">'+(a.status==="done"?t("dDuration"):t("dElapsed"))+fmt(dur)+'</span>'+
     (a.tool?'<span class="chip">'+esc(a.tool)+'</span>':'')+'</div>';
-  h+='<h3>פעולה</h3><div class="box">'+esc(a.activity)+'</div>';
-  h+='<h3>משימה</h3><div class="box ltr">'+esc(a.task||"(אין)")+'</div>';
-  if(a.result) h+='<h3>תוצאה</h3><div class="box ltr">'+esc(a.result)+'</div>';
+  h+='<h3>'+esc(t("dAction"))+'</h3><div class="box">'+esc(activityLabel(a))+'</div>';
+  h+='<h3>'+esc(t("dTask"))+'</h3><div class="box ltr">'+esc(a.task||t("taskUnavailable"))+'</div>';
+  if(a.result) h+='<h3>'+esc(t("dResult"))+'</h3><div class="box ltr">'+esc(a.result)+'</div>';
   document.getElementById("dbody").innerHTML=h; }
-function openDrawer(id){ const e=els[id]; if(!e) return; openId=id; fillDrawer(e.data);
+function openDrawer(id){ const e=els[id]; if(!e) return; openId=id; openData=e.data; fillDrawer(e.data);
   document.getElementById("drawer").classList.add("open"); document.getElementById("backdrop").classList.add("show"); }
-function closeDrawer(){ openId=null; document.getElementById("drawer").classList.remove("open"); document.getElementById("backdrop").classList.remove("show"); }
+function closeDrawer(){ openId=null; openData=null; document.getElementById("drawer").classList.remove("open"); document.getElementById("backdrop").classList.remove("show"); }
 document.getElementById("dclose").addEventListener("click",closeDrawer);
 document.getElementById("backdrop").addEventListener("click",closeDrawer);
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeDrawer(); });
 document.getElementById("showDone").addEventListener("change",e=>{ showDone=e.target.checked; poll(); });
+document.getElementById("langBtn").addEventListener("click",()=>setLang(lang==="en"?"he":"en"));
 
 setInterval(()=>{ const now=Date.now(); document.querySelectorAll(".timer").forEach(el=>{
   const s=+el.dataset.start,en=+el.dataset.end,st=el.dataset.status; if(!s) return;
   el.textContent=fmt((st==="done"&&en)?(en-s):(now-s)); }); },1000);
 
 async function poll(){ try{ const r=await fetch("/api/agents",{cache:"no-store"}); render(await r.json()); }catch(e){} }
-poll(); setInterval(poll,POLL_MS);
+applyLang(); poll(); setInterval(poll,POLL_MS);
 function unlock(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){} }
 window.addEventListener("click",unlock,{once:true}); window.addEventListener("keydown",unlock,{once:true});
 </script>
@@ -619,7 +680,10 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = json.dumps(scan_agents(), ensure_ascii=False)
             except Exception as e:
-                body = json.dumps({"error": str(e)})
+                # Keep detail server-side only; the response can reach a local
+                # process or a pasted screenshot, and str(e) may embed the home path.
+                print("!! scan error:", repr(e))
+                body = json.dumps({"error": "scan failed"})
             self._send(200, body, "application/json; charset=utf-8")
         elif self.path == "/" or self.path.startswith("/index"):
             self._send(200, PAGE, "text/html; charset=utf-8")

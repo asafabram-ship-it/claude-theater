@@ -12,6 +12,8 @@ Run:  python -m unittest discover -s tests      (no dependencies)
 import os
 import sys
 import glob
+import shutil
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +21,17 @@ sys.path.insert(0, ROOT)
 import theater  # noqa: E402
 
 FIX = os.path.join(ROOT, "fixtures")
+
+# The frozen client<->server contract. The browser indexes agents by exactly
+# these keys (persona_id, tool, status, task...) and the payload by these.
+# A rename or an accidental re-add of a legacy field must fail loudly here.
+AGENT_KEYS = {
+    "id", "persona_id", "emoji", "role", "subagent_type", "status", "tool",
+    "task", "task_short", "result", "start_ms", "end_ms", "session",
+    "session_full", "cwd", "mtime_ms",
+}
+PAYLOAD_KEYS = {"agents", "versions", "tested_version", "unknown_versions", "skipped"}
+LEGACY_FIELDS = ("name", "activity", "banner")  # removed in the bilingual refactor
 
 
 def load_lines(rel):
@@ -111,17 +124,80 @@ class MissingFieldsFixture(unittest.TestCase):
 
 
 class VersionBanner(unittest.TestCase):
-    def test_known_version_no_banner(self):
-        self.assertIsNone(theater.version_banner({"2.1.0", "2.1.158"}))
+    def test_known_version_no_unknowns(self):
+        self.assertEqual(theater.unknown_versions({"2.1.0", "2.1.158"}), [])
 
-    def test_unknown_version_raises_banner(self):
+    def test_unknown_version_reported(self):
         _, _, versions = theater.parse_events(load_lines("cc-future/unknown_version.jsonl"))
         self.assertTrue(versions)
-        self.assertIsNotNone(theater.version_banner(versions))
+        self.assertEqual(theater.unknown_versions(versions), ["3.5"])
 
     def test_major_minor_grouping(self):
         self.assertEqual(theater.major_minor("2.1.158"), "2.1")
         self.assertEqual(theater.major_minor("3.5.0"), "3.5")
+
+    def test_major_minor_edge_strings(self):
+        self.assertEqual(theater.major_minor("2"), "2")
+        self.assertEqual(theater.major_minor("2.1.158.3"), "2.1")
+        self.assertEqual(theater.major_minor(""), "")
+        self.assertEqual(theater.major_minor(None), "")
+
+    def test_unknown_versions_drops_blanks(self):
+        # blank / None stamps must never reach the banner as "detected "
+        self.assertEqual(theater.unknown_versions({"", None}), [])
+        self.assertEqual(theater.unknown_versions({"2.1.0", "2.1.158"}), [])
+        self.assertEqual(theater.unknown_versions({"3.5.0", None, ""}), ["3.5"])
+
+
+class PersonaContract(unittest.TestCase):
+    """The client blindly indexes PERSONAS_EN/HE[persona_id]; persona_id must
+    stay an int in 0..len(PERSONA_EMOJI)-1 and be deterministic."""
+
+    def test_emoji_table_is_sixteen(self):
+        self.assertEqual(len(theater.PERSONA_EMOJI), 16)
+
+    def test_index_in_bounds_and_deterministic(self):
+        for aid in ["", "agent-x", "a" * 1000, "סוכן-עברי", "deadbeef00001", None]:
+            i = theater.persona_index(aid)
+            self.assertIsInstance(i, int)
+            self.assertTrue(0 <= i < len(theater.PERSONA_EMOJI), repr(aid))
+            self.assertEqual(i, theater.persona_index(aid))  # stable
+
+
+class ScanContract(unittest.TestCase):
+    """scan_agents() is now the client<->server contract surface. Run it against
+    a temp projects dir with a fresh fixture and freeze the emitted key sets."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        sub = os.path.join(self.tmp, "proj", "sess-xyz", "subagents")
+        os.makedirs(sub)
+        shutil.copy(os.path.join(FIX, "cc-2.1", "running.jsonl"),
+                    os.path.join(sub, "agent-deadbeef00001.jsonl"))
+        self._orig = theater.PROJECTS_DIR
+        theater.PROJECTS_DIR = self.tmp
+
+    def tearDown(self):
+        theater.PROJECTS_DIR = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_payload_key_set(self):
+        self.assertEqual(set(theater.scan_agents().keys()), PAYLOAD_KEYS)
+
+    def test_agent_key_set_is_frozen(self):
+        agents = theater.scan_agents()["agents"]
+        self.assertTrue(agents, "fixture should produce one agent")
+        self.assertEqual(set(agents[0].keys()), AGENT_KEYS)
+
+    def test_no_legacy_fields(self):
+        agent = theater.scan_agents()["agents"][0]
+        for dead in LEGACY_FIELDS:
+            self.assertNotIn(dead, agent, "legacy field %r must not return" % dead)
+
+    def test_persona_id_is_indexable(self):
+        agent = theater.scan_agents()["agents"][0]
+        self.assertIsInstance(agent["persona_id"], int)
+        self.assertTrue(0 <= agent["persona_id"] < len(theater.PERSONA_EMOJI))
 
 
 class AllFixturesRobust(unittest.TestCase):

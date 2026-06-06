@@ -25,6 +25,10 @@ Agents are grouped into a **room per conversation**. Click any character to read
 its full task and result. When an agent finishes: confetti, a chime, and it
 quietly steps off the floor (a count stays in the room header).
 
+The UI is **bilingual** — English by default, Hebrew one click away (the choice
+is remembered, and the layout flips to RTL). Adding another language is a single
+edit to the `I18N` table in `theater.py`; the server stays language-neutral.
+
 ## Quick start
 
 No installs, pure Python standard library.

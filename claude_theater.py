@@ -22,6 +22,7 @@ import glob
 import time
 import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, parse_qs
 
 __version__ = "0.1.0"
 
@@ -268,6 +269,14 @@ def short_task(task):
     return task[:90].strip() + "…" if len(task) > 90 else task
 
 
+# path -> (mtime, size, agent_dict, is_done, file_versions, file_skipped). The
+# expensive part of a scan is read_tail_lines (up to 200 KB) + parse on every
+# recent file, every 1.5 s. We cache the parsed result keyed by (mtime, size)
+# and only recompute the wall-clock-dependent `status` on a cache hit. Same
+# discipline as _NAME_CACHE; the parser stays isolated -- the cache wraps it.
+_AGENT_CACHE = {}
+
+
 def scan_agents():
     now = time.time()
     pattern = os.path.join(PROJECTS_DIR, "**", "agent-*.jsonl")
@@ -278,69 +287,101 @@ def scan_agents():
         paths = glob.glob(pattern, recursive=True)
     except Exception:
         paths = []
+    seen = set()
     for path in paths:
         try:
-            mtime = os.path.getmtime(path)
+            stt = os.stat(path)
         except OSError:
             continue
+        mtime, size = stt.st_mtime, stt.st_size
         if (now - mtime) / 60.0 > MAX_AGE_MIN:
             continue
+        seen.add(path)
 
-        try:
-            first_ev = parse_agent_event(read_first_line(path))
-        except Exception:
-            first_ev = None
-        if first_ev is None:
-            skipped += 1
-            continue
-        if first_ev.version:
-            versions.add(first_ev.version)
+        cached = _AGENT_CACHE.get(path)
+        if cached and cached[0] == mtime and cached[1] == size:
+            _, _, adict, is_done, fvers, fskip = cached
+        else:
+            try:
+                first_line = read_first_line(path)
+            except Exception:
+                first_line = ""
+            if not (first_line and first_line.strip()):
+                continue  # file exists but first line not flushed yet -- not malformed
+            first_ev = parse_agent_event(first_line)
+            if first_ev is None:
+                skipped += 1
+                continue
+            fvers = set()
+            if first_ev.version:
+                fvers.add(first_ev.version)
 
-        agent_id = first_ev.raw.get("agentId") or os.path.basename(path)[6:-6]
-        session = first_ev.raw.get("sessionId", "") or ""
-        start_ms = first_ev.ts_ms
-        task = extract_task(first_ev)
+            agent_id = first_ev.raw.get("agentId") or os.path.basename(path)[6:-6]
+            session = first_ev.raw.get("sessionId", "") or ""
+            start_ms = first_ev.ts_ms
+            task = extract_task(first_ev)
 
-        try:
-            events, n_skip, vers = parse_events(read_tail_lines(path))
-        except Exception:
-            events, n_skip, vers = [], 0, set()
-        skipped += n_skip
-        versions |= vers
+            try:
+                events, n_skip, vers = parse_events(read_tail_lines(path))
+            except Exception:
+                events, n_skip, vers = [], 0, set()
+            fskip = n_skip
+            fvers |= vers
 
-        is_done, end_ms, result = detect_done(events)
-        tool = last_tool_use_name(events)
+            is_done, end_ms, result = detect_done(events)
+            tool = last_tool_use_name(events)
+            pid = persona_index(agent_id)
+            info = name_map_for(parent_session_file(path, session)).get(task.strip()) if task.strip() else None
+            # Language-neutral payload only: the browser localizes persona name,
+            # activity label and the placeholder for an agent with no readable task
+            # (degrade-not-crash -- it still shows up, just with a generic label).
+            # `status` is a placeholder here; it is recomputed below every scan.
+            adict = {
+                "id": agent_id, "persona_id": pid, "emoji": PERSONA_EMOJI[pid],
+                "role": info["description"] if info else "",
+                "subagent_type": info["subagent_type"] if info else "",
+                "status": "running", "tool": tool or "",
+                "task": task, "task_short": short_task(task), "result": result,
+                "start_ms": start_ms, "end_ms": end_ms,
+                "session": session[:8], "session_full": session,
+                "cwd": first_ev.raw.get("cwd", ""), "mtime_ms": int(mtime * 1000),
+            }
+            _AGENT_CACHE[path] = (mtime, size, adict, is_done, fvers, fskip)
 
+        versions |= fvers
+        skipped += fskip
+        # status tracks wall-clock `now`, so recompute it on every scan (even a cache hit)
         if is_done:
             status = "done"
         elif (now - mtime) > RUNNING_STALE_SEC:
             status = "stale"
         else:
             status = "running"
+        a = dict(adict)
+        a["status"] = status
+        # role/subagent_type come from the PARENT session file, not the agent
+        # file, so the agent-keyed (mtime,size) cache can't notice the parent
+        # gaining its Task block later. Re-resolve every scan (name_map_for is
+        # itself mtime-cached on the parent, so this is cheap) and overwrite the
+        # copy; the cached adict and the isolated parser stay untouched.
+        _task = a["task"].strip()
+        if _task:
+            _info = name_map_for(parent_session_file(path, a["session_full"])).get(_task)
+            if _info:
+                a["role"] = _info["description"]
+                a["subagent_type"] = _info["subagent_type"]
+        agents.append(a)
 
-        pid = persona_index(agent_id)
-        info = name_map_for(parent_session_file(path, session)).get(task.strip()) if task.strip() else None
-        # Language-neutral payload only: the browser localizes persona name,
-        # activity label and the placeholder for an agent with no readable task
-        # (degrade-not-crash -- it still shows up, just with a generic label).
-        agents.append({
-            "id": agent_id, "persona_id": pid, "emoji": PERSONA_EMOJI[pid],
-            "role": info["description"] if info else "",
-            "subagent_type": info["subagent_type"] if info else "",
-            "status": status, "tool": tool or "",
-            "task": task, "task_short": short_task(task), "result": result,
-            "start_ms": start_ms, "end_ms": end_ms,
-            "session": session[:8], "session_full": session,
-            "cwd": first_ev.raw.get("cwd", ""), "mtime_ms": int(mtime * 1000),
-        })
+    # evict entries for files that aged out / vanished so the cache can't grow unbounded
+    for gone in [p for p in _AGENT_CACHE if p not in seen]:
+        del _AGENT_CACHE[gone]
 
     order = {"running": 0, "stale": 1, "done": 2}
     agents.sort(key=lambda a: (order.get(a["status"], 3), -(a["start_ms"] or 0)))
     return {
         "agents": agents,
-        # "versions" (full set seen) and "skipped" (malformed-line count) are
-        # diagnostic/reserved -- not consumed by the current UI, kept for debugging
-        # and possible future surfacing. The UI uses unknown_versions/tested_version.
+        # "versions" (full set seen) and "skipped" (malformed-line count) are now
+        # surfaced by the UI (diagnostics footer + drift banner).
         "versions": sorted(versions),
         "tested_version": KNOWN_CC_VERSIONS[-1],
         "unknown_versions": unknown_versions(versions),
@@ -369,14 +410,18 @@ def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type=""
     }
 
 
-def demo_payload():
+def demo_payload(phase=None):
     now = time.time()
     cwd = "/home/dev/acme-web"
     s1 = "demo-session-frontend-1111"
     s2 = "demo-session-research-2222"
-    # One agent flips running <-> done on a ~16s cycle, so the finish animation
-    # (confetti + chime) is recordable in a looping GIF.
-    finishing = (int(now) % 16) < 6
+    # A ~12 s scripted loop so a single short GIF captures every beat in one pass:
+    #   phase 3  -> a new agent walks in   (entering animation)
+    #   phase 6  -> the finisher completes (confetti + chime)
+    # int(now) % 12 drives both; the rest of the office stays steady.
+    phase = (phase % 12) if isinstance(phase, int) else int(now) % 12
+    finishing = 6 <= phase < 10
+    walked_in = phase >= 3
     agents = [
         _demo_agent("demo-research-aa", s2, cwd, "running", "WebSearch",
                     "Research incremental static regeneration approaches and summarize the trade-offs.",
@@ -403,6 +448,10 @@ def demo_payload():
                     result="Summary: 3 high, 5 medium, 11 low. Top item: the password-reset token is not "
                            "compared in constant time."),
     ]
+    if walked_in:  # appears mid-loop so the browser plays its walk-in animation
+        agents.append(_demo_agent("demo-newcomer-hh", s2, cwd, "running", "Edit",
+                      "Apply the review fixes to the config loader and re-run the type checker.",
+                      role="apply the review fixes", subagent_type="general-purpose", start_offset=3))
     order = {"running": 0, "stale": 1, "done": 2}
     agents.sort(key=lambda x: (order.get(x["status"], 3), -(x["start_ms"] or 0)))
     versions = {"2.1.0"}
@@ -421,56 +470,120 @@ PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Theater</title>
-<script>try{var L=localStorage.getItem("ct_lang")||"en";if(L!=="en"&&L!=="he")L="en";
+<script>try{var Q=(location.search.match(/[?&]lang=(he|en)\\b/)||[])[1];
+  var L=Q||localStorage.getItem("ct_lang")||"en";if(L!=="en"&&L!=="he")L="en";
   document.documentElement.lang=L; document.documentElement.dir=(L==="he")?"rtl":"ltr";}catch(e){}</script>
 <style>
-  :root{ color-scheme:dark; }
+  :root{
+    color-scheme:dark;
+    /* ---- color tokens (one place to reskin / theme; see ROADMAP) ---- */
+    --bg-1:#1a2440; --bg-2:#0b1020; --bg-deep:#070b16;
+    --surface:#121a30; --surface-2:#0e1426; --surface-3:#0a0f1e;
+    --ink:#e8ecff; --ink-2:#dde4ff; --ink-dim:#aeb8df; --ink-dimmer:#97a2cf;
+    --ok:#7ee29a; --ok-bg:#16331f;
+    --idle:#e6c07e; --done:#9fb0e6; --done-bg:#262b46;
+    --accent:#5b6ee0;
+    --line:#20294a; --line-soft:#1b2440; --line-head:#1d2746; --line-drawer:#243056;
+    --chip-bg:#1a2138; --chip-line:#2a345c; --chip-ink:#bcc6ee;
+    --banner-bg:#3a2d12; --banner-ink:#e6c98a; --banner-line:#5a4a20;
+    /* ---- type scale (20 / 15 / 13 / 11.5 / 10.5) ---- */
+    --fs-xl:20px; --fs-lg:15px; --fs-md:13px; --fs-sm:11.5px; --fs-xs:10.5px;
+    /* ---- radii / focus ring ---- */
+    --r-sm:8px; --r-md:10px; --r-lg:14px; --r-pill:999px;
+    --ring:0 0 0 2px transparent,0 0 0 4px var(--accent);
+  }
   *{ box-sizing:border-box; }
-  body{ margin:0; font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif; color:#e8ecff;
-        background:radial-gradient(1100px 500px at 50% -10%,#1a2440,#0b1020 60%); }
+  body{ margin:0; font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif; color:var(--ink);
+        background:radial-gradient(1100px 500px at 50% -10%,var(--bg-1),var(--bg-2) 60%); }
+  :focus-visible{ outline:none; box-shadow:var(--ring); border-radius:var(--r-sm); }
   header{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:11px 20px;
-          border-bottom:1px solid #1d2746; position:sticky; top:0; z-index:40;
+          border-bottom:1px solid var(--line-head); position:sticky; top:0; z-index:40;
           background:rgba(8,11,22,.85); backdrop-filter:blur(8px); }
-  header h1{ font-size:17px; margin:0; }
-  .counts span{ display:inline-block; padding:2px 10px; border-radius:999px; margin-inline-start:6px; font-size:12px; }
-  .c-run{ background:#16331f; color:#7ee29a; } .c-done{ background:#262b46; color:#9fb0e6; }
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){ header{ background:var(--bg-deep); } }
+  header h1{ font-size:var(--fs-xl); margin:0; font-weight:800; letter-spacing:.2px; }
+  .counts span{ display:inline-block; padding:2px 10px; border-radius:var(--r-pill); margin-inline-start:6px; font-size:var(--fs-sm); }
+  .c-run{ background:var(--ok-bg); color:var(--ok); } .c-idle{ background:#33290f; color:var(--idle); } .c-done{ background:var(--done-bg); color:var(--done); }
   .spacer{ flex:1; }
-  header label{ font-size:12.5px; color:#a8b2da; display:flex; align-items:center; gap:6px; cursor:pointer; }
-  .banner{ margin:0; padding:7px 20px; font-size:12.5px; text-align:center;
-           background:#3a2d12; color:#e6c98a; border-bottom:1px solid #5a4a20; }
+  header label{ font-size:var(--fs-md); color:var(--ink-dim); display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .banner{ margin:0; padding:7px 20px; font-size:var(--fs-md); text-align:center;
+           background:var(--banner-bg); color:var(--banner-ink); border-bottom:1px solid var(--banner-line); }
   .banner[hidden]{ display:none; }
-  #langBtn{ font-size:12px; background:#1a2138; border:1px solid #2a345c; color:#cdd6f6;
-            border-radius:8px; padding:4px 11px; cursor:pointer; }
+  .banner a.drift-link{ color:#ffe0a0; }
+  .diag{ text-align:center; color:var(--ink-dimmer); font-size:var(--fs-sm); padding:0 18px 30px; }
+  .diag[hidden]{ display:none; }
+  .reconnect{ margin:0; padding:6px 20px; font-size:var(--fs-md); text-align:center;
+              background:#3a1518; color:#f0a9a9; border-bottom:1px solid #5a2024; }
+  .reconnect[hidden]{ display:none; }
+  #muteBtn{ font-size:var(--fs-md); background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6;
+            border-radius:var(--r-sm); padding:4px 9px; cursor:pointer; line-height:1; }
+  #muteBtn:hover{ background:#222a47; }
+  .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+  .toasts{ position:fixed; bottom:16px; inset-inline-end:16px; z-index:80; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+  .toast{ background:var(--surface); border:1px solid var(--line); border-inline-start:3px solid var(--ok); color:var(--ink);
+          border-radius:var(--r-sm); padding:9px 14px; font-size:var(--fs-md); box-shadow:0 8px 24px rgba(0,0,0,.5);
+          max-width:280px; opacity:0; transform:translateY(8px); transition:opacity .25s,transform .25s; }
+  .toast.show{ opacity:1; transform:translateY(0); }
+  #langBtn{ font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6;
+            border-radius:var(--r-sm); padding:4px 11px; cursor:pointer; }
   #langBtn:hover{ background:#222a47; }
+  #search{ font:inherit; font-size:var(--fs-md); background:var(--surface-3); border:1px solid var(--chip-line);
+           color:var(--ink); border-radius:var(--r-sm); padding:5px 11px; width:190px; max-width:42vw; }
+  #search::placeholder{ color:var(--ink-dimmer); }
+  #search:focus-visible{ outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(91,110,224,.3); }
 
   #app{ padding:16px 18px 60px; display:flex; flex-direction:column; gap:14px; }
-  .empty{ text-align:center; color:#6b78a8; font-size:15px; padding:60px 10px; }
+  .empty{ text-align:center; color:var(--ink-dimmer); font-size:var(--fs-lg); padding:54px 10px; }
+  .empty .e-scene{ font-size:48px; line-height:1; margin-bottom:12px; filter:grayscale(.25); opacity:.65; }
+  .empty .e-title{ font-size:var(--fs-lg); color:var(--ink-2); font-weight:700; margin-bottom:6px; }
+  .empty .e-sub{ font-size:var(--fs-md); color:var(--ink-dim); margin-bottom:18px; }
+  .btn-demo{ font:inherit; font-size:var(--fs-md); font-weight:600; color:#fff; cursor:pointer;
+             background:linear-gradient(180deg,#3a4ad6,#2f3cb8); border:1px solid #4a5ae0; border-radius:var(--r-sm);
+             padding:9px 18px; box-shadow:0 4px 14px rgba(50,70,220,.35); transition:filter .15s,transform .15s; }
+  .btn-demo:hover{ filter:brightness(1.09); transform:translateY(-1px); }
+  .demo-chip{ display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-sm); color:#cdd6f6;
+              background:rgba(91,110,224,.16); border:1px solid var(--accent); border-radius:var(--r-pill); padding:2px 4px 2px 12px; }
+  html[dir="rtl"] .demo-chip{ padding:2px 12px 2px 4px; }
+  .demo-chip button{ font:inherit; font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line);
+                     color:#cdd6f6; border-radius:var(--r-pill); padding:2px 10px; cursor:pointer; }
+  .demo-chip[hidden]{ display:none; }
 
-  .room{ background:linear-gradient(180deg,#121a30,#0e1426); border:1px solid #20294a; border-radius:14px; overflow:hidden; }
+  .room{ background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line);
+         border-inline-start:3px solid var(--room-accent,var(--accent)); border-radius:var(--r-lg); overflow:hidden; }
   .rh{ display:flex; align-items:center; gap:10px; padding:8px 14px; background:rgba(255,255,255,.03);
-       border-bottom:1px solid #1b2440; font-size:12.5px; }
-  .rt{ font-weight:700; color:#e2e8ff; } .rt small{ color:#7886b6; font-weight:400; margin-inline-start:6px; }
-  .rc{ color:#9aa6d4; display:flex; gap:9px; }
-  .rc b{ color:#7ee29a; } .rc i{ font-style:normal; color:#e0c07e; } .rc u{ text-decoration:none; color:#8f9ccb; }
+       border-bottom:1px solid var(--line-soft); font-size:var(--fs-md); }
+  .rt{ font-weight:700; color:var(--ink-2); } .rt small{ color:var(--ink-dimmer); font-weight:400; margin-inline-start:6px; }
+  .rc{ color:var(--ink-dim); }
+  .rc b{ color:var(--ok); } .rc i{ font-style:normal; color:var(--idle); } .rc u{ text-decoration:none; color:var(--done); }
   .floor{ display:flex; flex-wrap:wrap; gap:4px; padding:13px 12px 16px;
           background:linear-gradient(180deg,transparent 0 60%,rgba(0,0,0,.18)),
                      repeating-linear-gradient(90deg,rgba(255,255,255,.014) 0 42px,transparent 42px 84px); }
 
   .ws{ position:relative; width:92px; display:flex; flex-direction:column; align-items:center; gap:1px;
-       padding:4px 3px 8px; border-radius:10px; cursor:pointer; transition:background .15s,transform .15s; }
+       padding:4px 3px 8px; border-radius:var(--r-md); cursor:pointer; transition:background .15s,transform .15s; }
   .ws:hover{ background:rgba(255,255,255,.06); transform:translateY(-2px); }
+  .ws:focus-visible{ background:rgba(255,255,255,.06); }
 
-  /* ---- animated character sitting at a desk ---- */
-  .scene{ position:relative; width:84px; height:66px; }
+  /* ---- animated character sitting at a desk (decorative; aria-hidden) ---- */
+  .scene{ position:relative; width:84px; height:68px; }
+  .scene::after{ content:""; position:absolute; left:50%; bottom:2px; transform:translateX(-50%);
+                 width:56px; height:7px; border-radius:50%; z-index:0;
+                 background:radial-gradient(closest-side,rgba(0,0,0,.5),transparent 80%); }  /* contact shadow */
+  .chair{ position:absolute; left:50%; bottom:7px; transform:translateX(-50%); width:30px; height:30px; z-index:1;
+          border-radius:10px 10px 5px 5px; background:linear-gradient(180deg,#2b3360,#1b2342);
+          box-shadow:inset 0 2px 0 rgba(255,255,255,.06), inset 0 -3px 0 rgba(0,0,0,.25); }
   .guy{ position:absolute; left:50%; bottom:14px; transform:translateX(-50%); width:40px; height:44px; z-index:1; }
   .torso{ position:absolute; left:50%; bottom:0; transform:translateX(-50%); width:26px; height:22px;
-          border-radius:11px 11px 5px 5px; background:var(--c1,#5566cc); box-shadow:inset 0 -3px 0 rgba(0,0,0,.18); }
+          border-radius:11px 11px 5px 5px; background:var(--c1,#5566cc);
+          box-shadow:inset 0 -4px 5px rgba(0,0,0,.28), inset 0 2px 0 rgba(255,255,255,.12); }
   .head{ position:absolute; left:50%; bottom:16px; transform:translateX(-50%); font-size:25px; line-height:1;
          filter:drop-shadow(0 3px 3px rgba(0,0,0,.4)); transform-origin:50% 90%; }
   .desk{ position:absolute; left:50%; bottom:4px; transform:translateX(-50%); width:64px; height:15px; z-index:2;
-         border-radius:4px; background:linear-gradient(180deg,#9a6739,#5f3c1d); box-shadow:0 4px 6px rgba(0,0,0,.45); }
-  .screen{ position:absolute; left:50%; bottom:19px; transform:translateX(-50%); width:15px; height:11px; z-index:2;
-           border-radius:1px; background:#05070f; border:1px solid #1b2440; }
+         border-radius:4px; background:linear-gradient(180deg,#a5743f,#5f3c1d);
+         border-top:1px solid rgba(255,255,255,.16); box-shadow:0 4px 7px rgba(0,0,0,.5); }
+  .screen{ position:absolute; left:50%; bottom:19px; transform:translateX(-50%); width:16px; height:12px; z-index:2;
+           border-radius:2px; background:#05070f; border:1px solid #1b2440; overflow:hidden; }
+  .screen::after{ content:""; position:absolute; left:2px; right:2px; top:3px; height:1px; opacity:0;
+                  background:rgba(255,255,255,.85); border-radius:1px; }  /* code-line shimmer */
   .hands{ position:absolute; left:50%; bottom:13px; transform:translateX(-50%); width:42px; height:10px; z-index:3; }
   .hand{ position:absolute; bottom:0; width:8px; height:8px; border-radius:50%; background:#f2c79a;
          box-shadow:0 1px 2px rgba(0,0,0,.4); }
@@ -481,9 +594,22 @@ PAGE = """<!DOCTYPE html>
   .ws.running .hand.l{ animation:tap .3s ease-in-out infinite; }
   .ws.running .hand.r{ animation:tap .3s ease-in-out infinite .15s; }
   @keyframes tap{ 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
-  .ws.running .screen{ background:#0c2; box-shadow:0 0 7px #1f8a4d; animation:blink 1s steps(2) infinite; }
-  @keyframes blink{ 50%{opacity:.5} }
+  /* running screen glows in the tool-family color (data-fam, set in updateWS); default green. */
+  .ws.running .screen{ background:#0c2; box-shadow:0 0 8px #1f8a4d; }
+  .ws.running[data-fam="search"] .screen{ background:#16c0dd; box-shadow:0 0 8px #16c0dd; }
+  .ws.running[data-fam="write"]  .screen{ background:#e6a92e; box-shadow:0 0 8px #e6a92e; }
+  .ws.running[data-fam="read"]   .screen{ background:#5b8def; box-shadow:0 0 8px #5b8def; }
+  .ws.running[data-fam="cmd"]    .screen{ background:#1fc25a; box-shadow:0 0 8px #1fc25a; }
+  .ws.running[data-fam="agent"]  .screen{ background:#c45bd0; box-shadow:0 0 8px #c45bd0; }
+  .ws.running .screen::after{ animation:typeline 1.4s ease-in-out infinite; }
+  @keyframes typeline{ 0%{opacity:0; transform:translateX(-40%)} 35%{opacity:.9} 65%{opacity:.4} 100%{opacity:0; transform:translateX(40%)} }
   .ws.done .screen{ background:#0a2f1c; box-shadow:0 0 6px #1c5; }
+  /* finished desks keep a faint tint of their tool family so color variety survives */
+  .ws.done[data-fam="search"] .screen{ background:#0a3a44; box-shadow:0 0 6px rgba(22,192,221,.55); }
+  .ws.done[data-fam="write"]  .screen{ background:#3a2c0c; box-shadow:0 0 6px rgba(230,169,46,.55); }
+  .ws.done[data-fam="read"]   .screen{ background:#142544; box-shadow:0 0 6px rgba(91,141,239,.55); }
+  .ws.done[data-fam="cmd"]    .screen{ background:#0a2f1c; box-shadow:0 0 6px rgba(31,194,90,.55); }
+  .ws.done[data-fam="agent"]  .screen{ background:#331640; box-shadow:0 0 6px rgba(196,91,208,.55); }
 
   .ws.stale .guy{ filter:grayscale(.6) brightness(.62); }
   .ws.stale .head{ animation:sway 3s ease-in-out infinite; }
@@ -495,56 +621,72 @@ PAGE = """<!DOCTYPE html>
   .ws.justdone .hands{ animation:cheer .7s ease; }
   @keyframes cheer{ 0%{transform:translateX(-50%) translateY(0)} 40%{transform:translateX(-50%) translateY(-13px)}
                     100%{transform:translateX(-50%) translateY(0)} }
-  .name{ font-size:11px; color:#dde4ff; max-width:84px; overflow:hidden; text-overflow:ellipsis;
+  .name{ font-size:var(--fs-sm); color:var(--ink-2); max-width:84px; overflow:hidden; text-overflow:ellipsis;
          white-space:nowrap; margin-top:3px; }
-  .act{ font-size:10px; color:#8fa2dd; height:13px; max-width:86px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ws.done .act{ color:#86b58f; } .ws.stale .act{ color:#c9a86a; }
-  .timer{ font-size:9.5px; color:#8893bd; direction:ltr; }
+  .act{ font-size:var(--fs-xs); color:#9db0e6; height:13px; max-width:86px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ws.done .act{ color:#8fc09a; } .ws.stale .act{ color:var(--idle); }
+  .timer{ font-size:var(--fs-xs); color:var(--ink-dimmer); direction:ltr; }
 
   .ws.entering{ animation:walkin .7s ease-out; }
   @keyframes walkin{ 0%{opacity:0; transform:translateX(-66px)} 60%{opacity:1} 100%{opacity:1; transform:translateX(0)} }
   .ws.entering .guy{ animation:step .18s ease-in-out 3; }
   @keyframes step{ 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(-3px)} }
   .burst{ position:absolute; inset:0; pointer-events:none; overflow:visible; }
-  .confetti{ position:absolute; top:6px; font-size:15px; animation:fall 1.1s ease-out forwards; }
+  .confetti{ position:absolute; top:6px; font-size:15px; animation:fall 0.85s ease-out forwards; }
   @keyframes fall{ from{transform:translateY(-6px) scale(.6); opacity:1} to{transform:translateY(70px) rotate(200deg); opacity:0} }
 
   #backdrop{ position:fixed; inset:0; background:rgba(3,5,12,.55); z-index:60; opacity:0; pointer-events:none; transition:opacity .2s; }
   #backdrop.show{ opacity:1; pointer-events:auto; }
   #drawer{ position:fixed; top:0; right:0; height:100%; width:min(440px,92vw); z-index:70; background:#0f1426;
-           border-left:1px solid #243056; box-shadow:-12px 0 40px rgba(0,0,0,.5); transform:translateX(105%);
+           border-left:1px solid var(--line-drawer); box-shadow:-12px 0 40px rgba(0,0,0,.5); transform:translateX(105%);
            transition:transform .26s cubic-bezier(.3,.9,.3,1); display:flex; flex-direction:column; }
   #drawer.open{ transform:translateX(0); }
   /* In RTL (Hebrew) the side panel mirrors to the left edge. */
-  html[dir="rtl"] #drawer{ right:auto; left:0; border-left:0; border-right:1px solid #243056;
+  html[dir="rtl"] #drawer{ right:auto; left:0; border-left:0; border-right:1px solid var(--line-drawer);
                            box-shadow:12px 0 40px rgba(0,0,0,.5); transform:translateX(-105%); }
   html[dir="rtl"] #drawer.open{ transform:translateX(0); }
-  .dhead{ display:flex; align-items:center; gap:12px; padding:16px 16px 12px; border-bottom:1px solid #1d2746; }
-  .dhead .av{ font-size:34px; } .dhead .nm{ font-size:17px; font-weight:700; } .dhead .ro{ font-size:12px; color:#9aa6d4; margin-top:2px; }
-  #dclose{ margin-inline-start:auto; background:#1a2138; border:1px solid #2a345c; color:#cdd6f6; border-radius:8px; width:30px; height:30px; cursor:pointer; }
+  .dhead{ display:flex; align-items:center; gap:12px; padding:16px 16px 12px; border-bottom:1px solid var(--line-head); }
+  .dhead .av{ font-size:34px; } .dhead .nm{ font-size:16px; font-weight:700; } .dhead .ro{ font-size:var(--fs-md); color:var(--ink-dim); margin-top:2px; }
+  #dclose{ margin-inline-start:auto; background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6; border-radius:var(--r-sm); width:30px; height:30px; cursor:pointer; }
   #dbody{ padding:14px 16px; overflow:auto; }
   #dbody .row{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
-  #dbody .chip{ font-size:11px; padding:3px 9px; border-radius:999px; background:#1a2138; color:#aeb9e6; border:1px solid #283156; }
-  #dbody h3{ font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:#7886b6; margin:15px 0 6px; }
-  #dbody .box{ background:#0a0f1e; border:1px solid #1b2440; border-radius:10px; padding:11px 12px; font-size:13px;
+  #dbody .chip{ font-size:var(--fs-sm); padding:3px 9px; border-radius:var(--r-pill); background:var(--chip-bg); color:var(--chip-ink); border:1px solid var(--chip-line); }
+  #dbody h3{ font-size:var(--fs-sm); text-transform:uppercase; letter-spacing:.6px; color:var(--ink-dimmer); margin:15px 0 6px; }
+  #dbody .box{ background:var(--surface-3); border:1px solid var(--line-soft); border-radius:var(--r-md); padding:11px 12px; font-size:var(--fs-md);
                line-height:1.6; color:#d4dcf6; white-space:pre-wrap; max-height:40vh; overflow:auto; }
-  #dbody .box.ltr{ direction:ltr; text-align:left; }
+  #dbody .box[dir]{ text-align:start; }  /* dir=auto picks direction; start-align follows it */
+
+  /* ---- prefers-reduced-motion: kill looping/one-shot motion, keep state-by-color ---- */
+  @media (prefers-reduced-motion: reduce){
+    .ws .head, .ws .hand, .ws .screen, .ws .screen::after, .ws .guy, .ws .hands,
+    .ws.entering, .ws.entering .guy, .ws.justdone .head, .ws.justdone .hands, .confetti{ animation:none !important; }
+    .ws:hover{ transform:none; }
+    #drawer, #backdrop, .toast{ transition:none; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1 id="h1">🏢 Claude Theater</h1>
   <div class="counts" id="counts"></div>
+  <span id="demoChip" class="demo-chip" hidden>▶ <span id="demoChipLbl">Demo</span> <button id="exitDemoBtn" type="button">Exit</button></span>
   <div class="spacer"></div>
+  <input id="search" type="search" autocomplete="off" placeholder="Search agents…" aria-label="Search agents">
+  <button id="muteBtn" type="button">🔔</button>
   <button id="langBtn" type="button">עברית</button>
   <label><input type="checkbox" id="showDone"> <span id="showDoneLbl">Show finished</span></label>
 </header>
 <div id="banner" class="banner" hidden></div>
-<div id="app"><div class="empty" data-boot="1">The office is empty… start an agent in Claude Code. 🚪</div></div>
+<div id="reconnect" class="reconnect" role="status" hidden></div>
+<div id="app"><div class="empty" data-boot="1"></div></div>
+<div id="diag" class="diag" hidden></div>
+
+<div id="toasts" class="toasts" aria-hidden="true"></div>
+<div id="live" class="sr-only" role="status" aria-live="polite"></div>
 
 <div id="backdrop"></div>
-<aside id="drawer">
-  <div class="dhead"><div class="av" id="dav"></div>
+<aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="dnm dro">
+  <div class="dhead"><div class="av" id="dav" aria-hidden="true"></div>
     <div><div class="nm" id="dnm"></div><div class="ro" id="dro"></div></div>
     <button id="dclose">✕</button></div>
   <div id="dbody"></div>
@@ -552,24 +694,41 @@ PAGE = """<!DOCTYPE html>
 
 <script>
 const POLL_MS=1500;
+const DRIFT_URL="https://github.com/asafabram-ship-it/claude-theater/issues/new?template=format-drift.yml";
+// "" in a normal browser (same-origin). The VS Code extension injects an
+// absolute http://127.0.0.1:<port> base so the embedded webview can reach the API.
+const API_BASE=(typeof window!=="undefined"&&window.__CT_API_BASE__)||"";
 const rooms={};   // session_full -> {section, floor, rt, rc}
 const els={};     // id -> {root, refs, data, status}
 const prevStatus={};
-let audioCtx=null, showDone=false, openId=null, openData=null;
+let audioCtx=null, openId=null, openData=null;
+let showDone=(function(){ try{ if(/[?&]show=done\\b/.test(location.search)) return true;
+  if(/[?&]demo=1(?:&|$)/.test(location.search)) return true;   // demo must show the finish beat
+  return localStorage.getItem("ct_showDone")==="1"; }catch(e){ return false; } })();
+let demoMode=(function(){ try{ return /[?&]demo=1(?:&|$)/.test(location.search); }catch(e){ return false; } })();
+let searchQuery="", lastPayload=null, searchT=null, lastDing=0, lastOrderKey="";
+let muted=(function(){ try{ return localStorage.getItem("ct_muted")==="1"; }catch(e){ return false; } })();
 
 // ---- i18n: the browser owns every display string in both languages. ----
 // To add a language, add an entry here (and personas/tools tables) -- nothing
 // in Python needs to change. Persona names are index-aligned with PERSONA_EMOJI.
 const PERSONAS_EN=["The Detective","The Writer","The Courier","The Researcher","The Librarian","The Navigator","The Scout","The Builder","The Wizard","The Marksman","The Owl","The Fox","The Bee","The Robot","The Tiger","The Eagle"];
 const PERSONAS_HE=["הבלש","הסופר","השליח","החוקר","הספרן","הנווט","הצופה","הבנאי","הקוסם","הצייד","הינשוף","השועל","הדבורה","הרובוט","הנמר","הנשר"];
-const TOOLS_EN={WebSearch:"🔍 Searching",WebFetch:"🌐 Reading page",Read:"📖 Reading",Edit:"✏️ Editing",Write:"✏️ Writing",NotebookEdit:"✏️ Notebook",Bash:"⚙️ Command",PowerShell:"⚙️ Command",BashOutput:"⚙️ Output",KillShell:"⚙️ Command",Grep:"🔎 Searching code",Glob:"🔎 Files",Task:"👥 Subagent",Agent:"👥 Subagent",TodoWrite:"📝 Todos",Skill:"🧩 Skill",ExitPlanMode:"📋 Plan",StructuredOutput:"🧾 Summarizing"};
-const TOOLS_HE={WebSearch:"🔍 מחפש",WebFetch:"🌐 קורא דף",Read:"📖 קורא",Edit:"✏️ עורך",Write:"✏️ כותב",NotebookEdit:"✏️ מחברת",Bash:"⚙️ פקודה",PowerShell:"⚙️ פקודה",BashOutput:"⚙️ פלט",KillShell:"⚙️ פקודה",Grep:"🔎 מחפש קוד",Glob:"🔎 קבצים",Task:"👥 סוכן",Agent:"👥 סוכן",TodoWrite:"📝 משימות",Skill:"🧩 מיומנות",ExitPlanMode:"📋 תכנון",StructuredOutput:"🧾 מסכם"};
+const TOOLS_EN={WebSearch:"🔍 Searching",WebFetch:"🌐 Reading page",Read:"📖 Reading",Edit:"✏️ Editing",MultiEdit:"✏️ Editing",Write:"✏️ Writing",NotebookEdit:"✏️ Notebook",Bash:"⚙️ Command",PowerShell:"⚙️ Command",BashOutput:"⚙️ Output",KillShell:"⚙️ Command",SlashCommand:"⌨️ Slash command",Grep:"🔎 Searching code",Glob:"🔎 Files",Task:"👥 Subagent",Agent:"👥 Subagent",TodoWrite:"📝 Todos",Skill:"🧩 Skill",ExitPlanMode:"📋 Plan",StructuredOutput:"🧾 Summarizing"};
+const TOOLS_HE={WebSearch:"🔍 מחפש",WebFetch:"🌐 קורא דף",Read:"📖 קורא",Edit:"✏️ עורך",MultiEdit:"✏️ עורך",Write:"✏️ כותב",NotebookEdit:"✏️ מחברת",Bash:"⚙️ פקודה",PowerShell:"⚙️ פקודה",BashOutput:"⚙️ פלט",KillShell:"⚙️ פקודה",SlashCommand:"⌨️ פקודת סלאש",Grep:"🔎 מחפש קוד",Glob:"🔎 קבצים",Task:"👥 סוכן",Agent:"👥 סוכן",TodoWrite:"📝 משימות",Skill:"🧩 מיומנות",ExitPlanMode:"📋 תכנון",StructuredOutput:"🧾 מסכם"};
 const I18N={
   en:{ appTitle:"🏢 Claude Theater", docTitle:"Claude Theater", showDone:"Show finished", switchTo:"עברית",
-       emptyOffice:"The office is empty… start an agent in Claude Code. 🚪",
+       emptyOffice:"The office is empty",
+       emptySub:"Start an agent in Claude Code — or see what a busy office looks like:",
+       watchDemo:"▶ Watch a live demo", demoLabel:"Demo", exitDemo:"Exit",
+       langHint:"Switch language (Hebrew / English)", close:"Close",
+       reconnecting:"⚠ Lost connection to the server — retrying…",
+       searchPlaceholder:"Search agents…", emptyNoMatch:"No agents match your search.",
+       mute:"Mute chime", unmute:"Unmute chime", finishedToast:"finished",
+       skippedN:function(n){ return n+" malformed line"+(n===1?"":"s")+" skipped"; }, reportDrift:"report",
        emptyNoActive:'No active agents. Tick "Show finished" to see history.',
        emptyNoneInWindow:"No agents in the time window.",
-       working:"working", finished:"finished",
+       working:"working", idleN:"idle", finished:"finished",
        dWorking:"Working", dDone:"Done", dStale:"Idle",
        dDuration:"Duration ", dElapsed:"Elapsed ",
        dAction:"Activity", dTask:"Task", dResult:"Result",
@@ -578,10 +737,17 @@ const I18N={
        personas:PERSONAS_EN, tools:TOOLS_EN,
        banner:function(tv,sv){ return "⚠ Tested up to Claude Code "+tv+" · detected "+sv+" — display may be partial"; } },
   he:{ appTitle:"🏢 משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו", switchTo:"English",
-       emptyOffice:"המשרד ריק… הפעילו סוכן ב-Claude Code. 🚪",
+       emptyOffice:"המשרד ריק",
+       emptySub:"הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:",
+       watchDemo:"▶ צפו בדמו חי", demoLabel:"דמו", exitDemo:"יציאה",
+       langHint:"החלפת שפה (עברית / אנגלית)", close:"סגירה",
+       reconnecting:"⚠ אבד החיבור לשרת - מנסה שוב…",
+       searchPlaceholder:"חיפוש סוכנים…", emptyNoMatch:"אין סוכנים שתואמים לחיפוש.",
+       mute:"השתק צליל", unmute:"בטל השתקה", finishedToast:"סיים",
+       skippedN:function(n){ return n+" שורות פגומות דולגו"; }, reportDrift:"דווח",
        emptyNoActive:'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',
        emptyNoneInWindow:"אין סוכנים בחלון הזמן.",
-       working:"עובדים", finished:"סיימו",
+       working:"עובדים", idleN:"ממתינים", finished:"סיימו",
        dWorking:"עובד", dDone:"סיים", dStale:"ממתין",
        dDuration:"משך ", dElapsed:"זמן ",
        dAction:"פעולה", dTask:"משימה", dResult:"תוצאה",
@@ -590,25 +756,41 @@ const I18N={
        personas:PERSONAS_HE, tools:TOOLS_HE,
        banner:function(tv,sv){ return "⚠ נבדק עד Claude Code "+tv+" · זוהתה גרסה "+sv+" — ייתכן שהתצוגה חלקית"; } }
 };
-let lang=(function(){ try{ var L=localStorage.getItem("ct_lang"); return (L==="he"||L==="en")?L:"en"; }catch(e){ return "en"; } })();
+let lang=(function(){ try{ var Q=(location.search.match(/[?&]lang=(he|en)\\b/)||[])[1]; if(Q) return Q;
+  var L=localStorage.getItem("ct_lang"); return (L==="he"||L==="en")?L:"en"; }catch(e){ return "en"; } })();
 function t(k){ const v=I18N[lang][k]; return (v!==undefined&&v!==null)?v:((I18N.en[k]!==undefined)?I18N.en[k]:k); }
 function personaName(a){ const p=I18N[lang].personas; return (a&&typeof a.persona_id==="number"&&p[a.persona_id])||(lang==="he"?"סוכן":"Agent"); }
+function mcpServer(tool){ const p=(tool||"").split("__"); return p.length>=3?p[1]:""; }  // mcp__<server>__<tool>
 function activityLabel(a){ const L=I18N[lang];
   if(a.status==="done") return L.actDone;
   if(a.status==="stale") return L.actStale;
-  if(a.tool&&a.tool.indexOf("mcp__")===0) return L.actMcp;
+  if(a.tool&&a.tool.indexOf("mcp__")===0){ const s=mcpServer(a.tool); return s?("🔌 "+s):L.actMcp; }
   return L.tools[a.tool]||L.actThinking; }
 function bannerText(tv,sv){ return I18N[lang].banner(tv,sv); }
 function applyLang(){ const el=document.documentElement; el.lang=lang; el.dir=(lang==="he")?"rtl":"ltr";
   document.getElementById("h1").textContent=t("appTitle");
   document.getElementById("showDoneLbl").textContent=t("showDone");
   document.getElementById("langBtn").textContent=t("switchTo");
+  document.getElementById("demoChipLbl").textContent=t("demoLabel");
+  document.getElementById("exitDemoBtn").textContent=t("exitDemo");
+  document.getElementById("demoChip").hidden=!demoMode;
+  document.getElementById("showDone").checked=showDone;
+  document.getElementById("langBtn").title=t("langHint");
+  document.getElementById("search").placeholder=t("searchPlaceholder");
+  document.getElementById("search").setAttribute("aria-label",t("searchPlaceholder"));
+  const mb=document.getElementById("muteBtn"); mb.textContent=muted?"🔕":"🔔";
+  mb.title=t(muted?"unmute":"mute"); mb.setAttribute("aria-label",t(muted?"unmute":"mute"));
+  document.getElementById("dclose").title=t("close");
+  document.getElementById("dclose").setAttribute("aria-label",t("close"));
+  const rc=document.getElementById("reconnect"); if(!rc.hidden) rc.textContent=t("reconnecting");
   document.title=t("docTitle");
-  const boot=document.querySelector('#app .empty[data-boot]'); if(boot) boot.textContent=t("emptyOffice");
+  const boot=document.querySelector('#app .empty[data-boot]'); if(boot) boot.innerHTML=emptyHTML("office");
   // The drawer is the one surface render() may not refresh (an open 'done' agent
   // can be filtered out of the floor), so re-translate it directly from cached data.
   if(openId&&openData) fillDrawer(openData); }
-function setLang(l){ lang=(l==="he")?"he":"en"; try{ localStorage.setItem("ct_lang",lang); }catch(e){} applyLang(); poll(); }
+function setLang(l){ lang=(l==="he")?"he":"en"; try{ localStorage.setItem("ct_lang",lang); }catch(e){}
+  try{ const u=new URL(location.href); if(u.searchParams.has("lang")){ u.searchParams.set("lang",lang); history.replaceState(null,"",u.pathname+u.search); } }catch(e){}
+  applyLang(); poll(); }
 
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function fmt(ms){ if(ms==null||ms<0) return "--:--"; const s=Math.floor(ms/1000),m=Math.floor(s/60),x=s%60;
@@ -618,7 +800,8 @@ function roomLabel(a){ return baseName(a.cwd); }
 const COLORS=["#5b6ee0","#e07a5b","#3fae74","#c45bd0","#e0b84a","#4ab3c4","#d05b7a","#7a86b8"];
 function colorFor(id){ let h=0; for(let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))>>>0; return COLORS[h%COLORS.length]; }
 
-function ding(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+function ding(){ if(muted) return; const nw=Date.now(); if(nw-lastDing<400) return; lastDing=nw;  // mute + storm guard
+  try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
   const t=audioCtx.currentTime;
   [880,1320].forEach((f,i)=>{ const o=audioCtx.createOscillator(),g=audioCtx.createGain();
     o.type="sine"; o.frequency.value=f; o.connect(g); g.connect(audioCtx.destination);
@@ -628,44 +811,106 @@ function ding(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkit
 function confetti(root){ const b=document.createElement("div"); b.className="burst";
   const em=["🎉","✨","🎊","⭐","✅"];
   for(let i=0;i<10;i++){ const c=document.createElement("div"); c.className="confetti"; c.textContent=em[i%em.length];
-    c.style.left=(8+Math.random()*78)+"%"; c.style.animationDelay=(Math.random()*0.3)+"s"; b.appendChild(c); }
-  root.appendChild(b); setTimeout(()=>b.remove(),1400); }
+    c.style.left=(8+Math.random()*78)+"%"; c.style.animationDelay=(Math.random()*0.15)+"s"; b.appendChild(c); }
+  root.appendChild(b); setTimeout(()=>b.remove(),1050); }
+
+let announceT=null;
+function announce(msg){ const el=document.getElementById("live"); if(!el) return;  // SR-only live region
+  el.textContent = el.textContent ? (el.textContent+" · "+msg) : msg;        // append so same-tick finishes aren't lost
+  clearTimeout(announceT); announceT=setTimeout(()=>{ el.textContent=""; },4000); }
+function toast(msg){ const c=document.getElementById("toasts"); if(!c) return;
+  const d=document.createElement("div"); d.className="toast"; d.dir="auto"; d.textContent=msg; c.appendChild(d);
+  requestAnimationFrame(()=>d.classList.add("show"));
+  setTimeout(()=>{ d.classList.remove("show"); setTimeout(()=>d.remove(),300); },3200); }
+function setMuted(m){ muted=m; try{ localStorage.setItem("ct_muted",m?"1":"0"); }catch(e){}
+  const b=document.getElementById("muteBtn"); if(!b) return;
+  b.textContent=m?"🔕":"🔔"; b.title=t(m?"unmute":"mute"); b.setAttribute("aria-label",t(m?"unmute":"mute")); }
 
 function createWS(a){ const root=document.createElement("div"); root.className="ws "+a.status;
   root.style.setProperty("--c1", colorFor(a.id));
+  root.tabIndex=0; root.setAttribute("role","button");           // keyboard-reachable card
   root.innerHTML=
-    '<div class="scene"><div class="guy"><div class="torso"></div><div class="head"></div></div>'+
+    '<div class="scene" aria-hidden="true"><div class="chair"></div>'+
+    '<div class="guy"><div class="torso"></div><div class="head"></div></div>'+
     '<div class="desk"></div><i class="screen"></i>'+
     '<div class="hands"><i class="hand l"></i><i class="hand r"></i></div></div>'+
     '<div class="name"></div><div class="act"></div><div class="timer"></div>';
   const refs={ head:root.querySelector(".head"), name:root.querySelector(".name"),
                act:root.querySelector(".act"), timer:root.querySelector(".timer") };
   root.addEventListener("click",()=>openDrawer(a.id));
+  root.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openDrawer(a.id); } });
   root.classList.add("entering"); setTimeout(()=>root.classList.remove("entering"),750);
   return { root, refs, data:a, status:null }; }
 
+// Tool -> color family for the monitor glow (and a coarse grouping). Kept in
+// sync with the .ws.running[data-fam=...] rules and the TOOLS_* label tables.
+function toolFamily(tool){ if(!tool) return "";
+  if(tool.indexOf("mcp__")===0) return "agent";
+  if(/^(WebSearch|Grep|Glob)$/.test(tool)) return "search";
+  if(/^(Read|WebFetch)$/.test(tool)) return "read";
+  if(/^(Edit|Write|NotebookEdit|MultiEdit)$/.test(tool)) return "write";
+  if(/^(Bash|PowerShell|BashOutput|KillShell)$/.test(tool)) return "cmd";
+  if(/^(Task|Agent)$/.test(tool)) return "agent";
+  return ""; }
+
 function updateWS(e,a){ e.data=a;
   if(e.status!==a.status) e.root.className="ws "+a.status;
+  e.root.dataset.fam=toolFamily(a.tool);
   e.refs.head.textContent=a.emoji;
   const nm=a.role||personaName(a); e.refs.name.textContent=nm; e.refs.name.title=nm;
-  e.refs.act.textContent=activityLabel(a);
+  const actLbl=activityLabel(a); e.refs.act.textContent=actLbl; e.refs.act.title=actLbl;
+  e.root.setAttribute("aria-label", nm+" — "+actLbl);
   e.refs.timer.dataset.start=a.start_ms||0; e.refs.timer.dataset.end=a.end_ms||0; e.refs.timer.dataset.status=a.status;
   if(prevStatus[a.id] && prevStatus[a.id]!=="done" && a.status==="done"){
-    e.root.classList.add("justdone"); confetti(e.root); ding(); setTimeout(()=>e.root.classList.remove("justdone"),900); }
+    e.root.classList.add("justdone"); confetti(e.root); ding();
+    const fmsg=nm+" — "+t("finishedToast"); toast(fmsg); announce(fmsg);  // visual + SR cue, survives a muted tab
+    setTimeout(()=>e.root.classList.remove("justdone"),900); }
   prevStatus[a.id]=a.status; e.status=a.status;
   if(openId===a.id){ openData=a; fillDrawer(a); } }
 
 function ensureRoom(sess){ let r=rooms[sess]; if(r) return r;
   const section=document.createElement("section"); section.className="room";
+  section.style.setProperty("--room-accent", colorFor(sess));  // a stable hue per conversation
+  section.setAttribute("role","group");
   section.innerHTML='<div class="rh"><span class="rt"></span><span class="spacer"></span><span class="rc"></span></div><div class="floor"></div>';
   r={ section, floor:section.querySelector(".floor"), rt:section.querySelector(".rt"), rc:section.querySelector(".rc") };
   rooms[sess]=r; return r; }
 
+function emptyHTML(kind){
+  // kind: "office" (first run / nothing at all) | "noactive" | "nonewindow" | "nomatch"
+  const msg = kind==="noactive" ? t("emptyNoActive") : kind==="nonewindow" ? t("emptyNoneInWindow")
+            : kind==="nomatch" ? t("emptyNoMatch") : t("emptyOffice");
+  let h='<div class="e-scene" aria-hidden="true">🏢</div><div class="e-title">'+esc(msg)+'</div>';
+  if(kind==="office") h+='<div class="e-sub">'+esc(t("emptySub"))+'</div>'
+                        +'<button class="btn-demo" type="button">'+esc(t("watchDemo"))+'</button>';
+  return h;
+}
+function matchesSearch(a,q){ return (
+  (a.role||"").toLowerCase().indexOf(q)>=0 ||
+  (a.task||"").toLowerCase().indexOf(q)>=0 ||
+  (a.tool||"").toLowerCase().indexOf(q)>=0 ||
+  personaName(a).toLowerCase().indexOf(q)>=0 ||
+  roomLabel(a).toLowerCase().indexOf(q)>=0 ); }
+function setDemo(on){ demoMode=on; document.getElementById("demoChip").hidden=!on;
+  // The demo's showpiece is the running->done finish beat (confetti+chime), which
+  // only fires on a visible card -- so demo mode must show finished agents. On
+  // exit, restore the user's saved preference. (Not persisted: a demo shouldn't
+  // overwrite the real toggle. prevStatus is empty for fresh cards, so no phantom confetti.)
+  const cb=document.getElementById("showDone");
+  showDone = on ? true : (function(){ try{ return localStorage.getItem("ct_showDone")==="1"; }catch(e){ return false; } })();
+  cb.checked=showDone;
+  try{ const u=new URL(location.href); if(on) u.searchParams.set("demo","1"); else u.searchParams.delete("demo");
+    history.replaceState(null,"",u.pathname+u.search); }catch(e){}
+  poll(); }
+
 function render(payload){
-  const all=(payload&&payload.agents)||[];
+  if(payload) lastPayload=payload;       // cache so search/filter can re-render without a fetch
+  const all=(lastPayload&&lastPayload.agents)||[];
   const bn=document.getElementById("banner");
-  const uv=(payload&&payload.unknown_versions)||[];
-  if(uv.length){ bn.textContent=bannerText((payload.tested_version||""),uv.join(", ")); bn.hidden=false; }
+  const uv=(lastPayload&&lastPayload.unknown_versions)||[];
+  if(uv.length){ bn.innerHTML=esc(bannerText((lastPayload.tested_version||""),uv.join(", ")))
+      +' <a class="drift-link" href="'+DRIFT_URL+'" target="_blank" rel="noopener">'+esc(t("reportDrift"))+'</a>';
+    bn.hidden=false; }
   else bn.hidden=true;
   const app=document.getElementById("app");
   const em=app.querySelector(".empty"); if(em) em.remove();
@@ -675,18 +920,32 @@ function render(payload){
   for(const a of all){ const s=a.session_full; const v=stat[s]||(stat[s]={running:0,stale:0,done:0,label:roomLabel(a),sid:a.session,mtime:0});
     if(v[a.status]!==undefined) v[a.status]++; v.mtime=Math.max(v.mtime,a.mtime_ms||0); }
 
-  const visible = showDone ? all : all.filter(a=>a.status!=="done");
+  const q=(searchQuery||"").toLowerCase().trim();
+  const base = showDone ? all : all.filter(a=>a.status!=="done");
+  const visible = q ? base.filter(a=>matchesSearch(a,q)) : base;
   const sess=[...new Set(visible.map(a=>a.session_full))];
   sess.sort((x,y)=>((stat[y].running>0)-(stat[x].running>0))||(stat[y].mtime-stat[x].mtime));
 
   // drop workers no longer visible
   const need=new Set(visible.map(a=>a.id));
   for(const id in els){ if(!need.has(id)){ els[id].root.remove(); delete els[id]; } }
+  // Reconcile prevStatus for EVERY agent (not just visible ones): record the
+  // status of hidden/filtered agents so a later toggle can't replay a stale
+  // running->done as a fresh finish (confetti/ding/toast), and prune ids that
+  // left the payload so the map can't grow unbounded.
+  { const live=new Set(all.map(a=>a.id));
+    for(const a of all){ if(!need.has(a.id)) prevStatus[a.id]=a.status; }
+    for(const id in prevStatus){ if(!live.has(id)) delete prevStatus[id]; } }
 
-  for(const s of sess){ const r=ensureRoom(s); app.appendChild(r.section);
+  // only re-append sections when the room order actually changed (avoids layout
+  // churn + animation interrupts every 1.5 s); only rewrite header strings on change.
+  const orderKey=sess.join("|"); const reorder=(orderKey!==lastOrderKey); lastOrderKey=orderKey;
+  for(const s of sess){ const r=ensureRoom(s); if(reorder) app.appendChild(r.section);
     const st=stat[s];
-    r.rt.innerHTML='💬 '+esc(st.label)+' <small>'+esc(st.sid)+'</small>';
-    r.rc.innerHTML='🟢 <b>'+st.running+'</b>'+(st.stale?' · <i>⏳'+st.stale+'</i>':'')+(st.done?' · <u>✓'+st.done+'</u>':'');
+    const rtHTML='💬 '+esc(st.label)+' <small>'+esc(st.sid)+'</small>';
+    if(r._rt!==rtHTML){ r.rt.innerHTML=rtHTML; r._rt=rtHTML; }
+    const rcHTML='🟢 <b>'+st.running+'</b>'+(st.stale?' · <i>⏳'+st.stale+'</i>':'')+(st.done?' · <u>✅'+st.done+'</u>':'');
+    if(r._rc!==rcHTML){ r.rc.innerHTML=rcHTML; r._rc=rcHTML; }
     for(const a of visible){ if(a.session_full!==s) continue;
       let e=els[a.id]; if(!e){ e=createWS(a); els[a.id]=e; r.floor.appendChild(e.root); }
       else if(e.root.parentElement!==r.floor){ r.floor.appendChild(e.root); }
@@ -694,10 +953,16 @@ function render(payload){
 
   for(const s in rooms){ if(!sess.includes(s)){ rooms[s].section.remove(); delete rooms[s]; } }
   if(!visible.length){ const d=document.createElement("div"); d.className="empty";
-    d.textContent=showDone?t("emptyNoneInWindow"):t("emptyNoActive"); app.appendChild(d); }
+    const kind = q ? "nomatch" : (all.length===0 ? "office" : (showDone?"nonewindow":"noactive"));
+    d.innerHTML=emptyHTML(kind); app.appendChild(d); }
 
-  const run=all.filter(a=>a.status==="running").length, done=all.filter(a=>a.status==="done").length;
-  document.getElementById("counts").innerHTML='<span class="c-run">🟢 '+run+' '+t("working")+'</span><span class="c-done">✅ '+done+' '+t("finished")+'</span>';
+  const run=all.filter(a=>a.status==="running").length, idle=all.filter(a=>a.status==="stale").length, done=all.filter(a=>a.status==="done").length;
+  document.getElementById("counts").innerHTML='<span class="c-run">🟢 '+run+' '+t("working")+'</span>'
+    +(idle?'<span class="c-idle">⏳ '+idle+' '+t("idleN")+'</span>':'')
+    +'<span class="c-done">✅ '+done+' '+t("finished")+'</span>';
+
+  const dg=document.getElementById("diag"); const sk=(lastPayload&&lastPayload.skipped)||0;
+  if(sk>0){ dg.textContent=t("skippedN")(sk); dg.hidden=false; } else dg.hidden=true;
 }
 
 function fillDrawer(a){ document.getElementById("dav").textContent=a.emoji;
@@ -705,27 +970,77 @@ function fillDrawer(a){ document.getElementById("dav").textContent=a.emoji;
   const now=Date.now(); const dur=(a.status==="done"&&a.end_ms)?(a.end_ms-a.start_ms):(now-(a.start_ms||now));
   const stx=a.status==="running"?t("dWorking"):a.status==="done"?t("dDone"):t("dStale");
   let h='<div class="row"><span class="chip">'+esc(stx)+'</span>'+
-    (a.subagent_type?'<span class="chip">'+esc(a.subagent_type)+'</span>':'')+
-    '<span class="chip">'+(a.status==="done"?t("dDuration"):t("dElapsed"))+fmt(dur)+'</span>'+
-    (a.tool?'<span class="chip">'+esc(a.tool)+'</span>':'')+'</div>';
+    (a.subagent_type?'<span class="chip" dir="auto">'+esc(a.subagent_type)+'</span>':'')+
+    '<span class="chip" dir="auto">'+(a.status==="done"?t("dDuration"):t("dElapsed"))+fmt(dur)+'</span>'+
+    (a.tool?'<span class="chip" dir="auto">'+esc(a.tool)+'</span>':'')+'</div>';
   h+='<h3>'+esc(t("dAction"))+'</h3><div class="box">'+esc(activityLabel(a))+'</div>';
-  h+='<h3>'+esc(t("dTask"))+'</h3><div class="box ltr">'+esc(a.task||t("taskUnavailable"))+'</div>';
-  if(a.result) h+='<h3>'+esc(t("dResult"))+'</h3><div class="box ltr">'+esc(a.result)+'</div>';
+  // task & result are journal content (could be English or Hebrew) -> dir=auto so
+  // each adapts to its own text instead of being forced LTR (broke Hebrew tasks).
+  h+='<h3>'+esc(t("dTask"))+'</h3><div class="box" dir="auto" tabindex="0" role="region" aria-label="'+esc(t("dTask"))+'">'+esc(a.task||t("taskUnavailable"))+'</div>';
+  if(a.result) h+='<h3>'+esc(t("dResult"))+'</h3><div class="box" dir="auto" tabindex="0" role="region" aria-label="'+esc(t("dResult"))+'">'+esc(a.result)+'</div>';
   document.getElementById("dbody").innerHTML=h; }
-function openDrawer(id){ const e=els[id]; if(!e) return; openId=id; openData=e.data; fillDrawer(e.data);
-  document.getElementById("drawer").classList.add("open"); document.getElementById("backdrop").classList.add("show"); }
-function closeDrawer(){ openId=null; openData=null; document.getElementById("drawer").classList.remove("open"); document.getElementById("backdrop").classList.remove("show"); }
+let lastFocused=null;
+function openDrawer(id){ const e=els[id]; if(!e) return; lastFocused=document.activeElement;
+  openId=id; openData=e.data; fillDrawer(e.data);
+  document.getElementById("drawer").classList.add("open"); document.getElementById("backdrop").classList.add("show");
+  document.querySelectorAll("header,#app").forEach(el=>{ el.inert=true; el.setAttribute("aria-hidden","true"); });  // take background out of the a11y tree
+  document.getElementById("dclose").focus(); }                       // move focus into the dialog
+function closeDrawer(){ if(!openId) return; openId=null; openData=null;
+  document.getElementById("drawer").classList.remove("open"); document.getElementById("backdrop").classList.remove("show");
+  document.querySelectorAll("header,#app").forEach(el=>{ el.inert=false; el.removeAttribute("aria-hidden"); });  // return background to the a11y tree
+  if(lastFocused&&lastFocused.focus){ try{ lastFocused.focus(); }catch(_){} } lastFocused=null; }  // restore focus
 document.getElementById("dclose").addEventListener("click",closeDrawer);
 document.getElementById("backdrop").addEventListener("click",closeDrawer);
-document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeDrawer(); });
-document.getElementById("showDone").addEventListener("change",e=>{ showDone=e.target.checked; poll(); });
+// trap Tab within the open drawer (modal dialog behavior)
+document.getElementById("drawer").addEventListener("keydown",e=>{ if(e.key!=="Tab"||!openId) return;
+  const f=document.getElementById("drawer").querySelectorAll('button,[href],input,[tabindex]:not([tabindex="-1"])');
+  if(!f.length) return; const first=f[0], last=f[f.length-1];
+  if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); } });
+// arrow-key movement across cards (RTL mirrors the horizontal direction)
+function moveCardFocus(e){ const cards=[].slice.call(document.querySelectorAll(".ws")); if(!cards.length) return;
+  const i=cards.indexOf(document.activeElement);
+  if(i<0) return;            // no card focused -> let the browser scroll the page (Tab/click enters the grid)
+  e.preventDefault();
+  let d=(e.key==="ArrowRight"||e.key==="ArrowDown")?1:-1;
+  if((e.key==="ArrowLeft"||e.key==="ArrowRight") && document.documentElement.dir==="rtl") d=-d;
+  cards[Math.max(0,Math.min(cards.length-1,i+d))].focus(); }
+// global shortcuts: Esc closes; "/" focuses search; "f" toggles finished; arrows move card focus
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){ if(openId) closeDrawer(); return; }
+  if(openId) return;
+  const tag=((document.activeElement&&document.activeElement.tagName)||"").toLowerCase();
+  if(tag==="input"||tag==="textarea") return;            // don't hijack typing
+  if(e.key==="/"||e.code==="Slash"){ e.preventDefault(); document.getElementById("search").focus(); }
+  else if(e.key==="f"||e.key==="F"||e.code==="KeyF"){ const cb=document.getElementById("showDone"); cb.checked=!cb.checked;
+    showDone=cb.checked; try{ localStorage.setItem("ct_showDone",showDone?"1":"0"); }catch(_){} render(); }
+  else if(e.key.indexOf("Arrow")===0){ moveCardFocus(e); } });
+document.getElementById("showDone").addEventListener("change",e=>{ showDone=e.target.checked;
+  try{ localStorage.setItem("ct_showDone",showDone?"1":"0"); }catch(_){} render(); });
 document.getElementById("langBtn").addEventListener("click",()=>setLang(lang==="en"?"he":"en"));
+document.getElementById("app").addEventListener("click",e=>{ if(e.target.closest(".btn-demo")) setDemo(true); });
+document.getElementById("exitDemoBtn").addEventListener("click",()=>setDemo(false));
+document.getElementById("search").addEventListener("input",e=>{ searchQuery=e.target.value;
+  clearTimeout(searchT); searchT=setTimeout(()=>render(),120); });   // client-side filter over the cached payload
+document.getElementById("muteBtn").addEventListener("click",()=>setMuted(!muted));
 
 setInterval(()=>{ const now=Date.now(); document.querySelectorAll(".timer").forEach(el=>{
-  const s=+el.dataset.start,en=+el.dataset.end,st=el.dataset.status; if(!s) return;
+  const s=+el.dataset.start,en=+el.dataset.end,st=el.dataset.status;
+  if(!s){ el.textContent=fmt(null); return; }   // unknown start -> "--:--" instead of blank
   el.textContent=fmt((st==="done"&&en)?(en-s):(now-s)); }); },1000);
 
-async function poll(){ try{ const r=await fetch("/api/agents",{cache:"no-store"}); render(await r.json()); }catch(e){} }
+let polling=false, failStreak=0;
+function setConnected(ok){ const el=document.getElementById("reconnect");
+  el.hidden=ok; if(!ok) el.textContent=t("reconnecting"); }
+async function poll(){ if(polling) return;          // in-flight guard: never stack scans
+  polling=true;
+  try{ const ph=(location.search.match(/[?&]phase=(\\d{1,4})\\b/)||[])[1];   // forward a page-level ?phase to freeze a frame (screenshots)
+    const q=demoMode?("?demo=1"+(ph?("&phase="+ph):"")):"";
+    const r=await fetch(API_BASE+"/api/agents"+q,{cache:"no-store"});
+    if(!r.ok) throw new Error("http "+r.status);
+    render(await r.json()); failStreak=0; setConnected(true);
+  }catch(e){ if(++failStreak>=2) setConnected(false); }   // show the banner only after a couple of misses
+  finally{ polling=false; } }
 applyLang(); poll(); setInterval(poll,POLL_MS);
 function unlock(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){} }
 window.addEventListener("click",unlock,{once:true}); window.addEventListener("keydown",unlock,{once:true});
@@ -744,13 +1059,58 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        # CORS: allow ONLY a VS Code webview origin to read the API, so the
+        # journals stay unreadable to an ordinary web page (the server is
+        # loopback-only regardless). The VS Code extension embeds this page in a
+        # WebviewPanel and fetches from here.
+        origin = self.headers.get("Origin", "")
+        if origin.startswith("vscode-webview://"):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        # Defense-in-depth: even though every sink is escaped and we bind to
+        # loopback, a restrictive CSP keeps a future regression from exfiltrating
+        # journal text or loading remote code. 'unsafe-inline' is unavoidable
+        # because the single-file design inlines all script/style in PAGE.
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; "
+            "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; base-uri 'none'; form-action 'none'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        # Identity header: lets the VS Code extension confirm it is talking to the
+        # real server (not some other process squatting the port) before it embeds
+        # the page in a scripts-enabled webview.
+        self.send_header("X-Claude-Theater", __version__)
         self.end_headers()
         self.wfile.write(data)
 
     def do_GET(self):
-        if self.path.startswith("/api/agents"):
+        # DNS-rebinding guard: a loopback bind + CORS still let a malicious page
+        # rebind its own hostname to 127.0.0.1 and read /api/agents *same-origin*
+        # (no CORS check applies). Rejecting any non-loopback Host closes that --
+        # the rebound request carries the attacker's hostname in Host. An empty
+        # Host (HTTP/1.0 local clients) is allowed; browsers always send one.
+        host = (urlsplit("//" + self.headers.get("Host", "")).hostname or "").lower()
+        if host and host not in ("localhost", "127.0.0.1", "::1"):
+            self._send(403, "forbidden", "text/plain; charset=utf-8")
+            return
+        path = self.path.split("?", 1)[0]   # route on the path; query (?demo=1) is read separately
+        if path == "/api/agents":
             try:
-                payload = demo_payload() if DEMO else scan_agents()
+                # --demo forces demo for the whole process; ?demo=1 lets the
+                # empty-office "Watch a demo" button (and a shareable URL) pull
+                # the synthetic office on demand. Both stay read-only and local:
+                # demo_payload() never touches the real journals either way.
+                _q = parse_qs(urlsplit(self.path).query)
+                want_demo = DEMO or _q.get("demo", [""])[0] == "1"
+                if want_demo:
+                    _ph = _q.get("phase", [""])[0]
+                    # bound the length so a huge digit string can't force an O(n^2)
+                    # int parse on Python < 3.11 (no int-str conversion limit there)
+                    payload = demo_payload(int(_ph) if (_ph.isdigit() and len(_ph) <= 4) else None)
+                else:
+                    payload = scan_agents()
                 body = json.dumps(payload, ensure_ascii=False)
             except Exception as e:
                 # Keep detail server-side only; the response can reach a local
@@ -758,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
                 print("!! scan error:", repr(e))
                 body = json.dumps({"error": "scan failed"})
             self._send(200, body, "application/json; charset=utf-8")
-        elif self.path == "/" or self.path.startswith("/index"):
+        elif path == "/" or path.startswith("/index"):
             self._send(200, PAGE, "text/html; charset=utf-8")
         else:
             self._send(404, "not found", "text/plain; charset=utf-8")

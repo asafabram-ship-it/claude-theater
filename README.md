@@ -5,16 +5,20 @@
 
 **Watch your Claude Code subagents work — a live office for every conversation.**
 
-<!-- HERO GIF GOES HERE (top of README, < 10 MB, ~10 fps).
-     Record the full loop with ScreenToGif: a character walks in, sits at a
-     desk, head bobs + hands type, then confetti + finish pop. Replace the
-     placeholder line below with:  ![Claude Theater](docs/hero.gif)          -->
+<!-- Absolute raw URL so the image renders on PyPI too (relative paths don't).
+     Update the owner/repo if it differs from asafabram/claude-theater. -->
+<img src="https://raw.githubusercontent.com/asafabram/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
 
-<img src="docs/hero.gif" alt="Claude Theater — animated office of Claude Code subagents" width="720">
+<sub>The demo office (`claude-theater --demo`). A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
 
-<sub>A community visualizer **for Claude Code**. Not affiliated with Anthropic.</sub>
+<!-- TODO: record an animated Hero GIF (< 10 MB, ~10 fps) with ScreenToGif —
+     a character walks in, sits, head-bobs + types, then confetti + finish pop —
+     and swap the static screenshot above for it. -->
 
 </div>
+
+Try it now, no Claude Code session required — `pipx run claude-theater --demo`
+spins up the office above with synthetic agents.
 
 ---
 

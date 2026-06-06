@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem or use case?
+      description: What are you trying to do that's awkward or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution (optional)
+      description: How might it look or work? Adding a language or a tool label is often a one-file change — see CONTRIBUTING.md.

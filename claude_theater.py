@@ -17,6 +17,7 @@ Pure stdlib. No pip installs needed to run.
 """
 import json
 import os
+import sys
 import glob
 import time
 import datetime
@@ -25,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 __version__ = "0.1.0"
 
 PORT = 7333
+DEMO = False               # --demo: serve a synthetic office, never read real journals
 MAX_AGE_MIN = 180          # only show agents whose file changed in the last N minutes
 RUNNING_STALE_SEC = 90     # a "running" agent untouched this long is shown as idle
 
@@ -346,6 +348,73 @@ def scan_agents():
     }
 
 
+# ---------------------------------------------------------------------------
+# Demo mode (--demo): a synthetic, populated office for screenshots / the Hero
+# GIF and for a "try it instantly" first run. Builds the payload in memory and
+# NEVER reads or writes the real ~/.claude/projects journals.
+# ---------------------------------------------------------------------------
+def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type="", start_offset=60, result=None):
+    now = time.time()
+    pid = persona_index(aid)
+    return {
+        "id": aid, "persona_id": pid, "emoji": PERSONA_EMOJI[pid],
+        "role": role, "subagent_type": subagent_type,
+        "status": status, "tool": tool or "",
+        "task": task, "task_short": short_task(task),
+        "result": result if status == "done" else None,
+        "start_ms": int((now - start_offset) * 1000),
+        "end_ms": int((now - 2) * 1000) if status == "done" else None,
+        "session": session[:8], "session_full": session,
+        "cwd": cwd, "mtime_ms": int(now * 1000),
+    }
+
+
+def demo_payload():
+    now = time.time()
+    cwd = "/home/dev/acme-web"
+    s1 = "demo-session-frontend-1111"
+    s2 = "demo-session-research-2222"
+    # One agent flips running <-> done on a ~16s cycle, so the finish animation
+    # (confetti + chime) is recordable in a looping GIF.
+    finishing = (int(now) % 16) < 6
+    agents = [
+        _demo_agent("demo-research-aa", s2, cwd, "running", "WebSearch",
+                    "Research incremental static regeneration approaches and summarize the trade-offs.",
+                    role="research the ISR landscape", subagent_type="general-purpose", start_offset=95),
+        _demo_agent("demo-reader-bb", s1, cwd, "running", "Read",
+                    "Read the auth middleware and map every place the session token is validated.",
+                    role="map session-token validation", subagent_type="Explore", start_offset=42),
+        _demo_agent("demo-grep-cc", s1, cwd, "running", "Grep",
+                    "Find all TODO and FIXME comments across the repo and group them by file.",
+                    start_offset=18),
+        _demo_agent("demo-mcp-dd", s2, cwd, "running", "mcp__github__search_issues",
+                    "Pull the open issues labeled 'bug' and cluster them by component.",
+                    role="triage open bugs", subagent_type="general-purpose", start_offset=63),
+        _demo_agent("demo-build-ee", s1, cwd, "stale", "Bash",
+                    "Run the full test suite and report any failures.", start_offset=320),
+        _demo_agent("demo-writer-ff", s2, cwd, "done", "Write",
+                    "Draft the migration guide for the v2 config format.",
+                    role="draft the v2 migration guide", subagent_type="general-purpose", start_offset=150,
+                    result="Done. Wrote migration-v2.md: a step-by-step guide covering the renamed keys, the "
+                           "deprecation timeline, and a codemod snippet. Flagged two breaking changes for manual review."),
+        _demo_agent("demo-finisher-gg", s1, cwd, "done" if finishing else "running", "StructuredOutput",
+                    "Summarize the security review findings into a prioritized list.",
+                    role="summarize the security review", subagent_type="code-reviewer", start_offset=51,
+                    result="Summary: 3 high, 5 medium, 11 low. Top item: the password-reset token is not "
+                           "compared in constant time."),
+    ]
+    order = {"running": 0, "stale": 1, "done": 2}
+    agents.sort(key=lambda x: (order.get(x["status"], 3), -(x["start_ms"] or 0)))
+    versions = {"2.1.0"}
+    return {
+        "agents": agents,
+        "versions": sorted(versions),
+        "tested_version": KNOWN_CC_VERSIONS[-1],
+        "unknown_versions": unknown_versions(versions),
+        "skipped": 0,
+    }
+
+
 PAGE = """<!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
@@ -603,12 +672,12 @@ function render(payload){
 
   // per-session stats from ALL agents (so the header can show ✓done even when hidden)
   const stat={};
-  for(const a of all){ const s=a.session_full; const v=stat[s]||(stat[s]={run:0,stale:0,done:0,label:roomLabel(a),sid:a.session,mtime:0});
-    v[a.status]++; v.mtime=Math.max(v.mtime,a.mtime_ms||0); }
+  for(const a of all){ const s=a.session_full; const v=stat[s]||(stat[s]={running:0,stale:0,done:0,label:roomLabel(a),sid:a.session,mtime:0});
+    if(v[a.status]!==undefined) v[a.status]++; v.mtime=Math.max(v.mtime,a.mtime_ms||0); }
 
   const visible = showDone ? all : all.filter(a=>a.status!=="done");
   const sess=[...new Set(visible.map(a=>a.session_full))];
-  sess.sort((x,y)=>((stat[y].run>0)-(stat[x].run>0))||(stat[y].mtime-stat[x].mtime));
+  sess.sort((x,y)=>((stat[y].running>0)-(stat[x].running>0))||(stat[y].mtime-stat[x].mtime));
 
   // drop workers no longer visible
   const need=new Set(visible.map(a=>a.id));
@@ -617,7 +686,7 @@ function render(payload){
   for(const s of sess){ const r=ensureRoom(s); app.appendChild(r.section);
     const st=stat[s];
     r.rt.innerHTML='💬 '+esc(st.label)+' <small>'+esc(st.sid)+'</small>';
-    r.rc.innerHTML='🟢 <b>'+st.run+'</b>'+(st.stale?' · <i>⏳'+st.stale+'</i>':'')+(st.done?' · <u>✓'+st.done+'</u>':'');
+    r.rc.innerHTML='🟢 <b>'+st.running+'</b>'+(st.stale?' · <i>⏳'+st.stale+'</i>':'')+(st.done?' · <u>✓'+st.done+'</u>':'');
     for(const a of visible){ if(a.session_full!==s) continue;
       let e=els[a.id]; if(!e){ e=createWS(a); els[a.id]=e; r.floor.appendChild(e.root); }
       else if(e.root.parentElement!==r.floor){ r.floor.appendChild(e.root); }
@@ -681,7 +750,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agents"):
             try:
-                body = json.dumps(scan_agents(), ensure_ascii=False)
+                payload = demo_payload() if DEMO else scan_agents()
+                body = json.dumps(payload, ensure_ascii=False)
             except Exception as e:
                 # Keep detail server-side only; the response can reach a local
                 # process or a pasted screenshot, and str(e) may embed the home path.
@@ -694,17 +764,41 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "not found", "text/plain; charset=utf-8")
 
 
+USAGE = """Claude Theater %s - a live office of your Claude Code subagents.
+
+Usage: claude-theater [options]
+
+  --demo         show a synthetic, populated office (reads no real journals)
+  --no-browser   do not open the browser on start
+  --version,-V   print version and exit
+  --help,-h      show this help and exit
+
+Then open http://localhost:%d
+"""
+
+
 def main():
-    if not os.path.isdir(PROJECTS_DIR):
+    global DEMO
+    args = sys.argv[1:]
+    if "--version" in args or "-V" in args:
+        print("claude-theater %s" % __version__)
+        return
+    if "--help" in args or "-h" in args:
+        print(USAGE % (__version__, PORT))
+        return
+
+    DEMO = "--demo" in args
+    no_browser = "--no-browser" in args or bool(os.environ.get("CLAUDE_THEATER_NO_BROWSER"))
+
+    if not DEMO and not os.path.isdir(PROJECTS_DIR):
         print("!! projects dir not found:", PROJECTS_DIR)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = "http://localhost:%d" % PORT
-    print("Claude Theater %s -> %s   (Ctrl+C to stop)" % (__version__, url))
-    print("Watching:", PROJECTS_DIR)
+    print("Claude Theater %s%s -> %s   (Ctrl+C to stop)" % (__version__, " [demo]" if DEMO else "", url))
+    print("Demo mode: synthetic office, no real journals are read." if DEMO else "Watching: " + PROJECTS_DIR)
     # Open the browser only after the socket is bound (no first-load race), and
-    # so pipx/pip users get the same one-click UX as start.cmd. Set
-    # CLAUDE_THEATER_NO_BROWSER=1 to skip (e.g. headless / CI).
-    if not os.environ.get("CLAUDE_THEATER_NO_BROWSER"):
+    # so pipx/pip users get the same one-click UX as start.cmd.
+    if not no_browser:
         try:
             import webbrowser
             webbrowser.open(url)

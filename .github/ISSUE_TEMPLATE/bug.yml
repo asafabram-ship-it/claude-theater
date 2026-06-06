@@ -1,0 +1,26 @@
+name: Bug report
+description: Something doesn't work as expected
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, Claude Code version, claude-theater version (`claude-theater --version`).
+      placeholder: "Windows 11, Python 3.12, Claude Code 2.1.x, claude-theater 0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output (optional)
+      description: Anything Claude Theater printed to the terminal. Redact any paths/content you'd rather not share.
+      render: text

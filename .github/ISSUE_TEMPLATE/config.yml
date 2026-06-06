@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/asafabram/claude-theater/blob/main/CONTRIBUTING.md
+    about: How to scrub a journal sample, add a language, and set up for development.

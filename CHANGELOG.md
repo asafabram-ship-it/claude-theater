@@ -30,6 +30,10 @@ SemVer policy for this tool:
 - Non-blocking version banner when journals come from an untested Claude Code
   version.
 - Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware).
+- `--demo` mode: a synthetic, populated office (no real journals read) for a
+  zero-setup first run and for capturing screenshots / the Hero GIF.
+- `--version`, `--help`, `--no-browser` flags; the app opens the browser itself
+  once the port is bound.
 - Packaging for PyPI/pipx (`claude-theater` / `python -m claude_theater`) and
   CI across Windows/macOS/Linux × Python 3.9–3.13.
 

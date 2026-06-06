@@ -1,0 +1,40 @@
+name: Format-drift report
+description: A Claude Code version renders oddly or trips the version banner
+title: "[drift] "
+labels: ["format-drift"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A scrubbed journal sample from a new Claude Code version is the single
+        most valuable contribution. **Never paste unscrubbed journal content** —
+        these files contain real conversation text. Replace every task/result
+        with placeholder text and keep only the structure.
+  - type: input
+    id: cc-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+      placeholder: "2.2.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What looked wrong?
+      description: The banner text, a mislabeled or empty agent, a missing room, wrong status…
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Scrubbed agent-*.jsonl sample
+      description: A few representative lines, with all real prompt/result text replaced.
+      render: json
+  - type: checkboxes
+    id: scrubbed
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed all real prompt/result content from the sample above.
+          required: true

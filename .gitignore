@@ -15,6 +15,6 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Internal launch/strategy notes — must NOT ship to a public repo.
-# Remove this line if you decide to keep it in the private repo.
+# Internal launch/strategy/planning notes — kept local, not shipped.
 DISTRIBUTION.md
+UPGRADE-PLAN.md

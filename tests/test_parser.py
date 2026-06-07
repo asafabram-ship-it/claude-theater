@@ -28,7 +28,7 @@ FIX = os.path.join(ROOT, "fixtures")
 AGENT_KEYS = {
     "id", "persona_id", "emoji", "role", "subagent_type", "status", "tool",
     "task", "task_short", "result", "start_ms", "end_ms", "session",
-    "session_full", "cwd", "project", "mtime_ms",
+    "session_full", "cwd", "project", "mtime_ms", "is_session",
 }
 PAYLOAD_KEYS = {"agents", "versions", "tested_version", "unknown_versions", "skipped"}
 LEGACY_FIELDS = ("name", "activity", "banner")  # removed in the bilingual refactor

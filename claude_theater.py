@@ -202,6 +202,7 @@ def unknown_versions(versions):
 
 _NAME_CACHE = {}  # parent_file -> (mtime, {prompt: {description, subagent_type}})
 _PROJECT_CACHE = {}  # parent_file -> (mtime, project_cwd)  -- the conversation's real working dir
+_SESSION_CACHE = {}  # session_file -> (mtime, (topic, cwd))  -- a top-level conversation's subject + dir
 
 
 def parent_session_file(agent_path, session_id):
@@ -295,6 +296,91 @@ def project_cwd_for(parent_file):
     return cwd
 
 
+def _first_user_text(rec):
+    """The text of a user message record (string content, or the first text block)."""
+    msg = rec.get("message", {})
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "text":
+                return b.get("text", "") or ""
+            if isinstance(b, str):
+                return b
+    return ""
+
+
+def session_summary(session_file):
+    """A top-level conversation's subject (its first user message) and working dir,
+    cached by mtime. The first lines can be metadata; scan a bounded prefix."""
+    try:
+        mtime = os.path.getmtime(session_file)
+    except OSError:
+        return ("", "")
+    cached = _SESSION_CACHE.get(session_file)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    topic, cwd = "", ""
+    try:
+        with open(session_file, "r", encoding="utf-8", errors="replace") as f:
+            for i, ln in enumerate(f):
+                if i > 80:
+                    break
+                if '"cwd"' not in ln and '"type":"user"' not in ln:
+                    continue
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    continue
+                if not cwd:
+                    cwd = rec.get("cwd", "") or ""
+                if not topic and rec.get("type") == "user":
+                    topic = " ".join(_first_user_text(rec).split())
+                if topic and cwd:
+                    break
+    except Exception:
+        pass
+    res = (topic, cwd)
+    _SESSION_CACHE[session_file] = (mtime, res)
+    return res
+
+
+def scan_sessions(now):
+    """Top-level conversations as room-leading entries, so every recent conversation
+    shows up (not only those that spawned subagents). Shape matches a subagent entry
+    plus is_session=True; start_ms is the last-activity time so the timer reads as
+    'active/idle' rather than the (possibly hours-long) full session age."""
+    entries = []
+    try:
+        paths = glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl"))
+    except Exception:
+        paths = []
+    for path in paths:
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if (now - mtime) / 60.0 > MAX_AGE_MIN:
+            continue
+        topic, cwd = session_summary(path)
+        uuid = os.path.basename(path)[:-6]
+        status = "running" if (now - mtime) <= RUNNING_STALE_SEC else "stale"
+        pid = persona_index(uuid)
+        mtime_ms = int(mtime * 1000)
+        entries.append({
+            "id": uuid, "persona_id": pid, "emoji": PERSONA_EMOJI[pid],
+            "role": "", "subagent_type": "",
+            "status": status, "tool": "",
+            "task": topic, "task_short": short_task(topic), "result": None,
+            "start_ms": mtime_ms, "end_ms": None,
+            "session": uuid[:8], "session_full": uuid,
+            "cwd": cwd, "project": cwd, "mtime_ms": mtime_ms,
+            "is_session": True,
+        })
+    return entries
+
+
 def extract_task(first_ev):
     return first_ev.text if first_ev else ""
 
@@ -386,7 +472,7 @@ def scan_agents():
                 "start_ms": start_ms, "end_ms": end_ms,
                 "session": session[:8], "session_full": session,
                 "cwd": first_ev.raw.get("cwd", ""), "project": project,
-                "mtime_ms": int(mtime * 1000),
+                "mtime_ms": int(mtime * 1000), "is_session": False,
             }
             _AGENT_CACHE[path] = (mtime, size, adict, is_done, fvers, fskip)
 
@@ -418,8 +504,13 @@ def scan_agents():
     for gone in [p for p in _AGENT_CACHE if p not in seen]:
         del _AGENT_CACHE[gone]
 
+    # Top-level conversations as room leads, so every recent conversation shows up
+    # (not only those that spawned subagents). They share a room with their subagents
+    # (same session id). is_session sorts first within a status so the lead shows first.
+    agents.extend(scan_sessions(now))
+
     order = {"running": 0, "stale": 1, "done": 2}
-    agents.sort(key=lambda a: (order.get(a["status"], 3), -(a["start_ms"] or 0)))
+    agents.sort(key=lambda a: (order.get(a["status"], 3), -(1 if a.get("is_session") else 0), -(a["start_ms"] or 0)))
     return {
         "agents": agents,
         # "versions" (full set seen) and "skipped" (malformed-line count) are now
@@ -448,7 +539,8 @@ def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type=""
         "start_ms": int((now - start_offset) * 1000),
         "end_ms": int((now - 2) * 1000) if status == "done" else None,
         "session": session[:8], "session_full": session,
-        "cwd": cwd, "mtime_ms": int(now * 1000),
+        "cwd": cwd, "project": cwd, "mtime_ms": int(now * 1000),
+        "is_session": False,
     }
 
 
@@ -596,6 +688,16 @@ PAGE = """<!DOCTYPE html>
   .rt{ font-weight:700; color:var(--ink-2); } .rt small{ color:var(--ink-dimmer); font-weight:400; margin-inline-start:6px; }
   .rc{ color:var(--ink-dim); }
   .rc b{ color:var(--ok); } .rc i{ font-style:normal; color:var(--idle); } .rc u{ text-decoration:none; color:var(--done); }
+  /* per-conversation "show finished" toggle in the room header */
+  .rdone{ font:inherit; background:none; border:1px solid transparent; color:var(--done); cursor:pointer;
+          padding:0 5px; border-radius:6px; opacity:.55; }
+  .rdone:hover{ background:rgba(255,255,255,.06); opacity:.85; }
+  .rdone.on{ opacity:1; border-color:var(--done); background:rgba(28,197,90,.10); }
+  .rdone:focus-visible{ outline:2px solid var(--done); outline-offset:1px; }
+  /* the conversation itself (room lead) -- marked so it reads apart from its subagents */
+  .ws.is-session::before{ content:"💬"; position:absolute; top:-3px; inset-inline-start:-3px; font-size:12px;
+          filter:drop-shadow(0 1px 1px rgba(0,0,0,.55)); z-index:2; pointer-events:none; }
+  .ws.is-session .name{ color:var(--ink); font-weight:700; }
   .floor{ display:flex; flex-wrap:wrap; gap:4px; padding:13px 12px 16px;
           background:linear-gradient(180deg,transparent 0 60%,rgba(0,0,0,.18)),
                      repeating-linear-gradient(90deg,rgba(255,255,255,.014) 0 42px,transparent 42px 84px); }
@@ -747,6 +849,10 @@ let audioCtx=null, openId=null, openData=null;
 let showDone=(function(){ try{ if(/[?&]show=done\\b/.test(location.search)) return true;
   if(/[?&]demo=1(?:&|$)/.test(location.search)) return true;   // demo must show the finish beat
   return localStorage.getItem("ct_showDone")==="1"; }catch(e){ return false; } })();
+// per-conversation "show finished" overrides; falls back to the global showDone default
+let roomDone=(function(){ try{ return JSON.parse(localStorage.getItem("ct_roomDone")||"{}")||{}; }catch(e){ return {}; } })();
+function roomShowsDone(s){ return (s in roomDone) ? !!roomDone[s] : showDone; }
+function toggleRoomDone(s){ roomDone[s]=!roomShowsDone(s); try{ localStorage.setItem("ct_roomDone",JSON.stringify(roomDone)); }catch(e){} render(); }
 let demoMode=(function(){ try{ return /[?&]demo=1(?:&|$)/.test(location.search); }catch(e){ return false; } })();
 let searchQuery="", lastPayload=null, searchT=null, lastDing=0, lastOrderKey="";
 let muted=(function(){ try{ return localStorage.getItem("ct_muted")==="1"; }catch(e){ return false; } })();
@@ -759,7 +865,7 @@ const PERSONAS_HE=["הבלש","הסופר","השליח","החוקר","הספרן
 const TOOLS_EN={WebSearch:"🔍 Searching",WebFetch:"🌐 Reading page",Read:"📖 Reading",Edit:"✏️ Editing",MultiEdit:"✏️ Editing",Write:"✏️ Writing",NotebookEdit:"✏️ Notebook",Bash:"⚙️ Command",PowerShell:"⚙️ Command",BashOutput:"⚙️ Output",KillShell:"⚙️ Command",SlashCommand:"⌨️ Slash command",Grep:"🔎 Searching code",Glob:"🔎 Files",Task:"👥 Subagent",Agent:"👥 Subagent",TodoWrite:"📝 Todos",Skill:"🧩 Skill",ExitPlanMode:"📋 Plan",StructuredOutput:"🧾 Summarizing"};
 const TOOLS_HE={WebSearch:"🔍 מחפש",WebFetch:"🌐 קורא דף",Read:"📖 קורא",Edit:"✏️ עורך",MultiEdit:"✏️ עורך",Write:"✏️ כותב",NotebookEdit:"✏️ מחברת",Bash:"⚙️ פקודה",PowerShell:"⚙️ פקודה",BashOutput:"⚙️ פלט",KillShell:"⚙️ פקודה",SlashCommand:"⌨️ פקודת סלאש",Grep:"🔎 מחפש קוד",Glob:"🔎 קבצים",Task:"👥 סוכן",Agent:"👥 סוכן",TodoWrite:"📝 משימות",Skill:"🧩 מיומנות",ExitPlanMode:"📋 תכנון",StructuredOutput:"🧾 מסכם"};
 const I18N={
-  en:{ appTitle:"🏢 Claude Theater", docTitle:"Claude Theater", showDone:"Show finished", switchTo:"עברית",
+  en:{ appTitle:"🏢 Claude Theater", docTitle:"Claude Theater", showDone:"Show finished", toggleFinished:"Show/hide finished in this conversation", switchTo:"עברית",
        emptyOffice:"The office is empty",
        emptySub:"Start an agent in Claude Code — or see what a busy office looks like:",
        watchDemo:"▶ Watch a live demo", demoLabel:"Demo", exitDemo:"Exit",
@@ -778,7 +884,7 @@ const I18N={
        actDone:"✅ Done", actStale:"💤 Idle", actThinking:"🤔 Thinking", actMcp:"🔌 MCP tool",
        personas:PERSONAS_EN, tools:TOOLS_EN,
        banner:function(tv,sv){ return "⚠ Tested up to Claude Code "+tv+" · detected "+sv+" — display may be partial"; } },
-  he:{ appTitle:"🏢 משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו", switchTo:"English",
+  he:{ appTitle:"🏢 משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו", toggleFinished:"הצג/הסתר שהושלמו בשיחה זו", switchTo:"English",
        emptyOffice:"המשרד ריק",
        emptySub:"הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:",
        watchDemo:"▶ צפו בדמו חי", demoLabel:"דמו", exitDemo:"יציאה",
@@ -896,7 +1002,7 @@ function toolFamily(tool){ if(!tool) return "";
   return ""; }
 
 function updateWS(e,a){ e.data=a;
-  if(e.status!==a.status) e.root.className="ws "+a.status;
+  if(e.status!==a.status) e.root.className="ws "+a.status+(a.is_session?" is-session":"");
   e.root.dataset.fam=toolFamily(a.tool);
   e.refs.head.textContent=a.emoji;
   const nm=a.role||personaName(a); e.refs.name.textContent=nm; e.refs.name.title=nm;
@@ -904,6 +1010,7 @@ function updateWS(e,a){ e.data=a;
   e.root.setAttribute("aria-label", nm+" — "+actLbl);
   e.refs.timer.dataset.start=a.start_ms||0; e.refs.timer.dataset.end=a.end_ms||0;
   e.refs.timer.dataset.mtime=a.mtime_ms||0; e.refs.timer.dataset.status=a.status;
+  e.refs.timer.dataset.session=a.is_session?"1":"";
   if(prevStatus[a.id] && prevStatus[a.id]!=="done" && a.status==="done"){
     e.root.classList.add("justdone"); confetti(e.root); ding();
     const fmsg=nm+" — "+t("finishedToast"); toast(fmsg); announce(fmsg);  // visual + SR cue, survives a muted tab
@@ -958,14 +1065,17 @@ function render(payload){
   const app=document.getElementById("app");
   const em=app.querySelector(".empty"); if(em) em.remove();
 
-  // per-session stats from ALL agents (so the header can show ✓done even when hidden)
+  // per-session stats from ALL agents (so a room can show ✓done even when hidden)
   const stat={};
-  for(const a of all){ const s=a.session_full; const v=stat[s]||(stat[s]={running:0,stale:0,done:0,label:roomLabel(a),sid:a.session,mtime:0});
-    if(v[a.status]!==undefined) v[a.status]++; v.mtime=Math.max(v.mtime,a.mtime_ms||0); }
+  for(const a of all){ const s=a.session_full; const v=stat[s]||(stat[s]={running:0,stale:0,done:0,label:roomLabel(a),topic:"",sid:a.session,mtime:0});
+    if(v[a.status]!==undefined) v[a.status]++; v.mtime=Math.max(v.mtime,a.mtime_ms||0);
+    if(a.is_session && a.task_short) v.topic=a.task_short;   // the conversation's subject -> room title
+    if(!v.label) v.label=roomLabel(a); }
 
   const q=(searchQuery||"").toLowerCase().trim();
-  const base = showDone ? all : all.filter(a=>a.status!=="done");
-  const visible = q ? base.filter(a=>matchesSearch(a,q)) : base;
+  const searched = q ? all.filter(a=>matchesSearch(a,q)) : all;
+  // "Show finished" is per-conversation: each room controls its own done visibility
+  const visible = searched.filter(a=> a.status!=="done" || roomShowsDone(a.session_full));
   const sess=[...new Set(visible.map(a=>a.session_full))];
   sess.sort((x,y)=>((stat[y].running>0)-(stat[x].running>0))||(stat[y].mtime-stat[x].mtime));
 
@@ -985,9 +1095,12 @@ function render(payload){
   const orderKey=sess.join("|"); const reorder=(orderKey!==lastOrderKey); lastOrderKey=orderKey;
   for(const s of sess){ const r=ensureRoom(s); if(reorder) app.appendChild(r.section);
     const st=stat[s];
-    const rtHTML='💬 '+esc(st.label)+' <small>'+esc(st.sid)+'</small>';
+    const title=st.topic||st.label;
+    const rtHTML='💬 '+esc(title)+' <small>'+esc(st.topic?st.label:st.sid)+'</small>';
     if(r._rt!==rtHTML){ r.rt.innerHTML=rtHTML; r._rt=rtHTML; }
-    const rcHTML='🟢 <b>'+st.running+'</b>'+(st.stale?' · <i>⏳'+st.stale+'</i>':'')+(st.done?' · <u>✅'+st.done+'</u>':'');
+    const showing=roomShowsDone(s);
+    const doneBtn=st.done?(' · <button class="rdone'+(showing?' on':'')+'" data-s="'+esc(s)+'" type="button" aria-pressed="'+(showing?'true':'false')+'" title="'+esc(t("toggleFinished"))+'">✅'+st.done+'</button>'):'';
+    const rcHTML='🟢 <b>'+st.running+'</b>'+(st.stale?' · <i>⏳'+st.stale+'</i>':'')+doneBtn;
     if(r._rc!==rcHTML){ r.rc.innerHTML=rcHTML; r._rc=rcHTML; }
     for(const a of visible){ if(a.session_full!==s) continue;
       let e=els[a.id]; if(!e){ e=createWS(a); els[a.id]=e; r.floor.appendChild(e.root); }
@@ -1061,17 +1174,19 @@ document.addEventListener("keydown",e=>{
 document.getElementById("showDone").addEventListener("change",e=>{ showDone=e.target.checked;
   try{ localStorage.setItem("ct_showDone",showDone?"1":"0"); }catch(_){} render(); });
 document.getElementById("langBtn").addEventListener("click",()=>setLang(lang==="en"?"he":"en"));
-document.getElementById("app").addEventListener("click",e=>{ if(e.target.closest(".btn-demo")) setDemo(true); });
+document.getElementById("app").addEventListener("click",e=>{ if(e.target.closest(".btn-demo")) setDemo(true);
+  const rd=e.target.closest(".rdone"); if(rd){ e.stopPropagation(); toggleRoomDone(rd.dataset.s); } });
 document.getElementById("exitDemoBtn").addEventListener("click",()=>setDemo(false));
 document.getElementById("search").addEventListener("input",e=>{ searchQuery=e.target.value;
   clearTimeout(searchT); searchT=setTimeout(()=>render(),120); });   // client-side filter over the cached payload
 document.getElementById("muteBtn").addEventListener("click",()=>setMuted(!muted));
 
 setInterval(()=>{ const now=Date.now(); document.querySelectorAll(".timer").forEach(el=>{
-  const s=+el.dataset.start,en=+el.dataset.end,mt=+el.dataset.mtime,st=el.dataset.status;
-  if(!s){ el.textContent=fmt(null); return; }   // unknown start -> "--:--" instead of blank
+  const s=+el.dataset.start,en=+el.dataset.end,mt=+el.dataset.mtime,st=el.dataset.status,sess=el.dataset.session;
   let v;
-  if(st==="done"&&en) v=en-s;                       // finished: final duration
+  if(sess==="1") v=mt?(now-mt):null;                // conversation: time since last activity (active/idle)
+  else if(!s){ el.textContent=fmt(null); return; }  // unknown start -> "--:--" instead of blank
+  else if(st==="done"&&en) v=en-s;                  // finished: final duration
   else if(st==="stale") v=(mt&&mt>s)?(mt-s):null;   // idle/abandoned: freeze at last activity, not a runaway count to now
   else v=now-s;                                     // running: live
   el.textContent=fmt(v); }); },1000);

@@ -201,6 +201,7 @@ def unknown_versions(versions):
 
 
 _NAME_CACHE = {}  # parent_file -> (mtime, {prompt: {description, subagent_type}})
+_PROJECT_CACHE = {}  # parent_file -> (mtime, project_cwd)  -- the conversation's real working dir
 
 
 def parent_session_file(agent_path, session_id):
@@ -254,6 +255,44 @@ def name_map_for(parent_file):
         pass
     _NAME_CACHE[parent_file] = (mtime, m)
     return m
+
+
+def project_cwd_for(parent_file):
+    """The parent conversation's real working directory, read from its first event.
+    Used as the room label so rooms map to projects the user recognizes (e.g.
+    "Downloads", "agent-theater") instead of a deeply-nested subagent cwd."""
+    if not parent_file or not os.path.isfile(parent_file):
+        return ""
+    try:
+        mtime = os.path.getmtime(parent_file)
+    except OSError:
+        return ""
+    cached = _PROJECT_CACHE.get(parent_file)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    # The first lines of a session file can be metadata (queue-operation) with no
+    # cwd; the working dir appears on the first user/assistant record. Scan a few
+    # lines for the first non-empty "cwd".
+    cwd = ""
+    try:
+        with open(parent_file, "r", encoding="utf-8", errors="replace") as f:
+            for i, ln in enumerate(f):
+                if i > 50:
+                    break
+                if '"cwd"' not in ln:
+                    continue
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    continue
+                c = rec.get("cwd")
+                if c:
+                    cwd = c
+                    break
+    except Exception:
+        cwd = ""
+    _PROJECT_CACHE[parent_file] = (mtime, cwd)
+    return cwd
 
 
 def extract_task(first_ev):
@@ -331,7 +370,9 @@ def scan_agents():
             is_done, end_ms, result = detect_done(events)
             tool = last_tool_use_name(events)
             pid = persona_index(agent_id)
-            info = name_map_for(parent_session_file(path, session)).get(task.strip()) if task.strip() else None
+            parent = parent_session_file(path, session)
+            info = name_map_for(parent).get(task.strip()) if task.strip() else None
+            project = project_cwd_for(parent)
             # Language-neutral payload only: the browser localizes persona name,
             # activity label and the placeholder for an agent with no readable task
             # (degrade-not-crash -- it still shows up, just with a generic label).
@@ -344,7 +385,8 @@ def scan_agents():
                 "task": task, "task_short": short_task(task), "result": result,
                 "start_ms": start_ms, "end_ms": end_ms,
                 "session": session[:8], "session_full": session,
-                "cwd": first_ev.raw.get("cwd", ""), "mtime_ms": int(mtime * 1000),
+                "cwd": first_ev.raw.get("cwd", ""), "project": project,
+                "mtime_ms": int(mtime * 1000),
             }
             _AGENT_CACHE[path] = (mtime, size, adict, is_done, fvers, fskip)
 
@@ -796,7 +838,7 @@ function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp
 function fmt(ms){ if(ms==null||ms<0) return "--:--"; const s=Math.floor(ms/1000),m=Math.floor(s/60),x=s%60;
   return String(m).padStart(2,"0")+":"+String(x).padStart(2,"0"); }
 function baseName(p){ return (p||"").replace(/[\\\\/]+$/,"").split(/[\\\\/]/).pop()||"—"; }
-function roomLabel(a){ return baseName(a.cwd); }
+function roomLabel(a){ return baseName(a.project||a.cwd); }   // the conversation's project, not a nested subagent cwd
 const COLORS=["#5b6ee0","#e07a5b","#3fae74","#c45bd0","#e0b84a","#4ab3c4","#d05b7a","#7a86b8"];
 function colorFor(id){ let h=0; for(let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))>>>0; return COLORS[h%COLORS.length]; }
 
@@ -860,7 +902,8 @@ function updateWS(e,a){ e.data=a;
   const nm=a.role||personaName(a); e.refs.name.textContent=nm; e.refs.name.title=nm;
   const actLbl=activityLabel(a); e.refs.act.textContent=actLbl; e.refs.act.title=actLbl;
   e.root.setAttribute("aria-label", nm+" — "+actLbl);
-  e.refs.timer.dataset.start=a.start_ms||0; e.refs.timer.dataset.end=a.end_ms||0; e.refs.timer.dataset.status=a.status;
+  e.refs.timer.dataset.start=a.start_ms||0; e.refs.timer.dataset.end=a.end_ms||0;
+  e.refs.timer.dataset.mtime=a.mtime_ms||0; e.refs.timer.dataset.status=a.status;
   if(prevStatus[a.id] && prevStatus[a.id]!=="done" && a.status==="done"){
     e.root.classList.add("justdone"); confetti(e.root); ding();
     const fmsg=nm+" — "+t("finishedToast"); toast(fmsg); announce(fmsg);  // visual + SR cue, survives a muted tab
@@ -1025,9 +1068,13 @@ document.getElementById("search").addEventListener("input",e=>{ searchQuery=e.ta
 document.getElementById("muteBtn").addEventListener("click",()=>setMuted(!muted));
 
 setInterval(()=>{ const now=Date.now(); document.querySelectorAll(".timer").forEach(el=>{
-  const s=+el.dataset.start,en=+el.dataset.end,st=el.dataset.status;
+  const s=+el.dataset.start,en=+el.dataset.end,mt=+el.dataset.mtime,st=el.dataset.status;
   if(!s){ el.textContent=fmt(null); return; }   // unknown start -> "--:--" instead of blank
-  el.textContent=fmt((st==="done"&&en)?(en-s):(now-s)); }); },1000);
+  let v;
+  if(st==="done"&&en) v=en-s;                       // finished: final duration
+  else if(st==="stale") v=(mt&&mt>s)?(mt-s):null;   // idle/abandoned: freeze at last activity, not a runaway count to now
+  else v=now-s;                                     // running: live
+  el.textContent=fmt(v); }); },1000);
 
 let polling=false, failStreak=0;
 function setConnected(ok){ const el=document.getElementById("reconnect");

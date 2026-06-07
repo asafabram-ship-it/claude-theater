@@ -1055,6 +1055,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, code, body, ctype):
         data = body.encode("utf-8")
+        try:
+            self._write_response(code, ctype, data)
+        except ConnectionError:
+            # The client (browser) hung up mid-response -- e.g. it navigated away
+            # or cancelled an in-flight poll. There's nothing left to write to;
+            # swallow it quietly instead of dumping a traceback (degrade-not-crash).
+            pass
+
+    def _write_response(self, code, ctype, data):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
@@ -1120,6 +1129,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, body, "application/json; charset=utf-8")
         elif path == "/" or path.startswith("/index"):
             self._send(200, PAGE, "text/html; charset=utf-8")
+        elif path == "/favicon.ico":
+            # Browsers auto-request this; answer 204 so it isn't a console 404 on every load.
+            self._send(204, "", "image/x-icon")
         else:
             self._send(404, "not found", "text/plain; charset=utf-8")
 

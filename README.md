@@ -8,11 +8,7 @@
 <!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
 <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
 
-<sub>The demo office (`claude-theater --demo`). A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
-
-<!-- TODO: record an animated Hero GIF (< 10 MB, ~10 fps) with ScreenToGif —
-     a character walks in, sits, head-bobs + types, then confetti + finish pop —
-     and swap the static screenshot above for it. -->
+<sub>The demo office (`claude-theater --demo`): conversations and subagents at work, each agent walks in, sits, head-bobs while it types, then confetti on finish. A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
 
 </div>
 

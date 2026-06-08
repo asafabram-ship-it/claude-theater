@@ -1,0 +1,19 @@
+# https://editorconfig.org  — consistent style across editors.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{js,json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false   # trailing spaces are meaningful (hard line breaks)
+
+[*.cmd]
+end_of_line = crlf

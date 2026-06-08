@@ -5,6 +5,11 @@
 
 **Watch your Claude Code conversations and subagents work — a live office, in real time.**
 
+[![CI](https://github.com/asafabram-ship-it/claude-theater/actions/workflows/ci.yml/badge.svg)](https://github.com/asafabram-ship-it/claude-theater/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/claude-theater.svg)](https://pypi.org/project/claude-theater/)
+[![Python](https://img.shields.io/pypi/pyversions/claude-theater.svg)](https://pypi.org/project/claude-theater/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 <!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
 <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
 

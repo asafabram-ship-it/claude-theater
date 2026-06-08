@@ -982,7 +982,7 @@ function setMuted(m){ muted=m; try{ localStorage.setItem("ct_muted",m?"1":"0"); 
   const b=document.getElementById("muteBtn"); if(!b) return;
   b.textContent=m?"🔕":"🔔"; b.title=t(m?"unmute":"mute"); b.setAttribute("aria-label",t(m?"unmute":"mute")); }
 
-function createWS(a){ const root=document.createElement("div"); root.className="ws "+a.status;
+function createWS(a){ const root=document.createElement("div"); root.className="ws "+a.status+(a.is_session?" is-session":"");
   root.style.setProperty("--c1", colorFor(a.id));
   root.tabIndex=0; root.setAttribute("role","button");           // keyboard-reachable card
   root.innerHTML=
@@ -996,7 +996,11 @@ function createWS(a){ const root=document.createElement("div"); root.className="
   root.addEventListener("click",()=>openDrawer(a.id));
   root.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openDrawer(a.id); } });
   root.classList.add("entering"); setTimeout(()=>root.classList.remove("entering"),750);
-  return { root, refs, data:a, status:null }; }
+  // status MUST start as a.status (not null): the very next updateWS() runs in the
+  // same synchronous render task, and on a status mismatch it rewrites className --
+  // which would strip "entering" before the browser ever paints, killing the walk-in.
+  // (className already carries status + is-session above, so nothing is lost.)
+  return { root, refs, data:a, status:a.status }; }
 
 // Tool -> color family for the monitor glow (and a coarse grouping). Kept in
 // sync with the .ws.running[data-fam=...] rules and the TOOLS_* label tables.

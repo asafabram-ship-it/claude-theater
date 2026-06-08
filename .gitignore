@@ -18,3 +18,8 @@ Thumbs.db
 # Internal launch/strategy/planning notes — kept local, not shipped.
 DISTRIBUTION.md
 UPGRADE-PLAN.md
+
+# VS Code extension build artifacts (the bundled server copy is generated at
+# package time by vscode:prepublish; the .vsix is a build output)
+vscode-extension/claude_theater.py
+vscode-extension/*.vsix

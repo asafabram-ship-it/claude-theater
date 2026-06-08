@@ -1,21 +1,29 @@
 {
   "name": "claude-theater",
   "displayName": "Claude Theater",
-  "description": "A live, grouped office of your Claude Code subagents — inside VS Code.",
-  "version": "0.1.0",
+  "description": "Watch your Claude Code conversations and subagents work — a live office, inside VS Code.",
+  "version": "0.2.0",
   "publisher": "asafabram-ship-it",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/asafabram-ship-it/claude-theater" },
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Visualization", "Other"],
   "keywords": ["claude", "claude code", "agents", "subagents", "visualization"],
-  "activationEvents": [],
+  "activationEvents": ["onStartupFinished"],
   "main": "./extension.js",
+  "scripts": {
+    "vscode:prepublish": "node -e \"require('fs').copyFileSync('../claude_theater.py','claude_theater.py')\""
+  },
   "contributes": {
     "commands": [
       {
         "command": "claudeTheater.open",
         "title": "Open Theater",
+        "category": "Claude Theater"
+      },
+      {
+        "command": "claudeTheater.menu",
+        "title": "Menu (start / stop / open)",
         "category": "Claude Theater"
       }
     ],
@@ -27,15 +35,20 @@
           "default": 7333,
           "description": "Port the Claude Theater server listens on (127.0.0.1)."
         },
-        "claudeTheater.autoStartServer": {
+        "claudeTheater.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "If the server isn't already running, start it automatically with `python -m claude_theater`."
+          "description": "Automatically run the Claude Theater server in the background when VS Code starts. Toggle this from the status-bar button."
         },
         "claudeTheater.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the Python interpreter used to auto-start the server. Empty = try `python`, then `py`, then `python3`."
+          "description": "Path to the Python interpreter used to run the server. Empty = try `python`, then `py`, then `python3`."
+        },
+        "claudeTheater.serverScript": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to claude_theater.py. Empty = use the copy bundled with the extension (no install needed)."
         }
       }
     }

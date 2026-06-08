@@ -1,13 +1,15 @@
 // Claude Theater — VS Code extension.
-// Opens the theater inside a WebviewPanel (a full interactive webview, unlike
-// Simple Browser): the HTML is served by the local claude_theater.py process,
-// embedded directly so clicks / focus / keyboard all work. Data is fetched by
-// the webview from 127.0.0.1; the server only returns CORS headers to a
-// vscode-webview:// origin, so the journals never become readable to a web page.
+// Runs the local theater server in the background (auto-start on launch, toggleable
+// from a status-bar button) and opens the office inside a WebviewPanel (a full
+// interactive webview, unlike Simple Browser): the server's HTML is embedded
+// directly so clicks / focus / keyboard all work. Data is fetched by the webview
+// from 127.0.0.1; the server returns CORS headers only to a vscode-webview:// origin
+// and an identity header we verify, so the journals never leak to a web page.
 const vscode = require("vscode");
 const http = require("http");
 const cp = require("child_process");
 const path = require("path");
+const fs = require("fs");
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("claudeTheater");
@@ -18,11 +20,13 @@ function cfg() {
   const port = Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65536 ? rawPort : 7333;
   return {
     port,
-    autoStart: c.get("autoStartServer", true),
+    autoStart: c.get("autoStart", true),
     pythonPath: (c.get("pythonPath", "") || "").trim(),
+    serverScript: (c.get("serverScript", "") || "").trim(),
   };
 }
 const base = (port) => `http://127.0.0.1:${port}`;
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function httpGet(port, p, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -47,40 +51,108 @@ async function isUp(port) {
   }
 }
 
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+let spawnedProc = null;   // set only when WE started the server, so we only stop ours
+let statusItem = null;
 
-let spawnedProc = null; // only set when WE started the server, so we only stop ours
+// Find a claude_theater.py we can run. Order: explicit config, the copy bundled in
+// the .vsix (works standalone, no pip needed), then a source checkout next to the
+// extension (F5/dev). Returns null to fall back to `python -m claude_theater` (pip).
+function resolveServerScript(context, configured) {
+  const candidates = [];
+  if (configured) candidates.push(configured);
+  candidates.push(path.join(context.extensionPath, "claude_theater.py"));
+  candidates.push(path.join(context.extensionPath, "..", "claude_theater.py"));
+  for (const c of candidates) {
+    try { if (c && fs.existsSync(c)) return c; } catch (_) {}
+  }
+  return null;
+}
 
-async function startServer(context, port, pythonPath) {
-  // run from the repo root (parent of this extension) so `python -m claude_theater`
-  // resolves the module from a source checkout; for a pip/pipx install it resolves anyway.
-  const repoRoot = path.resolve(context.extensionPath, "..");
-  const candidates = pythonPath ? [pythonPath] : ["python", "py", "python3"];
-  for (const exe of candidates) {
+async function startServer(context, port, pythonPath, serverScript) {
+  const script = resolveServerScript(context, serverScript);
+  const args = script ? [script, "--no-browser"] : ["-m", "claude_theater", "--no-browser"];
+  const cwd = script ? path.dirname(script) : path.resolve(context.extensionPath, "..");
+  const exes = pythonPath ? [pythonPath] : ["python", "py", "python3"];
+  for (const exe of exes) {
     try {
-      const proc = cp.spawn(exe, ["-m", "claude_theater", "--no-browser"], {
-        cwd: repoRoot,
+      const proc = cp.spawn(exe, args, {
+        cwd,
         env: { ...process.env, CLAUDE_THEATER_NO_BROWSER: "1" },
         windowsHide: true,
       });
       let died = false;
       proc.on("error", () => (died = true));
-      // give it a moment to bind, then poll
       for (let i = 0; i < 24 && !died; i++) {
         await delay(300);
-        if (await isUp(port)) {
-          spawnedProc = proc;
-          return true;
-        }
+        if (await isUp(port)) { spawnedProc = proc; return true; }
       }
-      if (!died) {
-        try { proc.kill(); } catch (_) {}
-      }
+      if (!died) { try { proc.kill(); } catch (_) {} }
     } catch (_) {
-      // try next candidate
+      // try the next interpreter
     }
   }
   return false;
+}
+
+function stopServer() {
+  if (spawnedProc) {
+    try { spawnedProc.kill(); } catch (_) {}
+    spawnedProc = null;
+  }
+}
+
+async function ensureRunning(context) {
+  const { port, pythonPath, serverScript } = cfg();
+  if (await isUp(port)) return true;
+  return startServer(context, port, pythonPath, serverScript);
+}
+
+// ---- status bar ----
+async function refreshStatus() {
+  if (!statusItem) return;
+  const { port, autoStart } = cfg();
+  const up = await isUp(port);
+  if (!autoStart) {
+    statusItem.text = "$(circle-slash) Theater";
+    statusItem.tooltip = "Claude Theater auto-start is off — click for options";
+  } else if (up) {
+    statusItem.text = "$(broadcast) Theater";
+    statusItem.tooltip = "Claude Theater is running — click to open or for options";
+  } else {
+    statusItem.text = "$(debug-disconnect) Theater";
+    statusItem.tooltip = "Claude Theater server is not running — click for options";
+  }
+  statusItem.show();
+}
+
+async function showMenu(context) {
+  const { autoStart } = cfg();
+  const items = [
+    { label: "$(window) Open Theater", action: "open" },
+    autoStart
+      ? { label: "$(circle-slash) Disable auto-start", action: "disable" }
+      : { label: "$(check) Enable auto-start", action: "enable" },
+    { label: "$(refresh) Restart server", action: "restart" },
+  ];
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: "Claude Theater" });
+  if (!pick) return;
+  const conf = vscode.workspace.getConfiguration("claudeTheater");
+  if (pick.action === "open") {
+    await openTheater(context);
+  } else if (pick.action === "disable") {
+    await conf.update("autoStart", false, vscode.ConfigurationTarget.Global);
+    stopServer();
+    vscode.window.showInformationMessage("Claude Theater: auto-start disabled.");
+  } else if (pick.action === "enable") {
+    await conf.update("autoStart", true, vscode.ConfigurationTarget.Global);
+    await ensureRunning(context);
+    vscode.window.showInformationMessage("Claude Theater: auto-start enabled.");
+  } else if (pick.action === "restart") {
+    stopServer();
+    await delay(300);
+    await ensureRunning(context);
+  }
+  await refreshStatus();
 }
 
 function buildWebviewHtml(pageHtml, port) {
@@ -101,18 +173,18 @@ function buildWebviewHtml(pageHtml, port) {
 }
 
 async function openTheater(context) {
-  const { port, autoStart, pythonPath } = cfg();
+  const { port } = cfg();
 
   let up = await isUp(port);
-  if (!up && autoStart) {
+  if (!up) {
     up = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "Claude Theater: starting server…" },
-      () => startServer(context, port, pythonPath)
+      () => ensureRunning(context)
     );
   }
   if (!up) {
     const pick = await vscode.window.showErrorMessage(
-      `Claude Theater server isn't running on port ${port}. Start it with \`python -m claude_theater\`.`,
+      `Claude Theater server isn't running on port ${port}. Install Python, or set claudeTheater.serverScript / pythonPath.`,
       "Retry"
     );
     if (pick === "Retry") return openTheater(context);
@@ -134,19 +206,33 @@ async function openTheater(context) {
     { enableScripts: true, retainContextWhenHidden: true }
   );
   panel.webview.html = buildWebviewHtml(page, port);
+  await refreshStatus();
 }
 
 function activate(context) {
+  statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusItem.command = "claudeTheater.menu";
+  statusItem.text = "$(broadcast) Theater";
+  statusItem.show();
   context.subscriptions.push(
-    vscode.commands.registerCommand("claudeTheater.open", () => openTheater(context))
+    statusItem,
+    vscode.commands.registerCommand("claudeTheater.open", () => openTheater(context)),
+    vscode.commands.registerCommand("claudeTheater.menu", () => showMenu(context))
   );
+
+  // Auto-start the server in the background (the user chose: run quietly, open on demand).
+  (async () => {
+    if (cfg().autoStart) await ensureRunning(context);
+    await refreshStatus();
+  })();
+
+  // keep the status icon honest if the server stops/starts outside the extension
+  const iv = setInterval(refreshStatus, 8000);
+  context.subscriptions.push({ dispose: () => clearInterval(iv) });
 }
 
 function deactivate() {
-  if (spawnedProc) {
-    try { spawnedProc.kill(); } catch (_) {}
-    spawnedProc = null;
-  }
+  stopServer();
 }
 
 module.exports = { activate, deactivate };

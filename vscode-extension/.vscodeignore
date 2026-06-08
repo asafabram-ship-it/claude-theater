@@ -2,3 +2,5 @@
 .gitignore
 **/*.map
 **/.DS_Store
+**/*.bak
+*.vsix

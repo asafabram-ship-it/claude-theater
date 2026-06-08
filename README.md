@@ -3,7 +3,7 @@
 
 # 🎭 Claude Theater
 
-**Watch your Claude Code subagents work — a live office for every conversation.**
+**Watch your Claude Code conversations and subagents work — a live office, in real time.**
 
 <!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
 <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
@@ -21,12 +21,14 @@ spins up the office above with synthetic agents.
 
 ---
 
-Claude Theater reads the per-agent journal files Claude Code writes while your
-subagents run, and renders them as a live office: each subagent is a little
-character at a desk — avatar, name, what tool it's using right now, and a timer.
-Agents are grouped into a **room per conversation**. Click any character to read
-its full task and result. When an agent finishes: confetti, a chime, and it
-quietly steps off the floor (a count stays in the room header).
+Claude Theater reads the journals Claude Code writes for your conversations and
+the subagents they spawn, and renders them as a live office: **every conversation
+is a room** (titled by its subject), and inside it the conversation itself plus
+each subagent is a little character at a desk — avatar, name, the tool it's using
+right now, and a timer. Click any character to read its full task and result.
+When an agent finishes: confetti, a chime, and it quietly steps off the floor —
+and each room has its own **show-finished** toggle, so you control the history
+per conversation.
 
 The UI is **bilingual** — English by default, Hebrew one click away (the choice
 is remembered, and the layout flips to RTL). Adding another language is a single
@@ -59,10 +61,21 @@ Then open **http://localhost:7333**. On Windows you can also just run
 > Requires Python 3.9+ and a Claude Code install that writes journals under
 > `~/.claude/projects/`.
 
+## VS Code extension
+
+Prefer it inside your editor? `vscode-extension/` packages Claude Theater as a
+VS Code extension: it runs the server in the background (start/stop it from a
+status-bar button) and opens the office in an interactive panel — no separate
+terminal. The server is bundled into the extension, so it works without a
+separate install. Build a `.vsix` with [`@vscode/vsce`](https://github.com/microsoft/vscode-vsce)
+(`cd vscode-extension && npx @vscode/vsce package`) and install it from the
+Extensions view.
+
 ## How it works
 
-- Polls `~/.claude/projects/**/subagents/agent-*.jsonl` (the journals Claude
-  Code already writes — Claude Theater never starts or controls agents).
+- Polls the journals Claude Code already writes — both the session files (your
+  conversations) and `**/subagents/agent-*.jsonl` (the subagents they spawn).
+  Claude Theater only reads them; it never starts or controls agents.
 - A single adapter, `parse_agent_event(line) -> Event`, is the **only** code
   that touches the raw journal format. Everything else consumes the stable
   `Event`, so a Claude Code format change is absorbed in one place.

@@ -527,7 +527,8 @@ def scan_agents():
 # GIF and for a "try it instantly" first run. Builds the payload in memory and
 # NEVER reads or writes the real ~/.claude/projects journals.
 # ---------------------------------------------------------------------------
-def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type="", start_offset=60, result=None):
+def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type="", start_offset=60,
+                result=None, is_session=False, mtime_offset=0):
     now = time.time()
     pid = persona_index(aid)
     return {
@@ -539,8 +540,8 @@ def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type=""
         "start_ms": int((now - start_offset) * 1000),
         "end_ms": int((now - 2) * 1000) if status == "done" else None,
         "session": session[:8], "session_full": session,
-        "cwd": cwd, "project": cwd, "mtime_ms": int(now * 1000),
-        "is_session": False,
+        "cwd": cwd, "project": cwd, "mtime_ms": int((now - mtime_offset) * 1000),
+        "is_session": is_session,
     }
 
 
@@ -586,8 +587,15 @@ def demo_payload(phase=None):
         agents.append(_demo_agent("demo-newcomer-hh", s2, cwd, "running", "Edit",
                       "Apply the review fixes to the config loader and re-run the type checker.",
                       role="apply the review fixes", subagent_type="general-purpose", start_offset=3))
+    # the two conversations themselves -> each leads its room with the topic as the title
+    agents.append(_demo_agent("demo-conv-frontend", s1, cwd, "running", "",
+                  "Ship the v2 config migration and clean up the auth middleware.",
+                  start_offset=380, is_session=True, mtime_offset=7))
+    agents.append(_demo_agent("demo-conv-research", s2, cwd, "running", "",
+                  "Plan the static-regeneration rollout and triage the bug backlog.",
+                  start_offset=300, is_session=True, mtime_offset=14))
     order = {"running": 0, "stale": 1, "done": 2}
-    agents.sort(key=lambda x: (order.get(x["status"], 3), -(x["start_ms"] or 0)))
+    agents.sort(key=lambda x: (order.get(x["status"], 3), -(1 if x.get("is_session") else 0), -(x["start_ms"] or 0)))
     versions = {"2.1.0"}
     return {
         "agents": agents,

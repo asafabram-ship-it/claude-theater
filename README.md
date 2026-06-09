@@ -92,11 +92,14 @@ npx @vscode/vsce package        # produces claude-theater-<version>.vsix
 code --install-extension claude-theater-*.vsix
 ```
 
-## Auto-start with Claude Code (optional)
+## Auto-start with Claude Code
 
-The VS Code extension already starts the server on launch. Outside VS Code, you
-can let Claude Code start it for you with a `SessionStart` hook in your
-`~/.claude/settings.json`, so the office is up whenever you begin a session:
+The VS Code extension already starts the server on launch. If you use the CLI,
+the recommended one-time setup is a `SessionStart` hook in your
+`~/.claude/settings.json`, so the office comes up by itself whenever you begin a
+Claude Code session. Each user adds it manually once.
+
+**macOS / Linux (and Git Bash on Windows):**
 
 ```json
 {
@@ -109,9 +112,22 @@ can let Claude Code start it for you with a `SessionStart` hook in your
 }
 ```
 
-The `curl` check keeps it idempotent — it never starts a second server if one is
-already running. (Requires `claude-theater` on your `PATH`, e.g. via
-`pipx install claude-theater`.)
+**Windows (PowerShell):**
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command",
+        "command": "powershell -NoProfile -Command \"if(-not(Get-NetTCPConnection -LocalPort 7333 -State Listen -ErrorAction SilentlyContinue)){Start-Process -WindowStyle Hidden -FilePath claude-theater -ArgumentList '--no-browser'}\"" } ] }
+    ]
+  }
+}
+```
+
+Both check the port first, so they stay idempotent — a second server is never
+started if one is already running. (Requires `claude-theater` on your `PATH`,
+e.g. via `pipx install claude-theater`.)
 
 ## How it works
 

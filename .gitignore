@@ -23,3 +23,6 @@ UPGRADE-PLAN.md
 # package time by vscode:prepublish; the .vsix is a build output)
 vscode-extension/claude_theater.py
 vscode-extension/*.vsix
+
+# Local marketing / post assets (screenshots for social posts, not shipped)
+post-assets/

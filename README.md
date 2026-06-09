@@ -40,14 +40,17 @@ edit to the `I18N` table in `claude_theater.py`; the server stays language-neutr
 Zero install — run it straight from PyPI with [pipx](https://pipx.pypa.io/):
 
 ```bash
-pipx run claude-theater
+pipx run claude-theater          # watches your real Claude Code sessions
+pipx run claude-theater --demo   # a synthetic, populated office — no sessions needed
 ```
+
+New here? Start with `--demo` to look around before pointing it at your own work.
 
 Or install it:
 
 ```bash
 pipx install claude-theater   # or: pip install claude-theater
-claude-theater
+claude-theater                # add --demo for the synthetic office
 ```
 
 Or run from a clone (pure standard library, nothing to install):
@@ -56,21 +59,59 @@ Or run from a clone (pure standard library, nothing to install):
 python -m claude_theater
 ```
 
-Then open **http://localhost:7333**. On Windows you can also just run
-`start.cmd`, which launches the server and opens your browser.
+Then open **http://localhost:7333**. The server opens your browser for you — pass
+`--no-browser` to skip that (handy on a headless box or inside an editor panel).
+On Windows, from a clone, you can also just run `start.cmd`.
 
-> Requires Python 3.9+ and a Claude Code install that writes journals under
-> `~/.claude/projects/`.
+> Requires Python 3.9+. The non-demo mode reads the journals a Claude Code
+> install writes under `~/.claude/projects/`; `--demo` needs nothing but Python.
 
 ## VS Code extension
 
-Prefer it inside your editor? `vscode-extension/` packages Claude Theater as a
-VS Code extension: it runs the server in the background (start/stop it from a
-status-bar button) and opens the office in an interactive panel — no separate
-terminal. The server is bundled into the extension, so it works without a
-separate install. Build a `.vsix` with [`@vscode/vsce`](https://github.com/microsoft/vscode-vsce)
-(`cd vscode-extension && npx @vscode/vsce package`) and install it from the
-Extensions view.
+Prefer it inside your editor? The `vscode-extension/` folder packages Claude
+Theater as a VS Code extension: it starts the server in the background (toggle it
+from a status-bar button) and opens the office in an interactive panel — no
+separate terminal. The server is bundled into the extension, so it works without
+a separate install, and it auto-starts when VS Code launches.
+
+**Install the prebuilt `.vsix`** (easiest) — download
+`claude-theater-<version>.vsix` from the
+[latest release](https://github.com/asafabram-ship-it/claude-theater/releases/latest),
+then in VS Code run **Extensions: Install from VSIX…**, or from a terminal:
+
+```bash
+code --install-extension claude-theater-<version>.vsix
+```
+
+**Or build it from source** (needs Node.js):
+
+```bash
+git clone https://github.com/asafabram-ship-it/claude-theater
+cd claude-theater/vscode-extension
+npx @vscode/vsce package        # produces claude-theater-<version>.vsix
+code --install-extension claude-theater-*.vsix
+```
+
+## Auto-start with Claude Code (optional)
+
+The VS Code extension already starts the server on launch. Outside VS Code, you
+can let Claude Code start it for you with a `SessionStart` hook in your
+`~/.claude/settings.json`, so the office is up whenever you begin a session:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command",
+        "command": "curl -sf http://127.0.0.1:7333/ -o /dev/null || (claude-theater --no-browser &)" } ] }
+    ]
+  }
+}
+```
+
+The `curl` check keeps it idempotent — it never starts a second server if one is
+already running. (Requires `claude-theater` on your `PATH`, e.g. via
+`pipx install claude-theater`.)
 
 ## How it works
 

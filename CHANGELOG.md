@@ -18,7 +18,29 @@ SemVer policy for this tool:
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-06-06
+## [0.1.1] - 2026-06-09
+
+### Added
+
+- Animated hero (`docs/hero.gif`) in the README — the office in motion.
+- `--port N` flag and `CLAUDE_THEATER_PORT` environment variable to choose the
+  listen port.
+
+### Changed
+
+- README: lead with the "why" and a "safe by design" note, pull the security
+  hardening into Privacy, collapse the auto-start hooks, and give a precise VS
+  Code extension install path (prebuilt `.vsix` on Releases, or build from source).
+
+### Fixed
+
+- On Windows, a second instance no longer silently double-binds the port
+  (`allow_reuse_address` is off there); a duplicate now fails with a clear
+  message suggesting `--port`.
+- The startup banner is flushed, so it shows even when stdout is piped.
+- Real (non-demo) mode with no journals now prints a hint to try `--demo`.
+
+## [0.1.0] - 2026-06-08
 
 ### Added
 
@@ -36,6 +58,10 @@ SemVer policy for this tool:
   once the port is bound.
 - Packaging for PyPI/pipx (`claude-theater` / `python -m claude_theater`) and
   CI across Windows/macOS/Linux × Python 3.9–3.13.
+- VS Code extension (versioned independently, shipped as a `.vsix` on the GitHub
+  release): the office in an interactive WebviewPanel, with background auto-start
+  and a status-bar toggle.
 
-[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/asafabram-ship-it/claude-theater/releases/tag/v0.1.0

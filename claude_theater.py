@@ -24,9 +24,18 @@ import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
-PORT = 7333
+def _default_port():
+    """Port from $CLAUDE_THEATER_PORT, else 7333. The --port flag overrides this."""
+    try:
+        p = int(os.environ.get("CLAUDE_THEATER_PORT") or 7333)
+        return p if 0 < p < 65536 else 7333
+    except ValueError:
+        return 7333
+
+
+PORT = _default_port()
 DEMO = False               # --demo: serve a synthetic office, never read real journals
 MAX_AGE_MIN = 180          # only show agents whose file changed in the last N minutes
 RUNNING_STALE_SEC = 90     # a "running" agent untouched this long is shown as idle
@@ -1316,11 +1325,34 @@ Usage: claude-theater [options]
 
   --demo         show a synthetic, populated office (reads no real journals)
   --no-browser   do not open the browser on start
+  --port N       listen on port N (default %d; or set CLAUDE_THEATER_PORT)
   --version,-V   print version and exit
   --help,-h      show this help and exit
 
 Then open http://localhost:%d
 """
+
+
+class TheaterServer(ThreadingHTTPServer):
+    # On Windows, SO_REUSEADDR lets a second process silently bind a port that's
+    # already in use (and the OS load-balances between them) -- so a stray second
+    # copy would serve different data with no error. Disabling reuse there makes a
+    # duplicate bind fail loudly instead; POSIX keeps it on to avoid TIME_WAIT
+    # restart pain.
+    allow_reuse_address = (os.name != "nt")
+
+
+def _arg_port(args):
+    """--port N overrides CLAUDE_THEATER_PORT / the default; falls back on bad input."""
+    if "--port" in args:
+        try:
+            v = int(args[args.index("--port") + 1])
+            if 0 < v < 65536:
+                return v
+        except (IndexError, ValueError):
+            pass
+        print("!! --port needs a number 1-65535; using %d" % PORT, flush=True)
+    return PORT
 
 
 def main():
@@ -1330,18 +1362,32 @@ def main():
         print("claude-theater %s" % __version__)
         return
     if "--help" in args or "-h" in args:
-        print(USAGE % (__version__, PORT))
+        print(USAGE % (__version__, PORT, PORT))
         return
 
     DEMO = "--demo" in args
     no_browser = "--no-browser" in args or bool(os.environ.get("CLAUDE_THEATER_NO_BROWSER"))
+    port = _arg_port(args)
 
-    if not DEMO and not os.path.isdir(PROJECTS_DIR):
-        print("!! projects dir not found:", PROJECTS_DIR)
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    url = "http://localhost:%d" % PORT
-    print("Claude Theater %s%s -> %s   (Ctrl+C to stop)" % (__version__, " [demo]" if DEMO else "", url))
-    print("Demo mode: synthetic office, no real journals are read." if DEMO else "Watching: " + PROJECTS_DIR)
+    if not DEMO:
+        has_journals = os.path.isdir(PROJECTS_DIR) and any(
+            glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")))
+        if not has_journals:
+            print("!! No Claude Code journals found under %s." % PROJECTS_DIR, flush=True)
+            print("   Try `claude-theater --demo` for a synthetic office, or start a "
+                  "Claude Code session first.", flush=True)
+
+    try:
+        srv = TheaterServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        print("!! Could not start on 127.0.0.1:%d (%s)." % (port, getattr(e, "strerror", None) or e), flush=True)
+        print("   Another copy may already be running. Start it on another port:", flush=True)
+        print("   claude-theater --port %d   (or set CLAUDE_THEATER_PORT)" % (port + 1), flush=True)
+        sys.exit(1)
+
+    url = "http://localhost:%d" % port
+    print("Claude Theater %s%s -> %s   (Ctrl+C to stop)" % (__version__, " [demo]" if DEMO else "", url), flush=True)
+    print("Demo mode: synthetic office, no real journals are read." if DEMO else "Watching: " + PROJECTS_DIR, flush=True)
     # Open the browser only after the socket is bound (no first-load race), and
     # so pipx/pip users get the same one-click UX as start.cmd.
     if not no_browser:

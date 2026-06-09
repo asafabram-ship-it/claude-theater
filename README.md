@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 <!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
-<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/screenshot.png" alt="Claude Theater — a live office of Claude Code subagents at work" width="820">
+<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/hero.gif" alt="Claude Theater — a live office of Claude Code subagents at work: agents walk in, type, and finish with confetti" width="820">
 
 <sub>The demo office (`claude-theater --demo`): conversations and subagents at work, each agent walks in, sits, head-bobs while it types, then confetti on finish. A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
 
@@ -19,6 +19,14 @@
 
 Try it now, no Claude Code session required — `pipx run claude-theater --demo`
 spins up the office above with synthetic agents.
+
+**Why?** When you fan out a handful of subagents, the terminal becomes a wall of
+interleaved JSON. Claude Theater turns it into a glance — who's working, who's
+stuck, who just finished — without reading a single log line.
+
+**Safe by design:** it runs entirely on your machine. Binds to `127.0.0.1`, sends
+nothing anywhere (no telemetry), only *reads* the journals, and the whole thing is
+one auditable standard-library file with zero dependencies. ([more](#privacy))
 
 ---
 
@@ -97,9 +105,11 @@ code --install-extension claude-theater-*.vsix
 The VS Code extension already starts the server on launch. If you use the CLI,
 the recommended one-time setup is a `SessionStart` hook in your
 `~/.claude/settings.json`, so the office comes up by itself whenever you begin a
-Claude Code session. Each user adds it manually once.
+Claude Code session. Each user adds it once. (Heads-up: this leaves an
+unauthenticated loopback endpoint running in the background — see [Privacy](#privacy).)
 
-**macOS / Linux (and Git Bash on Windows):**
+<details>
+<summary><b>macOS / Linux / Git Bash</b></summary>
 
 ```json
 {
@@ -112,7 +122,10 @@ Claude Code session. Each user adds it manually once.
 }
 ```
 
-**Windows (PowerShell):**
+</details>
+
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
 
 ```json
 {
@@ -125,9 +138,10 @@ Claude Code session. Each user adds it manually once.
 }
 ```
 
-Both check the port first, so they stay idempotent — a second server is never
-started if one is already running. (Requires `claude-theater` on your `PATH`,
-e.g. via `pipx install claude-theater`.)
+</details>
+
+Both check the port first, so they stay idempotent. (Requires `claude-theater`
+on your `PATH`, e.g. via `pipx install claude-theater`.)
 
 ## How it works
 
@@ -149,9 +163,18 @@ e.g. via `pipx install claude-theater`.)
 Your journals contain real conversation content, so Claude Theater is built to
 keep them on your machine:
 
-- Binds to **`127.0.0.1` only** — never reachable from the network.
+- Binds to **`127.0.0.1` only** — never reachable from the network, with a
+  loopback `Host` allowlist that blocks DNS-rebinding.
 - **Never transmits** anything anywhere. No telemetry, no remote calls.
+- **Read-only** — it opens journals to read, never to write.
+- A strict `Content-Security-Policy` and `X-Content-Type-Options: nosniff`, and
+  cross-origin headers sent **only** to a `vscode-webview://` origin, so an
+  ordinary web page can't read your agents.
 - The committed `fixtures/` are 100% synthetic — no real prompts or results.
+
+The local endpoint is **unauthenticated**: any process running as you on this
+machine can read it — the same trust boundary as the journal files themselves.
+The auto-start hook above leaves that endpoint up in the background.
 
 ## Development
 

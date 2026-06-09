@@ -11,13 +11,15 @@ Directional, not a promise. Issues and PRs welcome — see
 - Bilingual UI (English / Hebrew), instant toggle, RTL-aware.
 - `--demo` office for screenshots and a zero-setup first run.
 - PyPI / pipx packaging; CI across Windows/macOS/Linux × Python 3.9–3.13.
+- **VS Code extension**: the office in an interactive `WebviewPanel`, with
+  background auto-start and a status-bar toggle (shipped as a `.vsix` on Releases).
 
 ## Next
 
 - **Claude Code version adapters** as the format evolves — driven by
   community format-drift reports (the #1 contribution).
-- **VS Code extension**: reuse the existing HTML/JS inside a `WebviewPanel`
-  (also mirrored to Open VSX for VSCodium / Cursor).
+- **Open VSX** mirror of the VS Code extension (for VSCodium / Cursor), and the
+  VS Code Marketplace.
 - **npx** entry point for the Node-native crowd.
 - **More languages** — each is a single edit to the `I18N` table.
 - Labels for **tools** beyond the current set (broader MCP coverage).
@@ -26,7 +28,6 @@ Directional, not a promise. Issues and PRs welcome — see
 
 - Native finish notifications (e.g. Windows toast via an optional, lazy import).
 - Themes / skins.
-- Friendly room labels derived from the conversation title instead of the cwd.
 - Per-agent timing stats (durations, tool histograms).
 
 ## Non-goals

@@ -18,6 +18,12 @@ SemVer policy for this tool:
 
 ## [Unreleased]
 
+### Added
+
+- VS Code extension 0.2.2: Marketplace listing metadata (theater-masks icon,
+  gallery banner, bugs/homepage links) and a manual `publish-extension.yml`
+  workflow that packages the `.vsix` and publishes it with a `VSCE_PAT` secret.
+
 ## [0.1.1] - 2026-06-09
 
 ### Added

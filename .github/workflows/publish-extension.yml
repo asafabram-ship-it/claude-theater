@@ -1,0 +1,57 @@
+# Publish the VS Code extension to the Visual Studio Marketplace.
+#
+# Manual trigger only (workflow_dispatch): publishing is rare and the first
+# run needs the VSCE_PAT secret in place. The PAT is an Azure DevOps token
+# with the "Marketplace > Manage" scope, created for "All accessible
+# organizations", and the publisher in package.json must already exist
+# (vsce cannot create publishers).
+#
+# Not idempotent: re-running after a successful publish fails with
+# "version already exists" — bump the version in package.json instead.
+name: Publish VS Code extension
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-extension
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      # Exact-version install in a PAT-free step, so npm lifecycle scripts
+      # never run with the secret in the environment.
+      - name: Install vsce
+        run: npm install --global @vscode/vsce@3.9.2
+      - name: Verify the Marketplace PAT
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT secret is not set (Azure DevOps PAT, Marketplace > Manage scope, all accessible organizations)."
+            exit 1
+          fi
+          vsce verify-pat asafabram-ship-it
+      - name: Package the extension (.vsix)
+        working-directory: vscode-extension
+        # vscode:prepublish bundles ../claude_theater.py into the vsix.
+        run: vsce package
+      # Upload before publishing so the artifact survives a failed publish.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vsix
+          path: vscode-extension/claude-theater-*.vsix
+      - name: Publish to the Marketplace
+        working-directory: vscode-extension
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: vsce publish --packagePath claude-theater-*.vsix

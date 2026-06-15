@@ -1,8 +1,17 @@
 # Claude Theater — VS Code extension
 
 Watch your Claude Code subagents as a live, animated office, **inside VS Code** —
-in a full WebviewPanel where clicks, focus, language toggle, search, and keyboard
-nav all work (unlike the built-in Simple Browser, which doesn't forward those).
+in a docked **side panel** where clicks, focus, language toggle, search, and
+keyboard nav all work (unlike the built-in Simple Browser, which doesn't forward
+those).
+
+> **Tip — watch it beside your chat:** the office opens in the left side bar by
+> default (under the 🎭 icon in the Activity Bar). Drag it to the **Secondary
+> Side Bar** (the right edge — toggle it with `Ctrl/Cmd+Alt+B`) to keep the
+> agents in view next to the Claude Code chat. VS Code remembers the spot.
+> *(VS Code doesn't yet let an extension default a view to the right side bar
+> without a proposed API that can't be published to the Marketplace — so this is
+> a one-time drag.)*
 
 ## Install
 
@@ -16,8 +25,11 @@ The server is **bundled into the extension** — no separate install needed.
 ## Use
 
 - The bundled server auto-starts in the background when VS Code launches.
-- Open the office from the **"📡 Theater"** status-bar button, or the
-  Command Palette → **"Claude Theater: Open Theater"**.
+- Open the office by clicking the **🎭 Claude Theater** icon in the Activity Bar,
+  the **"📡 Theater"** status-bar button, or the Command Palette →
+  **"Claude Theater: Open Theater"**.
+- Drag the panel to the **Secondary Side Bar** (right) to watch it beside the
+  Claude Code chat — VS Code keeps it there.
 - If a server is already running on `127.0.0.1:7333`, it connects to that one
   instead of starting another.
 

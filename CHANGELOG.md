@@ -30,6 +30,11 @@ SemVer policy for this tool:
   (`WebviewView` in its own activity-bar container) instead of taking over an
   editor tab — drag it to the secondary/right side bar to watch the agents move
   beside your code. Adds a waiting/Retry page while the local server starts.
+- VS Code extension 0.2.4: a one-time tip (with an "open the right side bar"
+  action) the first time the office is opened, nudging users to drag it to the
+  Secondary Side Bar — VS Code can't default a view there without a Marketplace-
+  blocked proposed API, so the right-side placement stays a one-time drag.
+  README documents the side-panel + drag-to-right flow.
 
 ## [0.1.1] - 2026-06-09
 

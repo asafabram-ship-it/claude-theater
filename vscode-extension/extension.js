@@ -193,6 +193,23 @@ function waitingHtml(port) {
   );
 }
 
+// One-time nudge, shown the first time the office is opened: VS Code can't make an
+// extension default a view to the secondary (right) side bar without a proposed API
+// that's blocked from the Marketplace, so we point the user at the one-time drag.
+async function maybeShowMoveTip(context) {
+  const KEY = "claudeTheater.moveTipShown";
+  if (context.globalState.get(KEY)) return;
+  await context.globalState.update(KEY, true);
+  const OPEN = "Open the right side bar";
+  const pick = await vscode.window.showInformationMessage(
+    "Tip: drag Claude Theater to the Secondary Side Bar (the right edge) to watch your agents move beside the Claude Code chat. VS Code will remember the spot.",
+    OPEN
+  );
+  if (pick === OPEN) {
+    try { await vscode.commands.executeCommand("workbench.action.toggleAuxiliaryBar"); } catch (_) {}
+  }
+}
+
 // The office now lives as a docked WebviewView (a side panel that sits beside the
 // editor — the user can drag it to the secondary/right side bar), not an editor tab.
 class TheaterViewProvider {
@@ -213,6 +230,7 @@ class TheaterViewProvider {
       if (webviewView.visible && this._errored) this.render();
     });
     await this.render();
+    maybeShowMoveTip(this.context);
   }
   async render() {
     const webviewView = this.view;

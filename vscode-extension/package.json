@@ -2,7 +2,7 @@
   "name": "claude-theater",
   "displayName": "Claude Theater",
   "description": "Watch your Claude Code conversations and subagents work — a live office, inside VS Code.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "asafabram-ship-it",
   "license": "MIT",
   "icon": "icon.png",
@@ -20,6 +20,24 @@
     "vscode:prepublish": "node -e \"require('fs').copyFileSync('../claude_theater.py','claude_theater.py')\""
   },
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeTheaterContainer",
+          "title": "Claude Theater",
+          "icon": "icon.png"
+        }
+      ]
+    },
+    "views": {
+      "claudeTheaterContainer": [
+        {
+          "id": "claudeTheater.view",
+          "name": "Theater",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "claudeTheater.open",

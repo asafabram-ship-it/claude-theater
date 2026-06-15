@@ -172,41 +172,86 @@ function buildWebviewHtml(pageHtml, port) {
   return inject + pageHtml;
 }
 
-async function openTheater(context) {
-  const { port } = cfg();
-
-  let up = await isUp(port);
-  if (!up) {
-    up = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: "Claude Theater: starting server…" },
-      () => ensureRunning(context)
-    );
-  }
-  if (!up) {
-    const pick = await vscode.window.showErrorMessage(
-      `Claude Theater server isn't running on port ${port}. Install Python, or set claudeTheater.serverScript / pythonPath.`,
-      "Retry"
-    );
-    if (pick === "Retry") return openTheater(context);
-    return;
-  }
-
-  let page;
-  try {
-    page = (await httpGet(port, "/", 3000)).body;
-  } catch (e) {
-    vscode.window.showErrorMessage("Claude Theater: failed to load the page from the server.");
-    return;
-  }
-
-  const panel = vscode.window.createWebviewPanel(
-    "claudeTheater",
-    "Claude Theater",
-    vscode.ViewColumn.Active,
-    { enableScripts: true, retainContextWhenHidden: true }
+// Small standalone page shown in the side panel while the local server is still
+// coming up (or if Python is missing). Stays inside the strict-CSP webview.
+function waitingHtml(port) {
+  return (
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">` +
+    `<style>body{font-family:'Segoe UI',system-ui,sans-serif;color:#9aa4cc;background:#0b1020;` +
+    `display:flex;flex-direction:column;align-items:center;justify-content:center;` +
+    `min-height:100vh;margin:0;text-align:center;padding:0 18px}` +
+    `h2{font-size:15px;margin:0 0 6px;color:#e8ecff}p{font-size:12px;margin:0 0 16px;line-height:1.5}` +
+    `button{background:#3651e8;color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:12px;cursor:pointer}</style>` +
+    `</head><body>` +
+    `<div style="font-size:40px;margin-bottom:8px">🎭</div>` +
+    `<h2>Claude Theater</h2>` +
+    `<p>The server isn't running on port ${port} yet.<br>Make sure Python is installed, then retry.</p>` +
+    `<button id="retry">Retry</button>` +
+    `<script>const v=acquireVsCodeApi();document.getElementById('retry').onclick=function(){v.postMessage({type:'retry'})};</script>` +
+    `</body></html>`
   );
-  panel.webview.html = buildWebviewHtml(page, port);
-  await refreshStatus();
+}
+
+// The office now lives as a docked WebviewView (a side panel that sits beside the
+// editor — the user can drag it to the secondary/right side bar), not an editor tab.
+class TheaterViewProvider {
+  constructor(context) {
+    this.context = context;
+    this.view = null;
+    this._errored = false;
+  }
+  async resolveWebviewView(webviewView) {
+    this.view = webviewView;
+    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.onDidReceiveMessage((m) => {
+      if (m && m.type === "retry") this.render();
+    });
+    // If the server only came up after we showed the waiting page, re-render once
+    // the panel is revealed again instead of leaving the user stuck on "Retry".
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible && this._errored) this.render();
+    });
+    await this.render();
+  }
+  async render() {
+    const webviewView = this.view;
+    if (!webviewView) return;
+    const { port } = cfg();
+
+    let up = await isUp(port);
+    if (!up) up = await ensureRunning(this.context);
+    if (!up) {
+      this._errored = true;
+      webviewView.webview.html = waitingHtml(port);
+      return;
+    }
+
+    let page;
+    try {
+      page = (await httpGet(port, "/", 3000)).body;
+    } catch (e) {
+      this._errored = true;
+      webviewView.webview.html = waitingHtml(port);
+      return;
+    }
+    this._errored = false;
+    webviewView.webview.html = buildWebviewHtml(page, port);
+    await refreshStatus();
+  }
+}
+
+let theaterProvider = null;
+
+// Reveal the side panel (focus its view), starting the server first if needed.
+async function openTheater(context) {
+  await ensureRunning(context);
+  // `<viewId>.focus` is auto-registered by VS Code for contributed views; this
+  // opens the container and triggers resolveWebviewView → render on first use.
+  try {
+    await vscode.commands.executeCommand("claudeTheater.view.focus");
+  } catch (_) {}
+  if (theaterProvider) await theaterProvider.render();
 }
 
 function activate(context) {
@@ -214,8 +259,12 @@ function activate(context) {
   statusItem.command = "claudeTheater.menu";
   statusItem.text = "$(broadcast) Theater";
   statusItem.show();
+  theaterProvider = new TheaterViewProvider(context);
   context.subscriptions.push(
     statusItem,
+    vscode.window.registerWebviewViewProvider("claudeTheater.view", theaterProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     vscode.commands.registerCommand("claudeTheater.open", () => openTheater(context)),
     vscode.commands.registerCommand("claudeTheater.menu", () => showMenu(context))
   );

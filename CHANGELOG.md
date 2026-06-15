@@ -24,6 +24,13 @@ SemVer policy for this tool:
   gallery banner, bugs/homepage links) and a manual `publish-extension.yml`
   workflow that packages the `.vsix` and publishes it with a `VSCE_PAT` secret.
 
+### Changed
+
+- VS Code extension 0.2.3: the office now opens as a **docked side panel**
+  (`WebviewView` in its own activity-bar container) instead of taking over an
+  editor tab — drag it to the secondary/right side bar to watch the agents move
+  beside your code. Adds a waiting/Retry page while the local server starts.
+
 ## [0.1.1] - 2026-06-09
 
 ### Added

@@ -24,9 +24,12 @@ The server is **bundled into the extension** — no separate install needed.
 
 ## Use
 
-- The bundled server auto-starts in the background when VS Code launches.
-- Open the office by clicking the **🎭 Claude Theater** icon in the Activity Bar,
-  the **"📡 Theater"** status-bar button, or the Command Palette →
+- The bundled server auto-starts in the background when VS Code launches, and the
+  panel **opens automatically on startup**. Prefer it stay closed? Click the
+  **eye** icon in the panel's title bar, pick "Don't open automatically" from the
+  Theater status-bar menu, or turn off `claudeTheater.openOnStartup`.
+- Open the office any time by clicking the **🎭 Claude Theater** icon in the
+  Activity Bar, the **"📡 Theater"** status-bar button, or the Command Palette →
   **"Claude Theater: Open Theater"**.
 - Drag the panel to the **Secondary Side Bar** (right) to watch it beside the
   Claude Code chat — VS Code keeps it there.
@@ -37,6 +40,7 @@ The server is **bundled into the extension** — no separate install needed.
 
 - `claudeTheater.port` (default `7333`) — server port.
 - `claudeTheater.autoStart` (default `true`) — auto-start the server on launch.
+- `claudeTheater.openOnStartup` (default `true`) — reveal the panel on startup.
 - `claudeTheater.pythonPath` — interpreter for the server (empty = try `python`, `py`, `python3`).
 - `claudeTheater.serverScript` — path to `claude_theater.py` (empty = use the bundled copy).
 

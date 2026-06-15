@@ -2,7 +2,7 @@
   "name": "claude-theater",
   "displayName": "Claude Theater",
   "description": "Watch your Claude Code conversations and subagents work — a live office, inside VS Code.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "asafabram-ship-it",
   "license": "MIT",
   "icon": "icon.png",
@@ -48,8 +48,23 @@
         "command": "claudeTheater.menu",
         "title": "Menu (start / stop / open)",
         "category": "Claude Theater"
+      },
+      {
+        "command": "claudeTheater.disableAutoOpen",
+        "title": "Don't open automatically on startup",
+        "category": "Claude Theater",
+        "icon": "$(eye-closed)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeTheater.disableAutoOpen",
+          "when": "view == claudeTheater.view",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Claude Theater",
       "properties": {
@@ -62,6 +77,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically run the Claude Theater server in the background when VS Code starts. Toggle this from the status-bar button."
+        },
+        "claudeTheater.openOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically reveal the Claude Theater panel when VS Code starts. Turn it off from the panel's title-bar button, the Theater status-bar menu, or here."
         },
         "claudeTheater.pythonPath": {
           "type": "string",

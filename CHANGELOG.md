@@ -35,6 +35,10 @@ SemVer policy for this tool:
   Secondary Side Bar — VS Code can't default a view there without a Marketplace-
   blocked proposed API, so the right-side placement stays a one-time drag.
   README documents the side-panel + drag-to-right flow.
+- VS Code extension 0.2.5: the panel now **opens automatically on startup**
+  (`claudeTheater.openOnStartup`, default on). It's easy to turn off — an eye
+  button in the panel's title bar, a toggle in the status-bar menu, an action on
+  the first-run tip, or the setting — so users are never stuck with it.
 
 ## [0.1.1] - 2026-06-09
 

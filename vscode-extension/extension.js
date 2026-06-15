@@ -21,6 +21,7 @@ function cfg() {
   return {
     port,
     autoStart: c.get("autoStart", true),
+    openOnStartup: c.get("openOnStartup", true),
     pythonPath: (c.get("pythonPath", "") || "").trim(),
     serverScript: (c.get("serverScript", "") || "").trim(),
   };
@@ -126,9 +127,12 @@ async function refreshStatus() {
 }
 
 async function showMenu(context) {
-  const { autoStart } = cfg();
+  const { autoStart, openOnStartup } = cfg();
   const items = [
     { label: "$(window) Open Theater", action: "open" },
+    openOnStartup
+      ? { label: "$(eye-closed) Don't open automatically on startup", action: "noAutoOpen" }
+      : { label: "$(eye) Open automatically on startup", action: "autoOpen" },
     autoStart
       ? { label: "$(circle-slash) Disable auto-start", action: "disable" }
       : { label: "$(check) Enable auto-start", action: "enable" },
@@ -139,6 +143,10 @@ async function showMenu(context) {
   const conf = vscode.workspace.getConfiguration("claudeTheater");
   if (pick.action === "open") {
     await openTheater(context);
+  } else if (pick.action === "noAutoOpen") {
+    await setOpenOnStartup(false);
+  } else if (pick.action === "autoOpen") {
+    await setOpenOnStartup(true);
   } else if (pick.action === "disable") {
     await conf.update("autoStart", false, vscode.ConfigurationTarget.Global);
     stopServer();
@@ -193,20 +201,39 @@ function waitingHtml(port) {
   );
 }
 
+// Turn "open the panel on startup" on/off. Used by the panel's title-bar button,
+// the first-run tip, and the status-bar menu — with a confirmation so the user can
+// see the change stuck (and how to undo it).
+async function setOpenOnStartup(value) {
+  await vscode.workspace
+    .getConfiguration("claudeTheater")
+    .update("openOnStartup", value, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(
+    value
+      ? "Claude Theater will open automatically on startup."
+      : "Claude Theater won't open automatically on startup. Re-enable it from the Theater status-bar menu or Settings."
+  );
+}
+
 // One-time nudge, shown the first time the office is opened: VS Code can't make an
 // extension default a view to the secondary (right) side bar without a proposed API
-// that's blocked from the Marketplace, so we point the user at the one-time drag.
+// that's blocked from the Marketplace, so we point the user at the one-time drag —
+// and offer a one-click way to stop it opening on startup if they'd rather it didn't.
 async function maybeShowMoveTip(context) {
   const KEY = "claudeTheater.moveTipShown";
   if (context.globalState.get(KEY)) return;
   await context.globalState.update(KEY, true);
   const OPEN = "Open the right side bar";
+  const OFF = "Don't open on startup";
   const pick = await vscode.window.showInformationMessage(
-    "Tip: drag Claude Theater to the Secondary Side Bar (the right edge) to watch your agents move beside the Claude Code chat. VS Code will remember the spot.",
-    OPEN
+    "Claude Theater opened here automatically. Tip: drag it to the Secondary Side Bar (the right edge) to watch your agents beside the Claude Code chat — VS Code remembers the spot.",
+    OPEN,
+    OFF
   );
   if (pick === OPEN) {
     try { await vscode.commands.executeCommand("workbench.action.toggleAuxiliaryBar"); } catch (_) {}
+  } else if (pick === OFF) {
+    await setOpenOnStartup(false);
   }
 }
 
@@ -284,13 +311,19 @@ function activate(context) {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.commands.registerCommand("claudeTheater.open", () => openTheater(context)),
-    vscode.commands.registerCommand("claudeTheater.menu", () => showMenu(context))
+    vscode.commands.registerCommand("claudeTheater.menu", () => showMenu(context)),
+    vscode.commands.registerCommand("claudeTheater.disableAutoOpen", () => setOpenOnStartup(false))
   );
 
-  // Auto-start the server in the background (the user chose: run quietly, open on demand).
+  // Auto-start the server in the background, and (by default) reveal the panel on
+  // startup. Both are configurable; the panel's title-bar button, the first-run
+  // tip, and the status-bar menu all offer a one-click way to stop the auto-open.
   (async () => {
     if (cfg().autoStart) await ensureRunning(context);
     await refreshStatus();
+    if (cfg().openOnStartup) {
+      try { await vscode.commands.executeCommand("claudeTheater.view.focus"); } catch (_) {}
+    }
   })();
 
   // keep the status icon honest if the server stops/starts outside the extension

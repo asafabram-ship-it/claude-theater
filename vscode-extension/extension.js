@@ -1,10 +1,12 @@
 // Claude Theater — VS Code extension.
 // Runs the local theater server in the background (auto-start on launch, toggleable
-// from a status-bar button) and opens the office inside a WebviewPanel (a full
-// interactive webview, unlike Simple Browser): the server's HTML is embedded
-// directly so clicks / focus / keyboard all work. Data is fetched by the webview
-// from 127.0.0.1; the server returns CORS headers only to a vscode-webview:// origin
-// and an identity header we verify, so the journals never leak to a web page.
+// from a status-bar button) and opens the office in a WebviewPanel in the EDITOR
+// area — beside the current file, the same place Markdown/code files open — so it
+// sits to the side of what you're working on and closes with the tab's own X. By
+// default it opens on startup (claudeTheater.openOnStartup). The server's HTML is
+// embedded directly so clicks / focus / keyboard work; data is fetched from
+// 127.0.0.1, and the server returns CORS headers only to a vscode-webview:// origin
+// plus an identity header we verify, so the journals never leak to a web page.
 const vscode = require("vscode");
 const http = require("http");
 const cp = require("child_process");
@@ -54,6 +56,7 @@ async function isUp(port) {
 
 let spawnedProc = null;   // set only when WE started the server, so we only stop ours
 let statusItem = null;
+let theaterPanel = null;  // the single editor-area webview panel (null when closed)
 
 // Find a claude_theater.py we can run. Order: explicit config, the copy bundled in
 // the .vsix (works standalone, no pip needed), then a source checkout next to the
@@ -126,6 +129,20 @@ async function refreshStatus() {
   statusItem.show();
 }
 
+// Turn "open the panel on startup" on/off (used by the status-bar menu, the
+// first-run tip, and the palette command), with a confirmation so the user can see
+// it stuck and knows how to undo it.
+async function setOpenOnStartup(value) {
+  await vscode.workspace
+    .getConfiguration("claudeTheater")
+    .update("openOnStartup", value, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(
+    value
+      ? "Claude Theater will open beside your editor on startup."
+      : "Claude Theater won't open automatically on startup. Re-enable it from the Theater status-bar menu or Settings."
+  );
+}
+
 async function showMenu(context) {
   const { autoStart, openOnStartup } = cfg();
   const items = [
@@ -159,6 +176,7 @@ async function showMenu(context) {
     stopServer();
     await delay(300);
     await ensureRunning(context);
+    if (theaterPanel) await loadPanelContent(context, theaterPanel);
   }
   await refreshStatus();
 }
@@ -180,8 +198,8 @@ function buildWebviewHtml(pageHtml, port) {
   return inject + pageHtml;
 }
 
-// Small standalone page shown in the side panel while the local server is still
-// coming up (or if Python is missing). Stays inside the strict-CSP webview.
+// Page shown in the panel while the local server is still coming up (or if Python
+// is missing). Stays inside the strict-CSP webview; the Retry button posts back.
 function waitingHtml(port) {
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
@@ -201,102 +219,56 @@ function waitingHtml(port) {
   );
 }
 
-// Turn "open the panel on startup" on/off. Used by the panel's title-bar button,
-// the first-run tip, and the status-bar menu — with a confirmation so the user can
-// see the change stuck (and how to undo it).
-async function setOpenOnStartup(value) {
-  await vscode.workspace
-    .getConfiguration("claudeTheater")
-    .update("openOnStartup", value, vscode.ConfigurationTarget.Global);
-  vscode.window.showInformationMessage(
-    value
-      ? "Claude Theater will open automatically on startup."
-      : "Claude Theater won't open automatically on startup. Re-enable it from the Theater status-bar menu or Settings."
-  );
-}
-
-// One-time nudge, shown the first time the office is opened: VS Code can't make an
-// extension default a view to the secondary (right) side bar without a proposed API
-// that's blocked from the Marketplace, so we point the user at the one-time drag —
-// and offer a one-click way to stop it opening on startup if they'd rather it didn't.
-async function maybeShowMoveTip(context) {
-  const KEY = "claudeTheater.moveTipShown";
+// One-time, the first time the office opens: reassure the user it lives beside the
+// editor, closes like any tab, and offer a one-click way to stop opening on startup.
+async function maybeShowStartupTip(context) {
+  const KEY = "claudeTheater.startupTipShown";
   if (context.globalState.get(KEY)) return;
   await context.globalState.update(KEY, true);
-  const OPEN = "Open the right side bar";
   const OFF = "Don't open on startup";
   const pick = await vscode.window.showInformationMessage(
-    "Claude Theater opened here automatically. Tip: drag it to the Secondary Side Bar (the right edge) to watch your agents beside the Claude Code chat — VS Code remembers the spot.",
-    OPEN,
+    "Claude Theater opens beside your editor. Close its tab anytime — or turn off opening it on startup here.",
     OFF
   );
-  if (pick === OPEN) {
-    try { await vscode.commands.executeCommand("workbench.action.toggleAuxiliaryBar"); } catch (_) {}
-  } else if (pick === OFF) {
-    await setOpenOnStartup(false);
-  }
+  if (pick === OFF) await setOpenOnStartup(false);
 }
 
-// The office now lives as a docked WebviewView (a side panel that sits beside the
-// editor — the user can drag it to the secondary/right side bar), not an editor tab.
-class TheaterViewProvider {
-  constructor(context) {
-    this.context = context;
-    this.view = null;
-    this._errored = false;
-  }
-  async resolveWebviewView(webviewView) {
-    this.view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.onDidReceiveMessage((m) => {
-      if (m && m.type === "retry") this.render();
-    });
-    // If the server only came up after we showed the waiting page, re-render once
-    // the panel is revealed again instead of leaving the user stuck on "Retry".
-    webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible && this._errored) this.render();
-    });
-    await this.render();
-    maybeShowMoveTip(this.context);
-  }
-  async render() {
-    const webviewView = this.view;
-    if (!webviewView) return;
-    const { port } = cfg();
-
-    let up = await isUp(port);
-    if (!up) up = await ensureRunning(this.context);
-    if (!up) {
-      this._errored = true;
-      webviewView.webview.html = waitingHtml(port);
-      return;
-    }
-
-    let page;
-    try {
-      page = (await httpGet(port, "/", 3000)).body;
-    } catch (e) {
-      this._errored = true;
-      webviewView.webview.html = waitingHtml(port);
-      return;
-    }
-    this._errored = false;
-    webviewView.webview.html = buildWebviewHtml(page, port);
-    await refreshStatus();
-  }
-}
-
-let theaterProvider = null;
-
-// Reveal the side panel (focus its view), starting the server first if needed.
-async function openTheater(context) {
-  await ensureRunning(context);
-  // `<viewId>.focus` is auto-registered by VS Code for contributed views; this
-  // opens the container and triggers resolveWebviewView → render on first use.
+// Load (or reload) the office page into an existing panel, falling back to the
+// waiting page if the server isn't up yet.
+async function loadPanelContent(context, panel) {
+  const { port } = cfg();
+  let up = await isUp(port);
+  if (!up) up = await ensureRunning(context);
+  if (!up) { panel.webview.html = waitingHtml(port); return; }
   try {
-    await vscode.commands.executeCommand("claudeTheater.view.focus");
-  } catch (_) {}
-  if (theaterProvider) await theaterProvider.render();
+    const page = (await httpGet(port, "/", 3000)).body;
+    panel.webview.html = buildWebviewHtml(page, port);
+  } catch (_) {
+    panel.webview.html = waitingHtml(port);
+  }
+  await refreshStatus();
+}
+
+// Open the office in the editor area, beside the current file (a split editor) —
+// the same place Markdown/code files open. A single panel: reopen just reveals it.
+async function openTheater(context) {
+  if (theaterPanel) {
+    theaterPanel.reveal(vscode.ViewColumn.Beside, true);
+    return;
+  }
+  const panel = vscode.window.createWebviewPanel(
+    "claudeTheater",
+    "🎭 Claude Theater",
+    { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+    { enableScripts: true, retainContextWhenHidden: true }
+  );
+  theaterPanel = panel;
+  panel.onDidDispose(() => { theaterPanel = null; });
+  panel.webview.onDidReceiveMessage((m) => {
+    if (m && m.type === "retry") loadPanelContent(context, panel);
+  });
+  await loadPanelContent(context, panel);
+  maybeShowStartupTip(context);
 }
 
 function activate(context) {
@@ -304,26 +276,20 @@ function activate(context) {
   statusItem.command = "claudeTheater.menu";
   statusItem.text = "$(broadcast) Theater";
   statusItem.show();
-  theaterProvider = new TheaterViewProvider(context);
   context.subscriptions.push(
     statusItem,
-    vscode.window.registerWebviewViewProvider("claudeTheater.view", theaterProvider, {
-      webviewOptions: { retainContextWhenHidden: true },
-    }),
     vscode.commands.registerCommand("claudeTheater.open", () => openTheater(context)),
     vscode.commands.registerCommand("claudeTheater.menu", () => showMenu(context)),
     vscode.commands.registerCommand("claudeTheater.disableAutoOpen", () => setOpenOnStartup(false))
   );
 
-  // Auto-start the server in the background, and (by default) reveal the panel on
-  // startup. Both are configurable; the panel's title-bar button, the first-run
-  // tip, and the status-bar menu all offer a one-click way to stop the auto-open.
+  // Auto-start the server in the background, and (by default) open the panel beside
+  // the editor on startup. Both are configurable; the panel's tab X closes it, and
+  // the status-bar menu / first-run tip / setting all turn off the auto-open.
   (async () => {
     if (cfg().autoStart) await ensureRunning(context);
     await refreshStatus();
-    if (cfg().openOnStartup) {
-      try { await vscode.commands.executeCommand("claudeTheater.view.focus"); } catch (_) {}
-    }
+    if (cfg().openOnStartup) await openTheater(context);
   })();
 
   // keep the status icon honest if the server stops/starts outside the extension

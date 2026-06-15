@@ -1,17 +1,14 @@
 # Claude Theater — VS Code extension
 
 Watch your Claude Code subagents as a live, animated office, **inside VS Code** —
-in a docked **side panel** where clicks, focus, language toggle, search, and
-keyboard nav all work (unlike the built-in Simple Browser, which doesn't forward
-those).
+in an editor tab **beside your file** (the same place Markdown/code open), where
+clicks, focus, language toggle, search, and keyboard nav all work (unlike the
+built-in Simple Browser, which doesn't forward those).
 
-> **Tip — watch it beside your chat:** the office opens in the left side bar by
-> default (under the 🎭 icon in the Activity Bar). Drag it to the **Secondary
-> Side Bar** (the right edge — toggle it with `Ctrl/Cmd+Alt+B`) to keep the
-> agents in view next to the Claude Code chat. VS Code remembers the spot.
-> *(VS Code doesn't yet let an extension default a view to the right side bar
-> without a proposed API that can't be published to the Marketplace — so this is
-> a one-time drag.)*
+> By default the office opens beside your editor on startup, so it sits next to
+> what you're working on. Close it like any tab (the **X**), or turn off the
+> auto-open from the **"📡 Theater"** status-bar menu or
+> `claudeTheater.openOnStartup`.
 
 ## Install
 
@@ -25,14 +22,11 @@ The server is **bundled into the extension** — no separate install needed.
 ## Use
 
 - The bundled server auto-starts in the background when VS Code launches, and the
-  panel **opens automatically on startup**. Prefer it stay closed? Click the
-  **eye** icon in the panel's title bar, pick "Don't open automatically" from the
-  Theater status-bar menu, or turn off `claudeTheater.openOnStartup`.
-- Open the office any time by clicking the **🎭 Claude Theater** icon in the
-  Activity Bar, the **"📡 Theater"** status-bar button, or the Command Palette →
-  **"Claude Theater: Open Theater"**.
-- Drag the panel to the **Secondary Side Bar** (right) to watch it beside the
-  Claude Code chat — VS Code keeps it there.
+  office **opens beside your editor on startup** (a split editor tab). Prefer it
+  stay closed? Close the tab with its **X**, pick "Don't open automatically" from
+  the **"📡 Theater"** status-bar menu, or turn off `claudeTheater.openOnStartup`.
+- Open the office any time from the **"📡 Theater"** status-bar button or the
+  Command Palette → **"Claude Theater: Open Theater"**.
 - If a server is already running on `127.0.0.1:7333`, it connects to that one
   instead of starting another.
 
@@ -40,7 +34,7 @@ The server is **bundled into the extension** — no separate install needed.
 
 - `claudeTheater.port` (default `7333`) — server port.
 - `claudeTheater.autoStart` (default `true`) — auto-start the server on launch.
-- `claudeTheater.openOnStartup` (default `true`) — reveal the panel on startup.
+- `claudeTheater.openOnStartup` (default `true`) — open the panel beside your editor on startup.
 - `claudeTheater.pythonPath` — interpreter for the server (empty = try `python`, `py`, `python3`).
 - `claudeTheater.serverScript` — path to `claude_theater.py` (empty = use the bundled copy).
 

@@ -39,6 +39,12 @@ SemVer policy for this tool:
   (`claudeTheater.openOnStartup`, default on). It's easy to turn off — an eye
   button in the panel's title bar, a toggle in the status-bar menu, an action on
   the first-run tip, or the setting — so users are never stuck with it.
+- VS Code extension 0.2.6: the office now opens **in the editor area beside your
+  file** (a split editor tab, where Markdown/code open) instead of the side bar —
+  so it sits next to what you're working on and closes with the tab's own X. This
+  placement *can* be the default for everyone (no proposed API needed, unlike the
+  secondary side bar). Drops the side-bar view container; keeps open-on-startup
+  and all the ways to turn it off.
 
 ## [0.1.1] - 2026-06-09
 

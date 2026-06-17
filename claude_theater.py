@@ -41,6 +41,12 @@ MAX_AGE_MIN = 180          # only show agents whose file changed in the last N m
 RUNNING_STALE_SEC = 90     # a "running" agent untouched this long is shown as idle
 
 PROJECTS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+# Claude Code writes ~/.claude/sessions/<pid>.json when an interactive session
+# starts and removes it on exit, so this directory is a live registry of OPEN
+# conversations. We use it to make a room vanish the moment its chat is closed,
+# instead of lingering for MAX_AGE_MIN. Absent dir => older build that doesn't
+# track this => feature disabled (live_session_ids returns None, nothing hidden).
+SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "sessions")
 
 # Claude Code versions this parser was tested against (major.minor only).
 # Any other version seen at runtime raises a non-blocking banner (text built in
@@ -174,22 +180,94 @@ def last_tool_use_name(events):
     return None
 
 
+# stop_reasons that mean "the model intends to keep going" -> NOT finished.
+# Anything else (end_turn, stop, stop_sequence, max_tokens, refusal, or a reason
+# a future Claude Code build invents) on a tool-free assistant turn counts as
+# done. Using a deny-list this way -- rather than an allow-list of terminal
+# reasons -- is what stops an unfamiliar terminal reason from pinning an agent at
+# "running" forever.
+CONTINUATION_STOP_REASONS = ("tool_use", "pause_turn")
+RESULT_CHAR_LIMIT = 4000
+
+
 def detect_done(events):
+    """Returns (is_done, end_ms, result_text, truncated)."""
     last = None
     for ev in reversed(events):
         if ev.kind in ("assistant", "user"):
             last = ev
             break
     if last is None or last.kind != "assistant":
-        return False, None, None
+        return False, None, None, False
     has_tool = bool(last.tool_uses)
-    done = (not has_tool) and (last.stop_reason in ("end_turn", "stop", "stop_sequence", "max_tokens"))
+    done = (not has_tool) and (last.stop_reason is not None) \
+        and (last.stop_reason not in CONTINUATION_STOP_REASONS)
     if done:
         full = " ".join(last.text.split())
-        if len(full) > 4000:
-            full = full[:4000] + "…"
-        return True, last.ts_ms, full
-    return False, None, None
+        truncated = len(full) > RESULT_CHAR_LIMIT
+        if truncated:
+            full = full[:RESULT_CHAR_LIMIT] + "…"
+        return True, last.ts_ms, full, truncated
+    return False, None, None, False
+
+
+def is_workflow_agent(path):
+    """A workflow subagent lives under subagents/workflows/wf_*/ (vs a regular
+    Task/Agent subagent, a shallow subagents/agent-*.jsonl). Path test only --
+    no extra stat -- and tolerant of either slash on Windows."""
+    return "/workflows/wf_" in path.replace("\\", "/")
+
+
+def _workflow_result_text(result_obj):
+    """A workflow agent's journal result is usually a structured object (the
+    StructuredOutput the workflow schema enforced). Pull a human-readable string:
+    a known prose field if present, else compact JSON of the whole object."""
+    if isinstance(result_obj, str):
+        return result_obj
+    if isinstance(result_obj, dict):
+        for k in ("notes", "summary", "text", "message", "result", "classification_reason"):
+            v = result_obj.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+        try:
+            return json.dumps(result_obj, ensure_ascii=False)
+        except Exception:
+            return str(result_obj)
+    return "" if result_obj is None else str(result_obj)
+
+
+def workflow_journal_result(agent_path, agent_id):
+    """Authoritative done-signal + result for a workflow subagent: its sibling
+    journal.jsonl, which records {"type":"result","agentId":..,"result":..} per
+    finished agent. We must read it instead of detect_done() because a
+    schema-bound workflow agent ends on a StructuredOutput tool_use -- which
+    detect_done() reads as 'still running' forever. Keyed by agentId so parallel
+    agents with identical prompts never collide. Returns the detect_done shape
+    (is_done, end_ms, result_text, truncated); is_done=False when no result yet."""
+    journal = os.path.join(os.path.dirname(agent_path), "journal.jsonl")
+    if not os.path.isfile(journal):
+        return False, None, None, False
+    found = None
+    try:
+        for ln in read_tail_lines(journal):
+            # cheap pre-filter before the JSON parse: both tokens must be present
+            if '"result"' not in ln or agent_id not in ln:
+                continue
+            try:
+                rec = json.loads(ln)
+            except Exception:
+                continue
+            if rec.get("type") == "result" and rec.get("agentId") == agent_id:
+                found = rec   # last result record wins (re-runs supersede)
+    except Exception:
+        return False, None, None, False
+    if found is None:
+        return False, None, None, False
+    text = " ".join(_workflow_result_text(found.get("result")).split())
+    truncated = len(text) > RESULT_CHAR_LIMIT
+    if truncated:
+        text = text[:RESULT_CHAR_LIMIT] + "…"
+    return True, None, text or None, truncated
 
 
 def major_minor(version):
@@ -226,6 +304,14 @@ def parent_session_file(agent_path, session_id):
     return p + ".jsonl"
 
 
+def _norm_prompt(s):
+    """Normalize a spawn prompt so a subagent joins to its parent Task call even
+    when whitespace differs (a trailing newline, indentation, collapsed runs).
+    Used for BOTH sides of the join -- map keys here and lookups in scan_agents --
+    so they always normalize identically."""
+    return " ".join((s or "").split())
+
+
 def name_map_for(parent_file):
     if not parent_file or not os.path.isfile(parent_file):
         return {}
@@ -255,9 +341,11 @@ def name_map_for(parent_file):
                     if (isinstance(block, dict) and block.get("type") == "tool_use"
                             and block.get("name") in ("Task", "Agent")):
                         inp = block.get("input") or {}
-                        prompt = inp.get("prompt")
-                        if prompt:
-                            m[prompt.strip()] = {
+                        key = _norm_prompt(inp.get("prompt"))
+                        # First spawn wins: re-running the same prompt later must
+                        # not overwrite the earlier agent's role with a new one.
+                        if key and key not in m:
+                            m[key] = {
                                 "description": inp.get("description", "") or "",
                                 "subagent_type": inp.get("subagent_type", "") or "",
                             }
@@ -355,16 +443,120 @@ def session_summary(session_file):
     return res
 
 
-def scan_sessions(now):
+def _pid_alive(pid):
+    """Best-effort liveness check for a session-owner process. On any uncertainty
+    we assume alive, so a probe failure can never wrongly hide an open chat."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False          # no such process -> closed
+            try:
+                code = wintypes.DWORD()
+                if k.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return code.value == STILL_ACTIVE
+                return True
+            finally:
+                k.CloseHandle(h)
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+    except Exception:
+        return True
+
+
+# (dir signature) -> tuple of (sessionId, pid). JSON parsing is cached on the
+# directory's (name, mtime) signature so it only reruns when a session starts or
+# ends; PID liveness is re-checked every scan (cheap) so a crash is noticed fast.
+_SESSIONS_CACHE = {"sig": None, "recs": ()}
+
+
+def live_session_ids(now):
+    """sessionIds of Claude Code conversations currently OPEN (process registered
+    in ~/.claude/sessions and still alive). Returns None when the registry dir is
+    absent -- an older build we can't reason about, so callers leave behavior
+    untouched. A returned (possibly empty) set means: trust it, anything not in it
+    is a closed chat."""
+    if not os.path.isdir(SESSIONS_DIR):
+        return None
+    try:
+        files = sorted(glob.glob(os.path.join(SESSIONS_DIR, "*.json")))
+    except Exception:
+        return None
+    sig = []
+    for fp in files:
+        try:
+            sig.append((fp, os.path.getmtime(fp)))
+        except OSError:
+            continue
+    sig = tuple(sig)
+    if sig == _SESSIONS_CACHE["sig"]:
+        recs = _SESSIONS_CACHE["recs"]
+    else:
+        recs = []
+        for fp, _ in sig:
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    rec = json.load(f)
+            except Exception:
+                continue
+            sid = rec.get("sessionId")
+            if sid:
+                recs.append((sid, rec.get("pid")))
+        recs = tuple(recs)
+        _SESSIONS_CACHE["sig"] = sig
+        _SESSIONS_CACHE["recs"] = recs
+    return frozenset(sid for sid, pid in recs if _pid_alive(pid))
+
+
+# Re-enumerating the whole ~/.claude/projects tree (a recursive glob over the
+# user's entire Claude Code history) is by far the costliest part of a scan and
+# grows with history -- benchmarked at ~90% of a steady-state scan. The set of
+# files changes slowly, so cache the path list and rebuild it at most every
+# GLOB_TTL_SEC. A new agent/session appears within that window; existing agents'
+# status stays live because every cached path is re-stat'd on every scan.
+GLOB_TTL_SEC = 6
+_GLOB_CACHE = {}   # pattern -> (timestamp, paths)
+
+
+def _throttled_glob(pattern, now, recursive=False):
+    # Keyed by the full pattern (which embeds PROJECTS_DIR) so changing the scan
+    # root -- e.g. tests pointing at a temp dir -- can't read another root's paths.
+    cached = _GLOB_CACHE.get(pattern)
+    if cached and (now - cached[0]) < GLOB_TTL_SEC:
+        return cached[1]
+    try:
+        paths = glob.glob(pattern, recursive=recursive)
+    except Exception:
+        paths = cached[1] if cached else []
+    _GLOB_CACHE[pattern] = (now, paths)
+    return paths
+
+
+def scan_sessions(now, live):
     """Top-level conversations as room-leading entries, so every recent conversation
     shows up (not only those that spawned subagents). Shape matches a subagent entry
     plus is_session=True; start_ms is the last-activity time so the timer reads as
-    'active/idle' rather than the (possibly hours-long) full session age."""
+    'active/idle' rather than the (possibly hours-long) full session age.
+
+    `live` is the set of open-conversation ids from live_session_ids() (or None
+    when unsupported). A conversation that's no longer live is a CLOSED chat: we
+    emit it as 'done' so the room collapses and hides by default (reachable via the
+    room's 'show finished' toggle) instead of lingering as 'stale' for MAX_AGE_MIN."""
     entries = []
-    try:
-        paths = glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl"))
-    except Exception:
-        paths = []
+    paths = _throttled_glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl"), now)
     for path in paths:
         try:
             mtime = os.path.getmtime(path)
@@ -374,7 +566,11 @@ def scan_sessions(now):
             continue
         topic, cwd = session_summary(path)
         uuid = os.path.basename(path)[:-6]
-        status = "running" if (now - mtime) <= RUNNING_STALE_SEC else "stale"
+        closed = (live is not None) and (uuid not in live)
+        if closed:
+            status = "done"
+        else:
+            status = "running" if (now - mtime) <= RUNNING_STALE_SEC else "stale"
         pid = persona_index(uuid)
         mtime_ms = int(mtime * 1000)
         entries.append({
@@ -382,10 +578,11 @@ def scan_sessions(now):
             "role": "", "subagent_type": "",
             "status": status, "tool": "",
             "task": topic, "task_short": short_task(topic), "result": None,
-            "start_ms": mtime_ms, "end_ms": None,
+            "start_ms": mtime_ms, "end_ms": mtime_ms if closed else None,
             "session": uuid[:8], "session_full": uuid,
             "cwd": cwd, "project": cwd, "mtime_ms": mtime_ms,
-            "is_session": True,
+            "is_session": True, "closed": closed,
+            "is_workflow": False, "truncated": False,
         })
     return entries
 
@@ -413,14 +610,12 @@ _AGENT_CACHE = {}
 
 def scan_agents():
     now = time.time()
+    live = live_session_ids(now)   # open conversations; None = registry unsupported
     pattern = os.path.join(PROJECTS_DIR, "**", "agent-*.jsonl")
     agents = []
     versions = set()
     skipped = 0
-    try:
-        paths = glob.glob(pattern, recursive=True)
-    except Exception:
-        paths = []
+    paths = _throttled_glob(pattern, now, recursive=True)
     seen = set()
     for path in paths:
         try:
@@ -462,26 +657,41 @@ def scan_agents():
             fskip = n_skip
             fvers |= vers
 
-            is_done, end_ms, result = detect_done(events)
+            workflow = is_workflow_agent(path)
             tool = last_tool_use_name(events)
             pid = persona_index(agent_id)
             parent = parent_session_file(path, session)
-            info = name_map_for(parent).get(task.strip()) if task.strip() else None
             project = project_cwd_for(parent)
+            if workflow:
+                # Authoritative status/result is the sibling journal.jsonl; only
+                # fall back to the transcript when no result is recorded yet.
+                is_done, end_ms, result, truncated = workflow_journal_result(path, agent_id)
+                if not is_done:
+                    is_done, end_ms, result, truncated = detect_done(events)
+                if is_done and end_ms is None:
+                    end_ms = int(mtime * 1000)   # journal carries no timestamp
+                role, subagent_type = "", "workflow-subagent"
+            else:
+                is_done, end_ms, result, truncated = detect_done(events)
+                # Real name from the parent's Task/Agent spawn call (normalized join).
+                info = name_map_for(parent).get(_norm_prompt(task)) if task.strip() else None
+                role = info["description"] if info else ""
+                subagent_type = info["subagent_type"] if info else ""
             # Language-neutral payload only: the browser localizes persona name,
             # activity label and the placeholder for an agent with no readable task
             # (degrade-not-crash -- it still shows up, just with a generic label).
             # `status` is a placeholder here; it is recomputed below every scan.
             adict = {
                 "id": agent_id, "persona_id": pid, "emoji": PERSONA_EMOJI[pid],
-                "role": info["description"] if info else "",
-                "subagent_type": info["subagent_type"] if info else "",
+                "role": role,
+                "subagent_type": subagent_type,
                 "status": "running", "tool": tool or "",
                 "task": task, "task_short": short_task(task), "result": result,
                 "start_ms": start_ms, "end_ms": end_ms,
                 "session": session[:8], "session_full": session,
                 "cwd": first_ev.raw.get("cwd", ""), "project": project,
                 "mtime_ms": int(mtime * 1000), "is_session": False,
+                "is_workflow": workflow, "truncated": truncated,
             }
             _AGENT_CACHE[path] = (mtime, size, adict, is_done, fvers, fskip)
 
@@ -495,14 +705,25 @@ def scan_agents():
         else:
             status = "running"
         a = dict(adict)
+        # A subagent whose parent chat has closed shouldn't keep a ghost room
+        # alive. Once it's gone idle (stale) and its session is no longer live,
+        # collapse it like a finished agent (hidden by default). We only touch
+        # stale ones: a still-writing 'running' agent is left visible in case it
+        # genuinely outlived its chat, and it collapses on the next idle scan.
+        sess_full = a["session_full"]
+        a["closed"] = (live is not None) and bool(sess_full) and (sess_full not in live)
+        if a["closed"] and status == "stale":
+            status = "done"
         a["status"] = status
         # role/subagent_type come from the PARENT session file, not the agent
         # file, so the agent-keyed (mtime,size) cache can't notice the parent
         # gaining its Task block later. Re-resolve every scan (name_map_for is
         # itself mtime-cached on the parent, so this is cheap) and overwrite the
         # copy; the cached adict and the isolated parser stay untouched.
-        _task = a["task"].strip()
-        if _task:
+        # Workflow agents have no parent Task call to name them; leave their
+        # "workflow-subagent" type untouched and skip the re-resolve.
+        _task = _norm_prompt(a["task"])
+        if _task and not a.get("is_workflow"):
             _info = name_map_for(parent_session_file(path, a["session_full"])).get(_task)
             if _info:
                 a["role"] = _info["description"]
@@ -516,7 +737,7 @@ def scan_agents():
     # Top-level conversations as room leads, so every recent conversation shows up
     # (not only those that spawned subagents). They share a room with their subagents
     # (same session id). is_session sorts first within a status so the lead shows first.
-    agents.extend(scan_sessions(now))
+    agents.extend(scan_sessions(now, live))
 
     order = {"running": 0, "stale": 1, "done": 2}
     agents.sort(key=lambda a: (order.get(a["status"], 3), -(1 if a.get("is_session") else 0), -(a["start_ms"] or 0)))
@@ -643,6 +864,32 @@ PAGE = """<!DOCTYPE html>
     --r-sm:8px; --r-md:10px; --r-lg:14px; --r-pill:999px;
     --ring:0 0 0 2px transparent,0 0 0 4px var(--accent);
   }
+  /* Embedded in a VS Code webview, the page IS the webview document, so VS Code
+     stamps <body> with vscode-light / vscode-dark / vscode-high-contrast* and
+     exposes --vscode-* tokens. Browser (start.cmd) and dark editors keep the
+     office's own dark palette via the fallbacks above; a LIGHT or
+     high-contrast-light editor remaps the tokens so the office isn't a black box
+     in a white IDE. The signature character art keeps its own colors -- only the
+     surrounding chrome follows the theme. */
+  body.vscode-light, body.vscode-high-contrast-light{
+    color-scheme:light;
+    --bg-1:#eef1fb; --bg-2:#e6eaf7; --bg-deep:#dde3f2;
+    --surface:#ffffff; --surface-2:#f5f7fd; --surface-3:#eef1fb;
+    --ink:#1b2240; --ink-2:#27314f; --ink-dim:#4c577a; --ink-dimmer:#5f6a8c;
+    --ok:#1f8f4d; --ok-bg:#d7f1df;
+    --idle:#9a6b12; --done:#3a4ea8; --done-bg:#dde3f7;
+    --accent:#3a4ad6;
+    --line:#d4d9ee; --line-soft:#dfe4f3; --line-head:#cfd6ee; --line-drawer:#ccd4ef;
+    --chip-bg:#eef1fb; --chip-line:#cfd6ee; --chip-ink:#3a4570;
+    --banner-bg:#fdf3d6; --banner-ink:#7a5a12; --banner-line:#e6cf90;
+  }
+  /* a few prominent chrome colors are hardcoded dark; light-mode overrides */
+  body.vscode-light header, body.vscode-high-contrast-light header{ background:rgba(255,255,255,.82); }
+  body.vscode-light .c-idle, body.vscode-high-contrast-light .c-idle{ background:#f3e6c8; }
+  body.vscode-light .reconnect, body.vscode-high-contrast-light .reconnect{ background:#fbe4e5; color:#9a2a2f; border-bottom-color:#f0c4c6; }
+  body.vscode-light #drawer, body.vscode-high-contrast-light #drawer{ background:#fbfcff; }
+  body.vscode-light #muteBtn:hover, body.vscode-light #langBtn:hover,
+  body.vscode-high-contrast-light #muteBtn:hover, body.vscode-high-contrast-light #langBtn:hover{ background:#e3e8f7; }
   *{ box-sizing:border-box; }
   body{ margin:0; font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif; color:var(--ink);
         background:radial-gradient(1100px 500px at 50% -10%,var(--bg-1),var(--bg-2) 60%); }
@@ -720,7 +967,8 @@ PAGE = """<!DOCTYPE html>
                      repeating-linear-gradient(90deg,rgba(255,255,255,.014) 0 42px,transparent 42px 84px); }
 
   .ws{ position:relative; width:92px; display:flex; flex-direction:column; align-items:center; gap:1px;
-       padding:4px 3px 8px; border-radius:var(--r-md); cursor:pointer; transition:background .15s,transform .15s; }
+       padding:4px 3px 8px; border-radius:var(--r-md); cursor:pointer; transition:background .15s,transform .15s;
+       contain:layout; }   /* isolate each card's layout recalc (no 'paint' -> badge/star still overflow) */
   .ws:hover{ background:rgba(255,255,255,.06); transform:translateY(-2px); }
   .ws:focus-visible{ background:rgba(255,255,255,.06); }
 
@@ -817,11 +1065,57 @@ PAGE = """<!DOCTYPE html>
                line-height:1.6; color:#d4dcf6; white-space:pre-wrap; max-height:40vh; overflow:auto; }
   #dbody .box[dir]{ text-align:start; }  /* dir=auto picks direction; start-align follows it */
 
+  /* ---- U2: narrow split-pane (the beside-editor panel is often ~half width) ---- */
+  @media (max-width:560px){
+    header{ padding:9px 12px; gap:9px; }
+    #app{ padding:12px 10px 60px; }
+    #search{ order:9; width:100%; max-width:none; }   /* search drops to its own full-width row */
+    .floor{ padding:11px 8px 14px; }
+  }
+  @media (max-width:380px){
+    header h1{ font-size:var(--fs-lg); }
+    .counts span{ margin-inline-start:4px; padding:2px 7px; }
+  }
+
+  /* ---- U3: card press feedback + tamed scrollbars in the detail panel ---- */
+  .ws:active{ transform:scale(.96); }
+  #dbody, #dbody .box{ scrollbar-width:thin; scrollbar-color:var(--chip-line) transparent; }
+  #dbody .box::-webkit-scrollbar, #dbody::-webkit-scrollbar{ width:9px; height:9px; }
+  #dbody .box::-webkit-scrollbar-thumb, #dbody::-webkit-scrollbar-thumb{ background:var(--chip-line); border-radius:6px; }
+  #dbody .box:focus-visible{ outline:none; box-shadow:var(--ring); }
+  .trunc{ margin-top:6px; font-size:var(--fs-xs); color:var(--idle); }   /* A4: result-truncated note */
+
+  /* ---- U4: keyboard-shortcut help popover ---- */
+  #helpBtn{ font-size:var(--fs-md); background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6;
+            border-radius:var(--r-sm); width:28px; height:26px; cursor:pointer; line-height:1; }
+  #helpBtn:hover{ background:#222a47; } body.vscode-light #helpBtn:hover{ background:#e3e8f7; }
+  #help{ position:fixed; top:52px; inset-inline-end:16px; z-index:75; width:min(290px,92vw);
+         background:var(--surface); border:1px solid var(--line-drawer); border-radius:var(--r-md);
+         box-shadow:0 12px 34px rgba(0,0,0,.45); padding:12px 14px; font-size:var(--fs-md); color:var(--ink-2); }
+  #help[hidden]{ display:none; }
+  #help h3{ margin:0 0 8px; font-size:var(--fs-md); }
+  #help .k{ display:flex; justify-content:space-between; gap:14px; padding:3px 0; color:var(--ink-dim); }
+  #help kbd{ font-family:inherit; background:var(--chip-bg); border:1px solid var(--chip-line); border-radius:5px;
+             padding:1px 7px; color:var(--chip-ink); font-size:var(--fs-sm); }
+
+  /* ---- U5: first-load spinner + lingering "just finished" star ---- */
+  .spin{ width:30px; height:30px; margin:0 auto 14px; border-radius:50%;
+         border:3px solid var(--line); border-top-color:var(--accent); animation:spin .8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .ws.recent::after{ content:"⭐"; position:absolute; top:-2px; inset-inline-end:-1px; font-size:13px; z-index:3;
+         filter:drop-shadow(0 1px 1px rgba(0,0,0,.5)); animation:pop .4s ease; pointer-events:none; }
+  @keyframes pop{ 0%{ transform:scale(0); } 70%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
+
+  /* ---- U6: keep the looping/one-shot character motion on the GPU ---- */
+  .ws.running .head, .ws.running .hand, .ws.entering, .ws.entering .guy,
+  .ws.justdone .head, .ws.justdone .hands{ will-change:transform; }
+
   /* ---- prefers-reduced-motion: kill looping/one-shot motion, keep state-by-color ---- */
   @media (prefers-reduced-motion: reduce){
     .ws .head, .ws .hand, .ws .screen, .ws .screen::after, .ws .guy, .ws .hands,
-    .ws.entering, .ws.entering .guy, .ws.justdone .head, .ws.justdone .hands, .confetti{ animation:none !important; }
-    .ws:hover{ transform:none; }
+    .ws.entering, .ws.entering .guy, .ws.justdone .head, .ws.justdone .hands, .confetti,
+    .spin, .ws.recent::after{ animation:none !important; }
+    .ws:hover, .ws:active{ transform:none; }
     #drawer, #backdrop, .toast{ transition:none; }
   }
 </style>
@@ -835,8 +1129,10 @@ PAGE = """<!DOCTYPE html>
   <input id="search" type="search" autocomplete="off" placeholder="Search agents…" aria-label="Search agents">
   <button id="muteBtn" type="button">🔔</button>
   <button id="langBtn" type="button">עברית</button>
+  <button id="helpBtn" type="button" aria-haspopup="true" aria-expanded="false">?</button>
   <label><input type="checkbox" id="showDone"> <span id="showDoneLbl">Show finished</span></label>
 </header>
+<div id="help" role="dialog" aria-labelledby="helpTitle" hidden></div>
 <div id="banner" class="banner" hidden></div>
 <div id="reconnect" class="reconnect" role="status" hidden></div>
 <div id="app"><div class="empty" data-boot="1"></div></div>
@@ -848,7 +1144,7 @@ PAGE = """<!DOCTYPE html>
 <div id="backdrop"></div>
 <aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="dnm dro">
   <div class="dhead"><div class="av" id="dav" aria-hidden="true"></div>
-    <div><div class="nm" id="dnm"></div><div class="ro" id="dro"></div></div>
+    <div><div class="nm" id="dnm" dir="auto"></div><div class="ro" id="dro" dir="auto"></div></div>
     <button id="dclose">✕</button></div>
   <div id="dbody"></div>
 </aside>
@@ -887,6 +1183,10 @@ const I18N={
        emptySub:"Start an agent in Claude Code — or see what a busy office looks like:",
        watchDemo:"▶ Watch a live demo", demoLabel:"Demo", exitDemo:"Exit",
        langHint:"Switch language (Hebrew / English)", close:"Close",
+       loading:"Loading…", helpTitle:"Keyboard shortcuts", helpHint:"Keyboard shortcuts",
+       scSearch:"Search", scFinished:"Show / hide finished", scMove:"Move between agents",
+       scOpen:"Open details", scClose:"Close panel",
+       resultTruncated:"Result shortened — open the terminal for the full output",
        reconnecting:"⚠ Lost connection to the server — retrying…",
        searchPlaceholder:"Search agents…", emptyNoMatch:"No agents match your search.",
        mute:"Mute chime", unmute:"Unmute chime", finishedToast:"finished",
@@ -906,6 +1206,10 @@ const I18N={
        emptySub:"הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:",
        watchDemo:"▶ צפו בדמו חי", demoLabel:"דמו", exitDemo:"יציאה",
        langHint:"החלפת שפה (עברית / אנגלית)", close:"סגירה",
+       loading:"טוען…", helpTitle:"קיצורי מקלדת", helpHint:"קיצורי מקלדת",
+       scSearch:"חיפוש", scFinished:"הצג / הסתר שהושלמו", scMove:"מעבר בין סוכנים",
+       scOpen:"פתיחת פרטים", scClose:"סגירת החלונית",
+       resultTruncated:"התוצאה קוצרה — לפלט המלא פתחו את הטרמינל",
        reconnecting:"⚠ אבד החיבור לשרת - מנסה שוב…",
        searchPlaceholder:"חיפוש סוכנים…", emptyNoMatch:"אין סוכנים שתואמים לחיפוש.",
        mute:"השתק צליל", unmute:"בטל השתקה", finishedToast:"סיים",
@@ -949,7 +1253,12 @@ function applyLang(){ const el=document.documentElement; el.lang=lang; el.dir=(l
   document.getElementById("dclose").setAttribute("aria-label",t("close"));
   const rc=document.getElementById("reconnect"); if(!rc.hidden) rc.textContent=t("reconnecting");
   document.title=t("docTitle");
-  const boot=document.querySelector('#app .empty[data-boot]'); if(boot) boot.innerHTML=emptyHTML("office");
+  document.getElementById("helpBtn").title=t("helpHint");
+  document.getElementById("helpBtn").setAttribute("aria-label",t("helpHint"));
+  if(!document.getElementById("help").hidden) renderHelp();
+  // the boot element shows a spinner until the first poll replaces it (render()
+  // removes the .empty node); after that this query finds nothing -- a no-op.
+  const boot=document.querySelector('#app .empty[data-boot]'); if(boot) boot.innerHTML=loadingHTML();
   // The drawer is the one surface render() may not refresh (an open 'done' agent
   // can be filtered out of the floor), so re-translate it directly from cached data.
   if(openId&&openData) fillDrawer(openData); }
@@ -973,11 +1282,14 @@ function ding(){ if(muted) return; const nw=Date.now(); if(nw-lastDing<400) retu
     const s=t+i*0.12; g.gain.setValueAtTime(0.0001,s); g.gain.exponentialRampToValueAtTime(0.25,s+0.02);
     g.gain.exponentialRampToValueAtTime(0.0001,s+0.35); o.start(s); o.stop(s+0.4); }); }catch(e){} }
 
-function confetti(root){ const b=document.createElement("div"); b.className="burst";
+function confetti(root){ const r=root.getBoundingClientRect(); const b=document.createElement("div"); b.className="burst";
+  // pinned over the card on <body> (not inside it): the room has overflow:hidden,
+  // which used to clip the confetti at the room edge.
+  b.style.cssText="position:fixed;z-index:90;left:"+r.left+"px;top:"+r.top+"px;width:"+r.width+"px;height:"+r.height+"px;";
   const em=["🎉","✨","🎊","⭐","✅"];
   for(let i=0;i<10;i++){ const c=document.createElement("div"); c.className="confetti"; c.textContent=em[i%em.length];
     c.style.left=(8+Math.random()*78)+"%"; c.style.animationDelay=(Math.random()*0.15)+"s"; b.appendChild(c); }
-  root.appendChild(b); setTimeout(()=>b.remove(),1050); }
+  document.body.appendChild(b); setTimeout(()=>b.remove(),1050); }
 
 let announceT=null;
 function announce(msg){ const el=document.getElementById("live"); if(!el) return;  // SR-only live region
@@ -999,7 +1311,7 @@ function createWS(a){ const root=document.createElement("div"); root.className="
     '<div class="guy"><div class="torso"></div><div class="head"></div></div>'+
     '<div class="desk"></div><i class="screen"></i>'+
     '<div class="hands"><i class="hand l"></i><i class="hand r"></i></div></div>'+
-    '<div class="name"></div><div class="act"></div><div class="timer"></div>';
+    '<div class="name" dir="auto"></div><div class="act" dir="auto"></div><div class="timer"></div>';
   const refs={ head:root.querySelector(".head"), name:root.querySelector(".name"),
                act:root.querySelector(".act"), timer:root.querySelector(".timer") };
   root.addEventListener("click",()=>openDrawer(a.id));
@@ -1035,7 +1347,9 @@ function updateWS(e,a){ e.data=a;
   if(prevStatus[a.id] && prevStatus[a.id]!=="done" && a.status==="done"){
     e.root.classList.add("justdone"); confetti(e.root); ding();
     const fmsg=nm+" — "+t("finishedToast"); toast(fmsg); announce(fmsg);  // visual + SR cue, survives a muted tab
-    setTimeout(()=>e.root.classList.remove("justdone"),900); }
+    setTimeout(()=>e.root.classList.remove("justdone"),900);
+    // keep a ⭐ on the card for 10s so a glance-away user still sees it just finished
+    e.root.classList.add("recent"); clearTimeout(e.recentT); e.recentT=setTimeout(()=>e.root.classList.remove("recent"),10000); }
   prevStatus[a.id]=a.status; e.status=a.status;
   if(openId===a.id){ openData=a; fillDrawer(a); } }
 
@@ -1043,7 +1357,11 @@ function ensureRoom(sess){ let r=rooms[sess]; if(r) return r;
   const section=document.createElement("section"); section.className="room";
   section.style.setProperty("--room-accent", colorFor(sess));  // a stable hue per conversation
   section.setAttribute("role","group");
-  section.innerHTML='<div class="rh"><span class="rt"></span><span class="spacer"></span><span class="rc"></span></div><div class="floor"></div>';
+  // rt: dir=auto so a Hebrew vs English topic each reads correctly (an English
+  // task in the RTL page otherwise gets its trailing "." flung to the wrong end).
+  // rc: dir=ltr -- it's only emoji + numbers + "·" separators, which scramble
+  // (counts looked like "-1 -3") when laid out RTL.
+  section.innerHTML='<div class="rh"><span class="rt" dir="auto"></span><span class="spacer"></span><span class="rc" dir="ltr"></span></div><div class="floor"></div>';
   r={ section, floor:section.querySelector(".floor"), rt:section.querySelector(".rt"), rc:section.querySelector(".rc") };
   rooms[sess]=r; return r; }
 
@@ -1056,6 +1374,15 @@ function emptyHTML(kind){
                         +'<button class="btn-demo" type="button">'+esc(t("watchDemo"))+'</button>';
   return h;
 }
+function loadingHTML(){ return '<div class="spin" aria-hidden="true"></div><div class="e-sub">'+esc(t("loading"))+'</div>'; }
+function renderHelp(){ const el=document.getElementById("help");
+  const rows=[["scSearch","/"],["scFinished","f"],["scMove","↑ ↓ ← →"],["scOpen","Enter"],["scClose","Esc"]];
+  el.innerHTML='<h3 id="helpTitle">'+esc(t("helpTitle"))+'</h3>'+
+    rows.map(r=>'<div class="k"><span>'+esc(t(r[0]))+'</span><kbd>'+esc(r[1])+'</kbd></div>').join(''); }
+function toggleHelp(show){ const el=document.getElementById("help"), btn=document.getElementById("helpBtn");
+  const open=(show===undefined)?el.hidden:show;
+  if(open){ renderHelp(); el.hidden=false; } else el.hidden=true;
+  btn.setAttribute("aria-expanded",open?"true":"false"); }
 function matchesSearch(a,q){ return (
   (a.role||"").toLowerCase().indexOf(q)>=0 ||
   (a.task||"").toLowerCase().indexOf(q)>=0 ||
@@ -1134,6 +1461,7 @@ function render(payload){
     d.innerHTML=emptyHTML(kind); app.appendChild(d); }
 
   const run=all.filter(a=>a.status==="running").length, idle=all.filter(a=>a.status==="stale").length, done=all.filter(a=>a.status==="done").length;
+  document.title=(run?("🟢 "+run+" · "):"")+t("docTitle");   // live working-count in the tab/title
   document.getElementById("counts").innerHTML='<span class="c-run">🟢 '+run+' '+t("working")+'</span>'
     +(idle?'<span class="c-idle">⏳ '+idle+' '+t("idleN")+'</span>':'')
     +'<span class="c-done">✅ '+done+' '+t("finished")+'</span>';
@@ -1154,14 +1482,17 @@ function fillDrawer(a){ document.getElementById("dav").textContent=a.emoji;
   // task & result are journal content (could be English or Hebrew) -> dir=auto so
   // each adapts to its own text instead of being forced LTR (broke Hebrew tasks).
   h+='<h3>'+esc(t("dTask"))+'</h3><div class="box" dir="auto" tabindex="0" role="region" aria-label="'+esc(t("dTask"))+'">'+esc(a.task||t("taskUnavailable"))+'</div>';
-  if(a.result) h+='<h3>'+esc(t("dResult"))+'</h3><div class="box" dir="auto" tabindex="0" role="region" aria-label="'+esc(t("dResult"))+'">'+esc(a.result)+'</div>';
+  if(a.result) h+='<h3>'+esc(t("dResult"))+'</h3><div class="box" dir="auto" tabindex="0" role="region" aria-label="'+esc(t("dResult"))+'">'+esc(a.result)+'</div>'
+    +(a.truncated?'<div class="trunc" dir="auto">✂ '+esc(t("resultTruncated"))+'</div>':'');
   document.getElementById("dbody").innerHTML=h; }
 let lastFocused=null;
 function openDrawer(id){ const e=els[id]; if(!e) return; lastFocused=document.activeElement;
   openId=id; openData=e.data; fillDrawer(e.data);
   document.getElementById("drawer").classList.add("open"); document.getElementById("backdrop").classList.add("show");
   document.querySelectorAll("header,#app").forEach(el=>{ el.inert=true; el.setAttribute("aria-hidden","true"); });  // take background out of the a11y tree
-  document.getElementById("dclose").focus(); }                       // move focus into the dialog
+  // move focus into the dialog -- onto the content (task/result), not the close
+  // button, so it reads immediately and Tab walks the panel from the top
+  const box=document.querySelector('#dbody .box[tabindex]'); (box||document.getElementById("dclose")).focus(); }
 function closeDrawer(){ if(!openId) return; openId=null; openData=null;
   document.getElementById("drawer").classList.remove("open"); document.getElementById("backdrop").classList.remove("show");
   document.querySelectorAll("header,#app").forEach(el=>{ el.inert=false; el.removeAttribute("aria-hidden"); });  // return background to the a11y tree
@@ -1184,7 +1515,7 @@ function moveCardFocus(e){ const cards=[].slice.call(document.querySelectorAll("
   cards[Math.max(0,Math.min(cards.length-1,i+d))].focus(); }
 // global shortcuts: Esc closes; "/" focuses search; "f" toggles finished; arrows move card focus
 document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"){ if(openId) closeDrawer(); return; }
+  if(e.key==="Escape"){ if(!document.getElementById("help").hidden) toggleHelp(false); else if(openId) closeDrawer(); return; }
   if(openId) return;
   const tag=((document.activeElement&&document.activeElement.tagName)||"").toLowerCase();
   if(tag==="input"||tag==="textarea") return;            // don't hijack typing
@@ -1201,8 +1532,11 @@ document.getElementById("exitDemoBtn").addEventListener("click",()=>setDemo(fals
 document.getElementById("search").addEventListener("input",e=>{ searchQuery=e.target.value;
   clearTimeout(searchT); searchT=setTimeout(()=>render(),120); });   // client-side filter over the cached payload
 document.getElementById("muteBtn").addEventListener("click",()=>setMuted(!muted));
+document.getElementById("helpBtn").addEventListener("click",e=>{ e.stopPropagation(); toggleHelp(); });
+document.addEventListener("click",e=>{ const h=document.getElementById("help");
+  if(!h.hidden && !h.contains(e.target) && e.target.id!=="helpBtn") toggleHelp(false); });
 
-setInterval(()=>{ const now=Date.now(); document.querySelectorAll(".timer").forEach(el=>{
+function tickTimers(){ const now=Date.now(); document.querySelectorAll(".timer").forEach(el=>{
   const s=+el.dataset.start,en=+el.dataset.end,mt=+el.dataset.mtime,st=el.dataset.status,sess=el.dataset.session;
   let v;
   if(sess==="1") v=mt?(now-mt):null;                // conversation: time since last activity (active/idle)
@@ -1210,7 +1544,10 @@ setInterval(()=>{ const now=Date.now(); document.querySelectorAll(".timer").forE
   else if(st==="done"&&en) v=en-s;                  // finished: final duration
   else if(st==="stale") v=(mt&&mt>s)?(mt-s):null;   // idle/abandoned: freeze at last activity, not a runaway count to now
   else v=now-s;                                     // running: live
-  el.textContent=fmt(v); }); },1000);
+  el.textContent=fmt(v); }); }
+// Skip the per-second DOM walk while the panel tab isn't visible (the user is
+// looking at their code, not the office) -- times are recomputed when shown.
+setInterval(()=>{ if(!document.hidden) tickTimers(); },1000);
 
 let polling=false, failStreak=0;
 function setConnected(ok){ const el=document.getElementById("reconnect");
@@ -1224,7 +1561,12 @@ async function poll(){ if(polling) return;          // in-flight guard: never st
     render(await r.json()); failStreak=0; setConnected(true);
   }catch(e){ if(++failStreak>=2) setConnected(false); }   // show the banner only after a couple of misses
   finally{ polling=false; } }
-applyLang(); poll(); setInterval(poll,POLL_MS);
+applyLang(); poll();
+// Poll only while the panel is visible; resume instantly (and refresh timers)
+// when it's shown again. A hidden VS Code webview keeps running with
+// retainContextWhenHidden, so without this it would poll every 1.5s forever.
+setInterval(()=>{ if(!document.hidden) poll(); },POLL_MS);
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ poll(); tickTimers(); } });
 function unlock(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){} }
 window.addEventListener("click",unlock,{once:true}); window.addEventListener("keydown",unlock,{once:true});
 </script>

@@ -3,4 +3,6 @@
 **/*.map
 **/.DS_Store
 **/*.bak
+**/__pycache__/**
+**/*.pyc
 *.vsix

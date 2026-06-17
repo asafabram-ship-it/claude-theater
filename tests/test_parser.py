@@ -12,6 +12,8 @@ Run:  python -m unittest discover -s tests      (no dependencies)
 import os
 import sys
 import glob
+import json
+import time
 import shutil
 import tempfile
 import unittest
@@ -28,7 +30,8 @@ FIX = os.path.join(ROOT, "fixtures")
 AGENT_KEYS = {
     "id", "persona_id", "emoji", "role", "subagent_type", "status", "tool",
     "task", "task_short", "result", "start_ms", "end_ms", "session",
-    "session_full", "cwd", "project", "mtime_ms", "is_session",
+    "session_full", "cwd", "project", "mtime_ms", "is_session", "closed",
+    "is_workflow", "truncated",
 }
 PAYLOAD_KEYS = {"agents", "versions", "tested_version", "unknown_versions", "skipped"}
 LEGACY_FIELDS = ("name", "activity", "banner")  # removed in the bilingual refactor
@@ -65,9 +68,10 @@ class RunningFixture(unittest.TestCase):
         self.assertEqual(self.skipped, 0)
 
     def test_not_done_while_last_event_is_a_tool_use(self):
-        done, end_ms, result = theater.detect_done(self.events)
+        done, end_ms, result, truncated = theater.detect_done(self.events)
         self.assertFalse(done)
         self.assertIsNone(result)
+        self.assertFalse(truncated)
 
     def test_last_tool_use_is_read(self):
         self.assertEqual(theater.last_tool_use_name(self.events), "Read")
@@ -85,7 +89,7 @@ class DoneFixture(unittest.TestCase):
         self.events, self.skipped, _ = theater.parse_events(load_lines("cc-2.1/done.jsonl"))
 
     def test_done_detected_with_result_and_timestamp(self):
-        done, end_ms, result = theater.detect_done(self.events)
+        done, end_ms, result, truncated = theater.detect_done(self.events)
         self.assertTrue(done)
         self.assertIsNotNone(end_ms)
         self.assertIn("1240", result)
@@ -101,7 +105,7 @@ class MalformedFixture(unittest.TestCase):
         self.assertEqual(self.skipped, 2)
 
     def test_done_still_detected_despite_corruption(self):
-        done, _, result = theater.detect_done(self.events)
+        done, _, result, _ = theater.detect_done(self.events)
         self.assertTrue(done)
         self.assertIn("42 tests passed", result)
 
@@ -176,9 +180,16 @@ class ScanContract(unittest.TestCase):
                     os.path.join(sub, "agent-deadbeef00001.jsonl"))
         self._orig = theater.PROJECTS_DIR
         theater.PROJECTS_DIR = self.tmp
+        # Point the live-session registry at a non-existent path so the scan is
+        # hermetic (live_session_ids -> None: "closed" is always False) and never
+        # reflects the developer's real open chats.
+        self._orig_sess = theater.SESSIONS_DIR
+        theater.SESSIONS_DIR = os.path.join(self.tmp, "no-such-sessions")
+        theater._GLOB_CACHE.clear()   # don't reuse another root's throttled glob
 
     def tearDown(self):
         theater.PROJECTS_DIR = self._orig
+        theater.SESSIONS_DIR = self._orig_sess
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_payload_key_set(self):
@@ -218,6 +229,171 @@ class AllFixturesRobust(unittest.TestCase):
             events, skipped, versions = theater.parse_events(lines)
             self.assertTrue(events, "no usable events in %s" % os.path.basename(path))
             self.assertTrue(versions, "no version stamp in %s" % os.path.basename(path))
+
+
+def _assistant(text="", tools=(), stop_reason="end_turn", ts_ms=1000):
+    return theater.Event(kind="assistant", text=text, tool_uses=list(tools),
+                         stop_reason=stop_reason, ts_ms=ts_ms, version="2.1.0", raw={})
+
+
+class StatusDetection(unittest.TestCase):
+    """detect_done uses a deny-list of continuation stop_reasons, so a tool-free
+    final turn with ANY other (even unknown) reason is 'done' -- the fix for
+    agents stuck 'running' on an unfamiliar terminal reason."""
+
+    def test_unknown_terminal_reason_counts_as_done(self):
+        done, _, result, _ = theater.detect_done([_assistant("all set", stop_reason="some_future_reason")])
+        self.assertTrue(done)
+        self.assertEqual(result, "all set")
+
+    def test_refusal_counts_as_done(self):
+        done, _, _, _ = theater.detect_done([_assistant("cannot help", stop_reason="refusal")])
+        self.assertTrue(done)
+
+    def test_pause_turn_is_not_done(self):
+        done, _, _, _ = theater.detect_done([_assistant("thinking", stop_reason="pause_turn")])
+        self.assertFalse(done)
+
+    def test_tool_use_turn_is_not_done(self):
+        done, _, _, _ = theater.detect_done([_assistant("", tools=["Read"], stop_reason="tool_use")])
+        self.assertFalse(done)
+
+    def test_none_stop_reason_is_not_done(self):
+        done, _, _, _ = theater.detect_done([_assistant("partial", stop_reason=None)])
+        self.assertFalse(done)
+
+    def test_long_result_is_flagged_truncated(self):
+        done, _, result, truncated = theater.detect_done([_assistant("x" * 5000)])
+        self.assertTrue(done)
+        self.assertTrue(truncated)
+        self.assertTrue(result.endswith("…"))
+        self.assertLessEqual(len(result), theater.RESULT_CHAR_LIMIT + 1)
+
+
+class WorkflowAgents(unittest.TestCase):
+    """Workflow subagents end on a StructuredOutput tool_use, so their status and
+    result come from the sibling journal.jsonl (keyed by agentId), not detect_done."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.wf = os.path.join(self.tmp, "subagents", "workflows", "wf_abc123")
+        os.makedirs(self.wf)
+        self.agent_id = "a239d8fced401e581"
+        self.agent_path = os.path.join(self.wf, "agent-%s.jsonl" % self.agent_id)
+        with open(os.path.join(self.wf, "journal.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "started", "key": "v2:abc", "agentId": self.agent_id}) + "\n")
+            f.write(json.dumps({"type": "result", "key": "v2:abc", "agentId": "other000000",
+                                "result": {"notes": "not mine"}}) + "\n")
+            f.write(json.dumps({"type": "result", "key": "v2:abc", "agentId": self.agent_id,
+                                "result": {"doc_id": "02", "notes": "תקציר התוצאה",
+                                           "word_count": 1148}}) + "\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_detects_workflow_path(self):
+        self.assertTrue(theater.is_workflow_agent(self.agent_path))
+        self.assertFalse(theater.is_workflow_agent(os.path.join(self.tmp, "subagents", "agent-x.jsonl")))
+
+    def test_journal_result_keyed_by_agent_id(self):
+        done, end_ms, result, truncated = theater.workflow_journal_result(self.agent_path, self.agent_id)
+        self.assertTrue(done)
+        self.assertEqual(result, "תקציר התוצאה")   # the matching agent's notes, not "not mine"
+        self.assertFalse(truncated)
+
+    def test_no_result_record_means_not_done(self):
+        done, _, result, _ = theater.workflow_journal_result(self.agent_path, "no-such-agent")
+        self.assertFalse(done)
+        self.assertIsNone(result)
+
+    def test_structured_result_without_prose_falls_back_to_json(self):
+        wf2 = os.path.join(self.tmp, "subagents", "workflows", "wf_def456")
+        os.makedirs(wf2)
+        with open(os.path.join(wf2, "journal.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "result", "agentId": "z", "result": {"ok": True, "n": 3}}) + "\n")
+        done, _, result, _ = theater.workflow_journal_result(os.path.join(wf2, "agent-z.jsonl"), "z")
+        self.assertTrue(done)
+        self.assertIn("\"ok\"", result)
+
+
+class GlobThrottle(unittest.TestCase):
+    """The recursive journal-tree glob is the dominant scan cost, so it's cached
+    per pattern and only re-run after GLOB_TTL_SEC."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        theater._GLOB_CACHE.clear()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        theater._GLOB_CACHE.clear()
+
+    def test_result_is_cached_within_ttl_then_refreshes(self):
+        pat = os.path.join(self.tmp, "*.txt")
+        open(os.path.join(self.tmp, "a.txt"), "w").close()
+        now = 1000.0
+        self.assertEqual(len(theater._throttled_glob(pat, now)), 1)
+        open(os.path.join(self.tmp, "b.txt"), "w").close()
+        # within the TTL the new file is NOT seen (stale cache returned)
+        self.assertEqual(len(theater._throttled_glob(pat, now + 1)), 1)
+        # after the TTL it re-globs and picks the new file up
+        self.assertEqual(len(theater._throttled_glob(pat, now + theater.GLOB_TTL_SEC + 1)), 2)
+
+    def test_distinct_patterns_do_not_share_cache(self):
+        other = tempfile.mkdtemp()
+        try:
+            open(os.path.join(self.tmp, "a.txt"), "w").close()
+            now = 2000.0
+            theater._throttled_glob(os.path.join(self.tmp, "*.txt"), now)
+            # a different root must glob fresh, not reuse the first root's paths
+            self.assertEqual(theater._throttled_glob(os.path.join(other, "*.txt"), now), [])
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+
+
+class ClosedSessionRooms(unittest.TestCase):
+    """A conversation whose chat is closed (no longer in the live-session registry)
+    must collapse to 'done' so its room hides by default, instead of lingering as a
+    'stale' room for MAX_AGE_MIN. When the registry is unavailable (None), behavior
+    is unchanged."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.proj = os.path.join(self.tmp, "proj")
+        os.makedirs(self.proj)
+        self.uuid = "11111111-2222-3333-4444-555555555555"
+        path = os.path.join(self.proj, self.uuid + ".jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "user", "cwd": "C:/work",
+                                "message": {"role": "user", "content": "hello there"}}) + "\n")
+        self._orig = theater.PROJECTS_DIR
+        theater.PROJECTS_DIR = self.tmp
+        theater._GLOB_CACHE.clear()   # don't reuse another root's throttled glob
+
+    def tearDown(self):
+        theater.PROJECTS_DIR = self._orig
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _lead(self, live):
+        rooms = theater.scan_sessions(time.time(), live)
+        self.assertEqual(len(rooms), 1)
+        return rooms[0]
+
+    def test_live_session_is_visible(self):
+        lead = self._lead(frozenset([self.uuid]))
+        self.assertFalse(lead["closed"])
+        self.assertIn(lead["status"], ("running", "stale"))
+
+    def test_closed_session_collapses_to_done(self):
+        lead = self._lead(frozenset())          # registry present, uuid absent => closed
+        self.assertTrue(lead["closed"])
+        self.assertEqual(lead["status"], "done")
+        self.assertIsNotNone(lead["end_ms"])
+
+    def test_registry_unavailable_leaves_behavior_unchanged(self):
+        lead = self._lead(None)                 # older build: never hide
+        self.assertFalse(lead["closed"])
+        self.assertIn(lead["status"], ("running", "stale"))
 
 
 if __name__ == "__main__":

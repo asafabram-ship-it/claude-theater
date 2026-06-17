@@ -2,7 +2,7 @@
   "name": "claude-theater",
   "displayName": "Claude Theater",
   "description": "Watch your Claude Code conversations and subagents work — a live office, inside VS Code.",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "publisher": "asafabram-ship-it",
   "license": "MIT",
   "icon": "icon.png",

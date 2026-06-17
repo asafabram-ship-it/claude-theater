@@ -43,6 +43,28 @@ The UI is **bilingual** — English by default, Hebrew one click away (the choic
 is remembered, and the layout flips to RTL). Adding another language is a single
 edit to the `I18N` table in `claude_theater.py`; the server stays language-neutral.
 
+## Screenshots
+
+<!-- Absolute raw URLs so the images render on PyPI too (relative paths don't). -->
+
+**Your real sessions** — every conversation is a room; the conversation itself and
+each subagent is a character at a desk (avatar, name, the tool it's using now, a timer).
+
+<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/sessions-view.png" alt="Claude Theater showing real Claude Code conversations as rooms, one agent thinking and a room of finished subagents" width="820">
+
+<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/real-rooms.png" alt="A real conversation fanning out many subagents, each shown as a character with its status" width="820">
+
+**Bilingual — English ⇄ Hebrew (RTL).** One click flips the whole office; the choice
+is remembered and the layout switches to RTL.
+
+| English | Hebrew (RTL) |
+| :--: | :--: |
+| <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/phase1-en.png" alt="The demo office in English (left-to-right)" width="410"> | <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/phase1-he.png" alt="The same office in Hebrew, flipped to right-to-left" width="410"> |
+
+**Try it with no session — `claude-theater --demo`** spins up the office with synthetic agents.
+
+<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/phase0-demo.png" alt="The demo office with synthetic agents working across two rooms" width="820">
+
 ## Quick start
 
 Zero install — run it straight from PyPI with [pipx](https://pipx.pypa.io/):

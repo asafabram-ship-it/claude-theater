@@ -18,6 +18,8 @@ SemVer policy for this tool:
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-17
+
 ### Fixed
 
 - **Closed conversations no longer linger in the office.** A chat used to keep its

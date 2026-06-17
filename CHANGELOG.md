@@ -18,6 +18,15 @@ SemVer policy for this tool:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Office now fills the whole VS Code panel.** A short office (only a few rooms) used
+  to leave a large blank/gray strip below it in the editor tab, because a webview
+  doesn't propagate the `<body>` background to the canvas the way a browser does. The
+  body is now pinned to `min-height:100vh` and the `html` base follows
+  `--vscode-editor-background` (falling back to the office's own dark in a plain
+  browser), so the dark office fills the panel regardless of how many rooms are open.
+
 ## [0.3.0] - 2026-06-17
 
 ### Fixed

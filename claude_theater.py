@@ -891,8 +891,14 @@ PAGE = """<!DOCTYPE html>
   body.vscode-light #muteBtn:hover, body.vscode-light #langBtn:hover,
   body.vscode-high-contrast-light #muteBtn:hover, body.vscode-high-contrast-light #langBtn:hover{ background:#e3e8f7; }
   *{ box-sizing:border-box; }
-  body{ margin:0; font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif; color:var(--ink);
-        background:radial-gradient(1100px 500px at 50% -10%,var(--bg-1),var(--bg-2) 60%); }
+  /* Fill the whole viewport: in a VS Code webview the body background does NOT
+     propagate to the canvas the way it does in a browser, so a short office (few
+     rooms) used to leave the editor's gray background showing below. min-height
+     pins the office's own dark gradient to the full panel height; the html base
+     follows the editor background (falls back to our dark in a plain browser). */
+  html{ min-height:100%; background:var(--vscode-editor-background,var(--bg-2)); }
+  body{ margin:0; min-height:100vh; font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif; color:var(--ink);
+        background:radial-gradient(1100px 500px at 50% -10%,var(--bg-1),var(--bg-2) 60%) var(--bg-2); }
   :focus-visible{ outline:none; box-shadow:var(--ring); border-radius:var(--r-sm); }
   header{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:11px 20px;
           border-bottom:1px solid var(--line-head); position:sticky; top:0; z-index:40;

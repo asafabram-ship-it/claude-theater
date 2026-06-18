@@ -14,18 +14,40 @@ SemVer policy for this tool:
 
 | Claude Theater | Claude Code |
 | -------------- | ----------- |
+| 0.3.x          | 2.1.x       |
 | 0.1.x          | 2.1.x       |
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-18
+
 ### Fixed
 
+- **Closed conversations no longer reappear under "Show finished".** A chat you closed
+  (its process is gone, so it's flagged `closed`) is meant to leave the office. It was
+  hidden by default, but ticking "Show finished" — whose job is to reveal finished
+  *agents* inside *open* conversations — was also resurrecting the dismissed chats as
+  "finished" rooms. The visible-filter now drops any `closed` entry outright, so a
+  closed conversation stays gone regardless of the toggle, and the finished counter no
+  longer counts it. (Detection was already correct; this is purely the display rule.)
+- **Text is readable in a light editor theme.** The detail panel's body text
+  (Action / Task / Result) and close button, the help button, and the header's
+  mute-chime and language buttons were hardcoded to a light ink that stayed light when
+  the office followed a VS Code *light* theme — light-on-light, unreadable (the header
+  buttons were near-invisible). They now use the theme tokens (`--ink` / `--chip-ink`),
+  so the text is dark on light and unchanged on dark.
 - **Office now fills the whole VS Code panel.** A short office (only a few rooms) used
   to leave a large blank/gray strip below it in the editor tab, because a webview
   doesn't propagate the `<body>` background to the canvas the way a browser does. The
   body is now pinned to `min-height:100vh` and the `html` base follows
   `--vscode-editor-background` (falling back to the office's own dark in a plain
   browser), so the dark office fills the panel regardless of how many rooms are open.
+
+### Changed
+
+- VS Code extension 0.3.1: bundles the fixes above (it ships its own copy of the
+  server), so the in-editor office gets the closed-chat, light-theme, and
+  fill-the-panel fixes too.
 
 ## [0.3.0] - 2026-06-17
 
@@ -155,6 +177,8 @@ SemVer policy for this tool:
   release): the office in an interactive WebviewPanel, with background auto-start
   and a status-bar toggle.
 
-[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...v0.3.0
 [0.1.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/asafabram-ship-it/claude-theater/releases/tag/v0.1.0

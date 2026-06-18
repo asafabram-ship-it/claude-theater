@@ -24,7 +24,7 @@ import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
-__version__ = "0.1.1"
+__version__ = "0.3.1"
 
 def _default_port():
     """Port from $CLAUDE_THEATER_PORT, else 7333. The --port flag overrides this."""
@@ -918,7 +918,7 @@ PAGE = """<!DOCTYPE html>
   .reconnect{ margin:0; padding:6px 20px; font-size:var(--fs-md); text-align:center;
               background:#3a1518; color:#f0a9a9; border-bottom:1px solid #5a2024; }
   .reconnect[hidden]{ display:none; }
-  #muteBtn{ font-size:var(--fs-md); background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6;
+  #muteBtn{ font-size:var(--fs-md); background:var(--chip-bg); border:1px solid var(--chip-line); color:var(--chip-ink);
             border-radius:var(--r-sm); padding:4px 9px; cursor:pointer; line-height:1; }
   #muteBtn:hover{ background:#222a47; }
   .sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
@@ -927,7 +927,7 @@ PAGE = """<!DOCTYPE html>
           border-radius:var(--r-sm); padding:9px 14px; font-size:var(--fs-md); box-shadow:0 8px 24px rgba(0,0,0,.5);
           max-width:280px; opacity:0; transform:translateY(8px); transition:opacity .25s,transform .25s; }
   .toast.show{ opacity:1; transform:translateY(0); }
-  #langBtn{ font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6;
+  #langBtn{ font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line); color:var(--chip-ink);
             border-radius:var(--r-sm); padding:4px 11px; cursor:pointer; }
   #langBtn:hover{ background:#222a47; }
   #search{ font:inherit; font-size:var(--fs-md); background:var(--surface-3); border:1px solid var(--chip-line);
@@ -944,11 +944,11 @@ PAGE = """<!DOCTYPE html>
              background:linear-gradient(180deg,#3a4ad6,#2f3cb8); border:1px solid #4a5ae0; border-radius:var(--r-sm);
              padding:9px 18px; box-shadow:0 4px 14px rgba(50,70,220,.35); transition:filter .15s,transform .15s; }
   .btn-demo:hover{ filter:brightness(1.09); transform:translateY(-1px); }
-  .demo-chip{ display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-sm); color:#cdd6f6;
+  .demo-chip{ display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-sm); color:var(--chip-ink);
               background:rgba(91,110,224,.16); border:1px solid var(--accent); border-radius:var(--r-pill); padding:2px 4px 2px 12px; }
   html[dir="rtl"] .demo-chip{ padding:2px 12px 2px 4px; }
   .demo-chip button{ font:inherit; font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line);
-                     color:#cdd6f6; border-radius:var(--r-pill); padding:2px 10px; cursor:pointer; }
+                     color:var(--chip-ink); border-radius:var(--r-pill); padding:2px 10px; cursor:pointer; }
   .demo-chip[hidden]{ display:none; }
 
   .room{ background:linear-gradient(180deg,var(--surface),var(--surface-2)); border:1px solid var(--line);
@@ -1062,13 +1062,13 @@ PAGE = """<!DOCTYPE html>
   html[dir="rtl"] #drawer.open{ transform:translateX(0); }
   .dhead{ display:flex; align-items:center; gap:12px; padding:16px 16px 12px; border-bottom:1px solid var(--line-head); }
   .dhead .av{ font-size:34px; } .dhead .nm{ font-size:16px; font-weight:700; } .dhead .ro{ font-size:var(--fs-md); color:var(--ink-dim); margin-top:2px; }
-  #dclose{ margin-inline-start:auto; background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6; border-radius:var(--r-sm); width:30px; height:30px; cursor:pointer; }
+  #dclose{ margin-inline-start:auto; background:var(--chip-bg); border:1px solid var(--chip-line); color:var(--chip-ink); border-radius:var(--r-sm); width:30px; height:30px; cursor:pointer; }
   #dbody{ padding:14px 16px; overflow:auto; }
   #dbody .row{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
   #dbody .chip{ font-size:var(--fs-sm); padding:3px 9px; border-radius:var(--r-pill); background:var(--chip-bg); color:var(--chip-ink); border:1px solid var(--chip-line); }
   #dbody h3{ font-size:var(--fs-sm); text-transform:uppercase; letter-spacing:.6px; color:var(--ink-dimmer); margin:15px 0 6px; }
   #dbody .box{ background:var(--surface-3); border:1px solid var(--line-soft); border-radius:var(--r-md); padding:11px 12px; font-size:var(--fs-md);
-               line-height:1.6; color:#d4dcf6; white-space:pre-wrap; max-height:40vh; overflow:auto; }
+               line-height:1.6; color:var(--ink); white-space:pre-wrap; max-height:40vh; overflow:auto; }
   #dbody .box[dir]{ text-align:start; }  /* dir=auto picks direction; start-align follows it */
 
   /* ---- U2: narrow split-pane (the beside-editor panel is often ~half width) ---- */
@@ -1092,7 +1092,7 @@ PAGE = """<!DOCTYPE html>
   .trunc{ margin-top:6px; font-size:var(--fs-xs); color:var(--idle); }   /* A4: result-truncated note */
 
   /* ---- U4: keyboard-shortcut help popover ---- */
-  #helpBtn{ font-size:var(--fs-md); background:var(--chip-bg); border:1px solid var(--chip-line); color:#cdd6f6;
+  #helpBtn{ font-size:var(--fs-md); background:var(--chip-bg); border:1px solid var(--chip-line); color:var(--chip-ink);
             border-radius:var(--r-sm); width:28px; height:26px; cursor:pointer; line-height:1; }
   #helpBtn:hover{ background:#222a47; } body.vscode-light #helpBtn:hover{ background:#e3e8f7; }
   #help{ position:fixed; top:52px; inset-inline-end:16px; z-index:75; width:min(290px,92vw);
@@ -1428,8 +1428,11 @@ function render(payload){
 
   const q=(searchQuery||"").toLowerCase().trim();
   const searched = q ? all.filter(a=>matchesSearch(a,q)) : all;
-  // "Show finished" is per-conversation: each room controls its own done visibility
-  const visible = searched.filter(a=> a.status!=="done" || roomShowsDone(a.session_full));
+  // "Show finished" is per-conversation: each room controls its own done visibility.
+  // A *closed* conversation (the chat was X-ed -- its process is gone, so it's flagged
+  // closed) leaves the office entirely: "Show finished" reveals finished agents inside
+  // open chats, it does NOT resurrect a conversation the user dismissed.
+  const visible = searched.filter(a=> !a.closed && (a.status!=="done" || roomShowsDone(a.session_full)));
   const sess=[...new Set(visible.map(a=>a.session_full))];
   sess.sort((x,y)=>((stat[y].running>0)-(stat[x].running>0))||(stat[y].mtime-stat[x].mtime));
 
@@ -1466,7 +1469,7 @@ function render(payload){
     const kind = q ? "nomatch" : (all.length===0 ? "office" : (showDone?"nonewindow":"noactive"));
     d.innerHTML=emptyHTML(kind); app.appendChild(d); }
 
-  const run=all.filter(a=>a.status==="running").length, idle=all.filter(a=>a.status==="stale").length, done=all.filter(a=>a.status==="done").length;
+  const run=all.filter(a=>a.status==="running").length, idle=all.filter(a=>a.status==="stale").length, done=all.filter(a=>a.status==="done"&&!a.closed).length;
   document.title=(run?("🟢 "+run+" · "):"")+t("docTitle");   // live working-count in the tab/title
   document.getElementById("counts").innerHTML='<span class="c-run">🟢 '+run+' '+t("working")+'</span>'
     +(idle?'<span class="c-idle">⏳ '+idle+' '+t("idleN")+'</span>':'')

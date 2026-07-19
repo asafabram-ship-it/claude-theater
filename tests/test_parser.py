@@ -11,6 +11,7 @@ Run:  python -m unittest discover -s tests      (no dependencies)
 """
 import os
 import sys
+import re
 import glob
 import json
 import time
@@ -28,7 +29,7 @@ FIX = os.path.join(ROOT, "fixtures")
 # these keys (persona_id, tool, status, task...) and the payload by these.
 # A rename or an accidental re-add of a legacy field must fail loudly here.
 AGENT_KEYS = {
-    "id", "persona_id", "emoji", "role", "subagent_type", "status", "tool",
+    "id", "persona_id", "emoji", "role", "subagent_type", "status", "tool", "phase",
     "task", "task_short", "result", "start_ms", "end_ms", "session",
     "session_full", "cwd", "project", "mtime_ms", "is_session", "closed",
     "is_workflow", "truncated",
@@ -157,8 +158,15 @@ class PersonaContract(unittest.TestCase):
     """The client blindly indexes PERSONAS_EN/HE[persona_id]; persona_id must
     stay an int in 0..len(PERSONA_EMOJI)-1 and be deterministic."""
 
-    def test_emoji_table_is_sixteen(self):
-        self.assertEqual(len(theater.PERSONA_EMOJI), 16)
+    def test_persona_tables_aligned(self):
+        # server emoji table and the two client name tables must stay index-aligned
+        n = len(theater.PERSONA_EMOJI)
+        self.assertEqual(n, 48)
+        for name in ("PERSONAS_EN", "PERSONAS_HE"):
+            m = re.search(name + r"=\[(.*?)\];", theater.PAGE)
+            self.assertIsNotNone(m, name + " not found in PAGE")
+            count = m.group(1).count('"') // 2
+            self.assertEqual(count, n, "%s length %d != %d" % (name, count, n))
 
     def test_index_in_bounds_and_deterministic(self):
         for aid in ["", "agent-x", "a" * 1000, "סוכן-עברי", "deadbeef00001", None]:
@@ -394,6 +402,117 @@ class ClosedSessionRooms(unittest.TestCase):
         lead = self._lead(None)                 # older build: never hide
         self.assertFalse(lead["closed"])
         self.assertIn(lead["status"], ("running", "stale"))
+
+
+def _user(text="", has_tool_result=False):
+    return theater.Event(kind="user", text=text, tool_uses=[], stop_reason=None,
+                         ts_ms=1000, version="2.1.0", raw={}, has_tool_result=has_tool_result)
+
+
+class InFlightAndStatus(unittest.TestCase):
+    """The state model: a live agent mid-tool/mid-turn is 'running' even when its
+    transcript is silent past the staleness window (the reported desync), while a
+    crashed/closed one still collapses so nothing is pinned forever."""
+
+    def test_parser_flags_tool_result(self):
+        events, _, _ = theater.parse_events([json.dumps(
+            {"type": "user", "version": "2.1.0",
+             "message": {"content": [{"type": "tool_result", "content": "ok"}]}})])
+        self.assertEqual(events[-1].kind, "user")
+        self.assertTrue(events[-1].has_tool_result)
+        self.assertFalse(events[-1].tool_uses)
+
+    def test_non_string_version_is_dropped_not_crashed(self):
+        events, _, versions = theater.parse_events([json.dumps(
+            {"type": "assistant", "version": 210,
+             "message": {"content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn"}})])
+        self.assertIsNone(events[-1].version)          # numeric stamp coerced to None
+        self.assertEqual(theater.unknown_versions(versions), [])  # no crash downstream
+
+    def test_in_flight_true_when_last_turn_dispatched_a_tool(self):
+        self.assertTrue(theater.compute_in_flight([_assistant("", tools=["Bash"], stop_reason="tool_use")]))
+
+    def test_in_flight_true_when_awaiting_model_after_tool_result(self):
+        self.assertTrue(theater.compute_in_flight([_user(has_tool_result=True)]))
+
+    def test_in_flight_false_at_rest(self):
+        self.assertFalse(theater.compute_in_flight([_assistant("done", stop_reason="end_turn")]))
+        self.assertFalse(theater.compute_in_flight([_user("just a prompt")]))
+        self.assertFalse(theater.compute_in_flight([]))
+
+    def test_phase_tool_only_while_tool_pending(self):
+        # tool dispatched, no result yet -> "tool"
+        self.assertEqual(theater.compute_phase([_assistant("", tools=["Read"], stop_reason="tool_use")]), "tool")
+        # tool returned -> model reasoning -> "thinking" (not a stale tool verb)
+        self.assertEqual(theater.compute_phase([_assistant("", tools=["Read"], stop_reason="tool_use"),
+                                                _user(has_tool_result=True)]), "thinking")
+        self.assertEqual(theater.compute_phase([_assistant("reasoning", stop_reason=None)]), "thinking")
+        self.assertEqual(theater.compute_phase([]), "thinking")
+
+    def test_live_mid_tool_is_running_past_staleness(self):
+        now = 10_000.0
+        old = now - (theater.RUNNING_STALE_SEC + 30)   # silent past 90s
+        # THE reported fix: in_flight + live => running, not stale/idle
+        self.assertEqual(theater.compute_status(now, old, is_done=False, in_flight=True, closed=False), "running")
+
+    def test_hung_in_flight_is_not_pinned_forever(self):
+        now = 10_000.0
+        ancient = now - (theater.IN_FLIGHT_MAX_SEC + 60)
+        self.assertEqual(theater.compute_status(now, ancient, is_done=False, in_flight=True, closed=False), "stale")
+
+    def test_closed_mid_tool_orphan_still_collapses(self):
+        now = 10_000.0
+        old = now - (theater.RUNNING_STALE_SEC + 30)
+        # closed + idle-by-raw-mtime beats the in_flight rescue -> done (no ghost)
+        self.assertEqual(theater.compute_status(now, old, is_done=False, in_flight=True, closed=True), "done")
+
+    def test_done_always_wins(self):
+        now = 10_000.0
+        self.assertEqual(theater.compute_status(now, now, is_done=True, in_flight=True, closed=False), "done")
+
+    def test_at_rest_staleness_path_still_lives(self):
+        now = 10_000.0
+        old = now - (theater.RUNNING_STALE_SEC + 30)
+        self.assertEqual(theater.compute_status(now, old, is_done=False, in_flight=False, closed=False), "stale")
+        self.assertEqual(theater.compute_status(now, now, is_done=False, in_flight=False, closed=False), "running")
+
+
+class PersonaResolution(unittest.TestCase):
+    """resolve_personas: distinct avatars per room, and an incumbent's avatar never
+    flips just because a later-appearing, earlier-started room-mate collides."""
+
+    def setUp(self):
+        theater._PERSONA_ASSIGNED.clear()
+
+    def _agent(self, aid, session, start_ms, base):
+        return {"id": aid, "session_full": session, "start_ms": start_ms,
+                "persona_id": base, "emoji": theater.PERSONA_EMOJI[base], "is_session": False}
+
+    def test_colocated_agents_get_distinct_avatars(self):
+        # two agents in one room forced to the same base slot
+        a = self._agent("a", "sessX", 100, 5)
+        b = self._agent("b", "sessX", 200, 5)
+        theater.resolve_personas([a, b])
+        self.assertNotEqual(a["persona_id"], b["persona_id"])
+        self.assertEqual(a["emoji"], theater.PERSONA_EMOJI[a["persona_id"]])
+
+    def test_incumbent_avatar_is_stable_when_earlier_agent_appears_later(self):
+        a = self._agent("a", "sessX", 200, 5)
+        theater.resolve_personas([a])
+        first = a["persona_id"]
+        # b started EARLIER (100 < 200) but only surfaces now, colliding on base 5
+        a2 = self._agent("a", "sessX", 200, 5)
+        b = self._agent("b", "sessX", 100, 5)
+        theater.resolve_personas([a2, b])
+        self.assertEqual(a2["persona_id"], first, "incumbent avatar must not flip")
+        self.assertNotEqual(b["persona_id"], first)
+
+    def test_assignment_map_is_pruned(self):
+        a = self._agent("a", "sessX", 100, 5)
+        theater.resolve_personas([a])
+        self.assertTrue(theater._PERSONA_ASSIGNED)
+        theater.resolve_personas([])          # a is gone
+        self.assertFalse(theater._PERSONA_ASSIGNED)
 
 
 if __name__ == "__main__":

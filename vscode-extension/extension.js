@@ -48,6 +48,11 @@ async function isUp(port) {
     const r = await httpGet(port, "/", 1500);
     // Require our identity header, so we never embed the page of some other
     // process that happens to be squatting the port into a scripts-enabled webview.
+    // Presence-only by design: the version value is public and trivially spoofed, so
+    // validating it adds no real assurance. Residual risk (a local process squatting
+    // 127.0.0.1:<port> AND echoing this header) is negligible — it needs a local
+    // attacker who already has greater capabilities — and the strict extension CSP
+    // (buildWebviewHtml) blocks exfiltration from the embedded page regardless.
     return r.status === 200 && !!r.headers["x-claude-theater"];
   } catch (_) {
     return false;
@@ -181,17 +186,38 @@ async function showMenu(context) {
   await refreshStatus();
 }
 
-function buildWebviewHtml(pageHtml, port) {
+// The office page persists its toggles to localStorage. VS Code webview
+// localStorage is not guaranteed durable across panel close/reopen, so we ALSO
+// mirror the settings through the extension's globalState (which is durable):
+// inject the saved values as window.__CT_SETTINGS__ (the page prefers them over
+// localStorage when present) and expose window.__CT_POST__ so the page can post
+// changes back for persistence. Browser/CLI runs see neither global and keep
+// using localStorage unchanged.
+const SETTINGS_KEY = "ct_settings";
+function loadSettings(context) {
+  const s = context.globalState.get(SETTINGS_KEY);
+  return (s && typeof s === "object") ? s : {};
+}
+function ctLang(context) {
+  const s = loadSettings(context);
+  if (s.ct_lang === "he" || s.ct_lang === "en") return s.ct_lang;
+  return ((vscode.env.language || "").toLowerCase().indexOf("he") === 0) ? "he" : "en";
+}
+
+function buildWebviewHtml(pageHtml, port, context) {
   const b = base(port);
   // Strict CSP: only our local server, inline CSS/JS (the page is our own trusted
   // single-file UI), data: images, and connect-src to the local API.
   const csp =
     `default-src 'none'; img-src ${b} data:; style-src 'unsafe-inline'; ` +
     `script-src 'unsafe-inline'; connect-src ${b} http://localhost:${port}; font-src ${b};`;
+  const settings = context ? loadSettings(context) : {};
   const inject =
     `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
-    `<script>window.__CT_API_BASE__=${JSON.stringify(b)};</script>`;
-  // place right after <head> so __CT_API_BASE__ exists before the page's own scripts run
+    `<script>window.__CT_API_BASE__=${JSON.stringify(b)};` +
+    `window.__CT_SETTINGS__=${JSON.stringify(settings)};` +
+    `(function(){try{var v=acquireVsCodeApi();window.__CT_POST__=function(m){try{v.postMessage(m);}catch(e){}};}catch(e){}})();</script>`;
+  // place right after <head> so the globals exist before the page's own scripts run
   if (/<head[^>]*>/i.test(pageHtml)) {
     return pageHtml.replace(/<head[^>]*>/i, (m) => m + inject);
   }
@@ -200,9 +226,15 @@ function buildWebviewHtml(pageHtml, port) {
 
 // Page shown in the panel while the local server is still coming up (or if Python
 // is missing). Stays inside the strict-CSP webview; the Retry button posts back.
-function waitingHtml(port) {
+function waitingHtml(port, lang) {
+  const he = lang === "he";
+  const dir = he ? "rtl" : "ltr";
+  const body = he
+    ? `השרת עדיין לא רץ על פורט ${port}.<br>ודא ש-Python מותקן, ואז נסה שוב.`
+    : `The server isn't running on port ${port} yet.<br>Make sure Python is installed, then retry.`;
+  const retry = he ? "נסה שוב" : "Retry";
   return (
-    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<!doctype html><html dir="${dir}"><head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">` +
     `<style>body{font-family:'Segoe UI',system-ui,sans-serif;color:#9aa4cc;background:#0b1020;` +
     `display:flex;flex-direction:column;align-items:center;justify-content:center;` +
@@ -212,8 +244,8 @@ function waitingHtml(port) {
     `</head><body>` +
     `<div style="font-size:40px;margin-bottom:8px">🎭</div>` +
     `<h2>Claude Theater</h2>` +
-    `<p>The server isn't running on port ${port} yet.<br>Make sure Python is installed, then retry.</p>` +
-    `<button id="retry">Retry</button>` +
+    `<p>${body}</p>` +
+    `<button id="retry">${retry}</button>` +
     `<script>const v=acquireVsCodeApi();document.getElementById('retry').onclick=function(){v.postMessage({type:'retry'})};</script>` +
     `</body></html>`
   );
@@ -239,12 +271,12 @@ async function loadPanelContent(context, panel) {
   const { port } = cfg();
   let up = await isUp(port);
   if (!up) up = await ensureRunning(context);
-  if (!up) { panel.webview.html = waitingHtml(port); return; }
+  if (!up) { panel.webview.html = waitingHtml(port, ctLang(context)); return; }
   try {
     const page = (await httpGet(port, "/", 3000)).body;
-    panel.webview.html = buildWebviewHtml(page, port);
+    panel.webview.html = buildWebviewHtml(page, port, context);
   } catch (_) {
-    panel.webview.html = waitingHtml(port);
+    panel.webview.html = waitingHtml(port, ctLang(context));
   }
   await refreshStatus();
 }
@@ -265,7 +297,14 @@ async function openTheater(context) {
   theaterPanel = panel;
   panel.onDidDispose(() => { theaterPanel = null; });
   panel.webview.onDidReceiveMessage((m) => {
-    if (m && m.type === "retry") loadPanelContent(context, panel);
+    if (!m) return;
+    if (m.type === "retry") loadPanelContent(context, panel);
+    else if (m.type === "settings" && typeof m.key === "string") {
+      // durable mirror of a page toggle (ct_lang / ct_muted / ct_showDone / ct_roomDone)
+      const s = loadSettings(context);
+      s[m.key] = m.val;
+      context.globalState.update(SETTINGS_KEY, s);
+    }
   });
   await loadPanelContent(context, panel);
   maybeShowStartupTip(context);

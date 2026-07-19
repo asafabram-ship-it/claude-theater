@@ -14,10 +14,58 @@ SemVer policy for this tool:
 
 | Claude Theater | Claude Code |
 | -------------- | ----------- |
+| 0.4.x          | 2.1.x       |
 | 0.3.x          | 2.1.x       |
 | 0.1.x          | 2.1.x       |
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-07-19
+
+### Added
+
+- **Working vs thinking, at a glance.** Each character now shows the tool verb only
+  while a tool is actually pending; once the tool returns and the model is reasoning,
+  the label reads "Thinking" instead of freezing on a stale "Reading". Derived from the
+  transcript tail, no extra I/O.
+- **Long-running spotlight.** A genuinely long-running (≥10 min) live agent is flagged
+  with a clock marker and a warmer timer, so a 25-minute worker no longer looks
+  identical to a 20-second one in a crowded office.
+- **Pin conversations.** A 📌 on any room header keeps that conversation at the top of
+  the office no matter what else ticks; the choice persists.
+- **A wider cast.** The persona roster grew from 16 to 48 distinct workers, and
+  co-located agents in one room are now guaranteed different avatars (stable across
+  scans), so a busy room stops showing duplicates.
+
+### Fixed
+
+- **A working subagent is no longer shown as idle.** Status was derived from file
+  mtime alone, so an agent silent while running a long tool (a build, a large fetch, a
+  long thinking turn) flipped to "idle" after 90s. State now comes from the transcript
+  tail (a dispatched-but-unreturned tool, or a tool result awaiting the model) and a
+  live mid-tool agent stays "working", bounded so a crashed one is never pinned forever.
+- **Finished workflow subagents no longer stick on "running".** Their done-signal lives
+  in a sibling journal the scan cache did not re-read; it is now refreshed every scan.
+- **Header counts match the floor**, the **language toggle re-translates the whole
+  office immediately** (not only after the next poll), the **open drawer keeps keyboard
+  focus and scroll** across refreshes and updates even when its agent is filtered off
+  the floor, a **scan failure surfaces the reconnect banner** instead of a blank office,
+  and a **non-string version stamp** can no longer blank the office.
+- **Concurrency-safe scan** (a lock prevents two viewers from racing the shared caches),
+  and the parent/project/session caches are now evicted so they cannot grow unbounded.
+- **Readability and RTL**: activity labels, the version-drift link, hover/focus feedback
+  and high-contrast themes are legible in light and high-contrast editors; the walk-in
+  animation and the keyboard-help arrow legend read correctly under RTL.
+- **Accessibility**: roving tabindex (the office is one Tab stop), focus management for
+  the help popover, an assertive reconnect alert, and screen-reader announcements for
+  search results.
+
+### Changed
+
+- **Durable settings in the VS Code panel.** Mute / language / show-finished / per-room
+  and pin choices are mirrored through the extension's storage, so they survive closing
+  and reopening the Theater tab (the browser/CLI keeps using localStorage).
+- **The connecting/waiting page is localized** and follows the Hebrew setting.
 
 ## [0.3.1] - 2026-06-18
 

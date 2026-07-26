@@ -225,7 +225,8 @@ SemVer policy for this tool:
   release): the office in an interactive WebviewPanel, with background auto-start
   and a status-bar toggle.
 
-[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...v0.3.0
 [0.1.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...v0.1.1

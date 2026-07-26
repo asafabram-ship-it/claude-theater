@@ -34,6 +34,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/asafabram-ship-it/claude-theater"
 Issues = "https://github.com/asafabram-ship-it/claude-theater/issues"
+Changelog = "https://github.com/asafabram-ship-it/claude-theater/blob/main/CHANGELOG.md"
 
 [project.scripts]
 claude-theater = "claude_theater:main"

@@ -19,6 +19,11 @@
 //   help     the keyboard-shortcuts popover (PAGE renderHelp) while open
 //   drawer   the selected agent (PAGE fillDrawer): chips (status, subagent_type,
 //            duration/elapsed, tool), model, activity, task, result, "shortened"
+//   DESKTOP  (e.surface === 'desktop') each card is instead an animated SVG tile
+//            from office-svg.ts (character at a desk, 10–12 px texts, light/dark,
+//            walk-in / bob / hop / ⭐ pop) in a keyed Box with the plain Button
+//            'open:<id>' ("⋯") under it — the Svg is a leaf and Box has no onPress,
+//            so that Button is the press target; TILE_COLS per tile, tilesPerRow()
 //   rooms    one per conversation (session_full): pinned first 📌, then rooms with
 //            a running agent, then by last activity (PAGE's sort). Room header,
 //            one line: 📌/○ · 💬 topic-or-project (clipped from its end) · small
@@ -87,6 +92,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
 import type { Agent, LiveAgent, Payload, Prefs, View } from './model'
+import { TILE_W, WALK_IN_MS, agentTileSvg, type TileDecor } from './office-svg'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
 
@@ -115,6 +121,20 @@ const DING_GAP_MS = 400
 const DING_ASSET = 'sounds/done.wav'
 /** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
 const BURST_MS = 1050
+/**
+ * DESKTOP: the office is drawn as SVG tiles (office-svg.ts), sized in CSS px,
+ * inside Boxes sized in columns. The desktop's column width is not reported,
+ * so this is a conservative lower bound (px per column): a tile's Box is
+ * TILE_COLS wide and never narrower than its 96 px drawing. At 6 px/col a
+ * ~45-column pane fits two tiles per row; a wider column only adds air.
+ */
+export const DESKTOP_PX_PER_COL = 6
+/** Columns one SVG tile's Box takes on the desktop (TILE_W / DESKTOP_PX_PER_COL, rounded up). */
+export const TILE_COLS = Math.ceil(TILE_W / DESKTOP_PX_PER_COL)
+/** The widest desktop row (a very wide pane stays an office, not a strip). */
+export const TILE_MAX_PER_ROW = 8
+/** The label of the desktop tile's press target (the texts live in the SVG; this is the one engine-sized glyph). */
+export const TILE_OPEN_LABEL = '⋯'
 
 /** The pane title shown in the tab: PAGE document.title = (run ? "🟢 N · " : "") + docTitle. */
 export function paneTitle(lang: Lang, run = 0): string {
@@ -381,6 +401,30 @@ export function gridFor(width: number): { perRow: number; cardW: number } {
   return { perRow, cardW }
 }
 
+/** DESKTOP tiles per row for a body of `width` columns: TILE_COLS each with a 1-column gutter, at least 1, at most TILE_MAX_PER_ROW. */
+export function tilesPerRow(width: number): number {
+  const w = Math.max(MIN_WIDTH, width)
+  return Math.max(1, Math.min(TILE_MAX_PER_ROW, Math.floor((w + 1) / (TILE_COLS + 1))))
+}
+
+/**
+ * PAGE .entering (the walk-in): ids first seen within WALK_IN_MS of `now`.
+ * `firstSeen` is the caller's memory (agent id → when it first appeared);
+ * stamped for every agent of the office and pruned to the office's ids.
+ */
+export function walkIns(firstSeen: Record<string, number>, all: readonly Agent[], now: number): Set<string> {
+  const entering = new Set<string>()
+  const live = new Set<string>()
+  for (const a of all) {
+    live.add(a.id)
+    const t = firstSeen[a.id]
+    if (t === undefined) firstSeen[a.id] = now
+    if (now - (firstSeen[a.id] ?? now) < WALK_IN_MS) entering.add(a.id)
+  }
+  for (const id of Object.keys(firstSeen)) if (!live.has(id)) delete firstSeen[id]
+  return entering
+}
+
 /** The office the pane draws: the demo while `view.demo`, else the scanned payload. */
 export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number): Payload {
   return view.demo ? demoPayload(now) : payload
@@ -400,6 +444,8 @@ let lastBeatKey = ''
 let roomDoneCache: Record<string, boolean> | null = null
 /** PAGE lastDing: the storm guard. */
 let lastDing = 0
+/** PAGE .entering: agent id → when it first appeared in the office (the desktop tile's walk-in). */
+const firstSeen: Record<string, number> = {}
 
 async function loadRoomDone($: EngineInterface): Promise<Record<string, boolean>> {
   if (roomDoneCache !== null) return roomDoneCache
@@ -541,7 +587,10 @@ export function registerUi(on: On): void {
     const row = rtl ? 'row-reverse' : 'row'
     const width = Math.max(MIN_WIDTH, e.props.bodyColumns || 80)
     const compact = width < COMPACT_BELOW
-    const { perRow, cardW } = gridFor(width)
+    // the desktop draws SVG tiles (office-svg.ts) in a pixel-budgeted grid; every other surface the text cards
+    const desktop = e.surface === 'desktop'
+    const { perRow: textPerRow, cardW } = gridFor(width)
+    const perRow = desktop ? tilesPerRow(width) : textPerRow
     const innerW = cardW - 2 // the status mark + its space
     const office = effectivePayload(payload, view, now)
     const all = office.agents
@@ -549,6 +598,7 @@ export function registerUi(on: On): void {
     const q = view.search
     const { rooms, stat, order } = officeView(all, q, lang, showDone, roomDone, prefs.pins)
     const stars = finishBeat($, office, prefs, view, roomDone, now)
+    const entering = desktop ? walkIns(firstSeen, all, now) : new Set<string>()
     const counts = headerCounts(all)
     const focusIndex = order.length === 0 ? -1 : Math.min(view.focusIndex, order.length - 1)
     const focused = focusIndex >= 0 ? order[focusIndex] : undefined
@@ -688,6 +738,23 @@ export function registerUi(on: On): void {
       const done = a.status === 'done'
       const mark = isSelected ? '◉' : isFocused ? '▸' : '●'
       const timer = fmt(agentElapsed(a, now))
+      // --- DESKTOP: the animated SVG tile (name, activity, 🧠 model, timer, ⭐⏰❌💬 all drawn inside at 10–12 px)
+      //     + the one pressable element the API allows beside a leaf Svg: a plain Button keyed 'open:<id>'.
+      //     The keyed Box is a hover scope (lifts the dim Button); the tile's hop + ⭐ pop replace the confetti here.
+      if (desktop) {
+        const { Svg } = $.ui.resolve(e)
+        const decor: TileDecor = {
+          elapsedMs: agentElapsed(a, now), star, longRunning: isLongRunning(a, now), failed,
+          selected: isSelected, focused: isFocused, entering: entering.has(a.id),
+        }
+        const tile = agentTileSvg(a, decor, { lang, name })
+        return (
+          <Box key={`tile:${a.id}`} flexDirection="column" alignItems="center" width={TILE_COLS}>
+            <Svg source={tile.source} alt={tile.alt} width={tile.width} height={tile.height} isInteractive />
+            <Button key={`open:${a.id}`} plain dimColor={!isSelected && !isFocused} hover={{ dimColor: false }} label={TILE_OPEN_LABEL} onPress={() => openAgent(a.id)} />
+          </Box>
+        )
+      }
       // the lead's 💬 rides its name on the first line (never a glyph of its own anywhere)
       const nameLabel = clip(`${a.is_session ? `${LEAD_MARK} ` : ''}${a.emoji} ${name}`, innerW - cellWidth(timer) - 1 - (badges ? cellWidth(badges) + 1 : 0))
       const activity = activityLabel(a, lang)
@@ -697,7 +764,7 @@ export function registerUi(on: On): void {
       const line2 = joinParts([activity, subText, modelTag])
       const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
       const burst = bursting
-        ? (e.surface === 'terminal' || e.surface === 'desktop')
+        ? e.surface === 'terminal' // (the desktop returned its tile above: its hop + ⭐ pop are the celebration)
           ? (() => {
               const { Client } = $.ui.resolve(e)
               return <Client key={`confetti:${a.id}`} module="./confetti.tsx" props={{ seed: personaIndex(a.id), width: innerW }} width={innerW} height={1} />

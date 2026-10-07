@@ -6,7 +6,7 @@
 // (and drawn on mobile/vscode, which lack Input / Client).
 
 import type { Agent } from './model'
-import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI } from './model'
+import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { activityLabel } from './i18n'
@@ -15,9 +15,9 @@ import { demoPayload } from './scanner'
 import {
   CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
-  TILE_MAX_PER_ROW, minuteClock, roomCols, tilesPerRow,
+  TILE_MAX_PER_ROW, minuteClock, renderKey, roomCols, tilesPerRow,
 } from './ui'
-import { ROOM_COLS } from './office-svg'
+import { ROOM_COLS, ROW_H, ROW_H_TITLED, roomWidth } from './office-svg'
 
 const T0 = 1_700_000_000_000
 const SA = 'sess-aaaa-1111-frontend'
@@ -209,8 +209,17 @@ test('layout budget: cell widths, end-clipping with an ellipsis, the card grid p
 
 type On = Parameters<typeof mock.store>[0]
 
-function beneath(on: On, current: () => Agent[], store: Record<string, unknown> = {}) {
-  const captured = { toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown> }
+/** An in-memory ~/.claude for `beneath`: path → text + mtime (sizes are the text's length). */
+type MemFiles = Map<string, { text: string; mtimeMs: number }>
+
+function beneath(on: On, current: () => Agent[], store: Record<string, unknown> = {}, files?: MemFiles) {
+  const captured = {
+    toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown>,
+    /** $.state writes seen beneath the plugin, by key (the flicker guard's budget). */
+    writes: { payload: 0, scanError: 0, view: 0, tick: 0 },
+    /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle), so it counts the redraws. */
+    prefsReads: 0,
+  }
   const clock = mock.clock(on, { now: T0 })
   // an in-memory store the test can read back (mock.store would hook store.set
   // itself, and an event may be hooked only once per module)
@@ -225,19 +234,103 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   // session.start would abort before starting the poll
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('agent.list', () => ({ value: [] }))
-  // no file system beneath: the scanner sees an empty ~/.claude
-  on('fs.exists', () => ({ value: false }))
-  on('fs.list', () => ({ value: [] }))
+  // the file system beneath: an empty ~/.claude, or the in-memory `files` (then the scanner's own payload is published, unrewritten)
+  const dirsOf = () => {
+    const dirs = new Set<string>()
+    for (const p of files?.keys() ?? []) {
+      let d = p
+      for (;;) {
+        const i = d.lastIndexOf('/')
+        if (i <= 0) break
+        d = d.slice(0, i)
+        dirs.add(d)
+      }
+    }
+    return dirs
+  }
+  // (the engine hands a hook the path in the platform's separators: back to "/")
+  const norm = (p: string) => p.split("\\").join("/")
+  on('fs.exists', ($, e) => ({ value: files !== undefined && (files.has(norm(e.path)) || dirsOf().has(norm(e.path))) }))
+  on('fs.list', ($, e) => {
+    if (!files) return { value: [] }
+    const dir = norm(e.path)
+    if (!dirsOf().has(dir)) throw new Error(`ENOENT: ${dir}`)
+    const out: Array<{ name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }> = []
+    const sub = new Set<string>()
+    for (const [p, f] of files) {
+      if (!p.startsWith(dir + '/')) continue
+      const rest = p.slice(dir.length + 1)
+      const slash = rest.indexOf('/')
+      if (slash < 0) out.push({ name: rest, kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })
+      else sub.add(rest.slice(0, slash))
+    }
+    for (const d of sub) out.push({ name: d, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })
+    return { value: out }
+  })
+  on('fs.stat', ($, e) => {
+    const f = files?.get(norm(e.path))
+    if (f) return { value: { kind: 'file' as const, size: f.text.length, mtimeMs: f.mtimeMs, isLink: false } }
+    if (files && dirsOf().has(norm(e.path))) return { value: { kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false } }
+    throw new Error(`ENOENT: ${e.path}`)
+  })
+  on('fs.read', ($, e) => {
+    const f = files?.get(norm(e.path))
+    if (!f) throw new Error(`ENOENT: ${e.path}`)
+    return { value: f.text }
+  })
   on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
   on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); return { value: { isPlaced: true as const } } })
   // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible)
   on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
   on('ui.focus', () => ({}))
-  // the poll's payload write becomes the fixture of the moment
-  on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) =>
-    next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now() } }))
+  // the poll's payload write becomes the fixture of the moment (unless the scanner reads `files`: then it is counted and kept)
+  on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) => {
+    captured.writes.payload += 1
+    return files ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now() } })
+  })
+  on('state.get', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.prefsReads += 1; return next(e) })
+  on('state.set', { plugin: 'agent-theater', key: 'scanError' }, ($, e, next) => { captured.writes.scanError += 1; return next(e) })
+  on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; return next(e) })
+  on('state.set', { plugin: 'agent-theater', key: 'tick' }, ($, e, next) => { captured.writes.tick += 1; return next(e) })
   return { captured, clock }
+}
+
+/** A quiet office on disk (HOME = C:/Users/test): one open conversation (its lead answering on Fable) with two subagents, one of them on Opus. */
+const QHOME = 'C:/Users/test'
+const QPROJ = `${QHOME}/.claude/projects/-C-x`
+const QSESS = 'sess-quiet-0001'
+const Q1 = `${QPROJ}/${QSESS}/subagents/agent-q1.jsonl`
+function quietOffice(now: number): MemFiles {
+  const rec = (o: Record<string, unknown>) => JSON.stringify(o)
+  const files: MemFiles = new Map()
+  files.set(`${QPROJ}/${QSESS}.jsonl`, {
+    text: [
+      rec({ type: 'user', sessionId: QSESS, cwd: 'C:/x', timestamp: '2026-06-01T09:00:00.000Z', message: { role: 'user', content: 'Quiet office test. Nothing moves.' } }),
+      rec({ type: 'assistant', sessionId: QSESS, timestamp: '2026-06-01T09:00:01.000Z', message: { role: 'assistant', model: 'claude-fable-5-1', content: [{ type: 'text', text: 'Watching.' }] } }),
+    ].join('\n') + '\n',
+    mtimeMs: now - 5000,
+  })
+  // q1: mid-tool (Read), no model named
+  files.set(Q1, {
+    text: [
+      rec({ type: 'user', agentId: 'q1', sessionId: QSESS, timestamp: '2026-06-01T10:00:00.000Z', cwd: 'C:/x', version: '2.1.0', message: { content: 'Find all TODO comments.' } }),
+      rec({ type: 'assistant', timestamp: '2026-06-01T10:00:03.000Z', version: '2.1.0', message: { content: [{ type: 'tool_use', name: 'Grep', input: { pattern: 'TODO' } }] } }),
+      rec({ type: 'user', timestamp: '2026-06-01T10:00:04.000Z', version: '2.1.0', message: { content: [{ type: 'tool_result', content: '12 matches' }] } }),
+      rec({ type: 'assistant', timestamp: '2026-06-01T10:00:05.000Z', version: '2.1.0', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'src/app.py' } }] } }),
+    ].join('\n') + '\n',
+    mtimeMs: now - 10_000,
+  })
+  // q2: mid-tool (Bash) on Opus
+  files.set(`${QPROJ}/${QSESS}/subagents/agent-q2.jsonl`, {
+    text: [
+      rec({ type: 'user', agentId: 'q2', sessionId: QSESS, timestamp: '2026-06-01T10:00:00.000Z', cwd: 'C:/x', version: '2.1.0', message: { content: 'Run the tests.' } }),
+      rec({ type: 'assistant', timestamp: '2026-06-01T10:00:05.000Z', version: '2.1.0', message: { model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pytest' } }] } }),
+    ].join('\n') + '\n',
+    mtimeMs: now - 8000,
+  })
+  files.set(`${QHOME}/.claude/sessions/7.json`, { text: JSON.stringify({ pid: 7, sessionId: QSESS }), mtimeMs: now })
+  return files
 }
 
 /** A mounted drawing's finder (what `$.ui.mount` answers), structurally. */
@@ -320,14 +413,21 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
         expect(await ui.find({ key })).toBeDefined()
       }
       expect(await ui.find({ key: 'open:a2' })).toBeUndefined()
-      // the model tag: a1 runs on claude-opus-5-5 → a dim "🧠 Opus 5.5" segment on its second line (the only agent with a model)
+      // the model: a1 runs on claude-opus-5-5 → "🧠 Opus 5.5" on its second line; EVERY card has the
+      // line — b1's model is unknown → "🧠 ?" (never a dropped segment)
       if (surface === 'desktop') {
-        // the tile draws the model line; no engine Text carries the tag
-        expect((await tileOf(ui, 'a1'))?.source).toMatch(/🧠 Opus 5\.5/)
-        expect((await tileOf(ui, 'b1'))?.source.includes('🧠')).toBe(false)
+        // the tile draws the model PILL (its tooltip/alt name it); no engine Text carries the tag
+        expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="pill m-opus"/)
+        expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="pillt m-opus"[^>]*>Opus 5\.5</)
+        expect((await tileOf(ui, 'b1'))?.tile).toMatch(/class="pill m-other"/)
+        expect((await tileOf(ui, 'b1'))?.tile).toMatch(/class="pillt m-other"[^>]*>\?</)
+        expect((await tileOf(ui, 'b1'))?.alt).toMatch(/🧠 \?/)
         expect(await ui.find({ type: 'Text', text: /🧠/ })).toBeUndefined()
       } else {
-        expect((await ui.find({ type: 'Text', text: /🧠/ }))?.text).toBe('🧠 Opus 5.5')
+        expect((await ui.find({ type: 'Text', text: /^🧠 Opus 5\.5$/ }))).toBeDefined()
+        // three cards (lead-a, a1, b1), three model segments: the two without a model say "🧠 ?"
+        expect(await ui.findAll({ type: 'Text', text: /^🧠 / })).toHaveLength(3)
+        expect(await ui.findAll({ type: 'Text', text: /^🧠 \?$/ })).toHaveLength(2)
       }
       // the "·" is its own segment BETWEEN two parts: no Text carries a dangling separator at either end
       expect(await ui.find({ type: 'Text', text: /(^·\s+\S|\S\s+·$)/ })).toBeUndefined()
@@ -379,12 +479,11 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
       expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /^🧠 Opus 5\.5$/ })).toBeDefined()
       await ui.press({ key: 'close' })
-      // b1 carries no model → no model row, no tag anywhere in its drawer (the only 🧠 left is a1's dim card segment)
+      // b1 carries no model → the drawer's model row still shows, as "🧠 ?" (which model runs an agent is never in doubt)
       await ui.press({ key: 'open:b1' })
-      expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeUndefined()
-      if (surface === 'desktop') expect(await ui.find({ type: 'Text', text: /^🧠/ })).toBeUndefined() // the tag is a1's tile's alone
-      else expect((await ui.find({ type: 'Text', text: /^🧠/ }))?.props?.dimColor).toBe(true)
-      expect(await ui.find({ type: 'Text', text: /^🧠/, key: 'model' })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeDefined()
+      if (surface === 'desktop') expect(await ui.findAll({ type: 'Text', text: /^🧠 \?$/ })).toHaveLength(1) // the drawer's row alone (tiles carry pills)
+      else expect(await ui.findAll({ type: 'Text', text: /^🧠 \?$/ })).toHaveLength(3) // two cards + the drawer's row
       await ui.press({ key: 'close' })
       await ui.unmount()
     }
@@ -508,13 +607,15 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   await ui.unmount()
 })
 
-test('DESKTOP: each room is ONE scalable interactive SVG with numbered tiles and a row of numbered open Buttons; a newcomer walks in; the finish is the tile\'s own (no confetti Client)', async ($, on) => {
-  let agents = fixture()
+test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles and a row of numbered open Buttons; a newcomer walks in; the finish is the tile\'s own (no confetti Client)', async ($, on) => {
+  let agents = fixture().map(a => (a.id === 'lead-a' ? { ...a, model: 'claude-fable-5-1' } : a))
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(1500)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  // two rooms → two SVGs, each interactive, with a viewBox and NO width/height (markup or props) so it scales to the slot
+  // two rooms of one row each → two SVGs, each interactive, with a viewBox and its intrinsic size in the MARKUP
+  // (the host sizes the box from it: the markup's own height at the drawn width) and NO width/height PROPS
+  // (the box takes the slot's width, so the drawing scales with the pane)
   const svgs = await ui.findAll({ type: 'Svg' })
   expect(svgs).toHaveLength(2)
   for (const sv of svgs) {
@@ -523,21 +624,35 @@ test('DESKTOP: each room is ONE scalable interactive SVG with numbered tiles and
     expect(sv.props.height).toBeUndefined()
     const src = String(sv.props.source)
     expect(src.length).toBeLessThan(131072)
-    expect(/^<svg [^>]*viewBox="0 0 \d+ \d+"/.test(src)).toBe(true)
-    expect(/^<svg [^>]*\bwidth=/.test(src)).toBe(false)
-    expect(/^<svg [^>]*\bheight=/.test(src)).toBe(false)
+    expect(/^<svg [^>]*viewBox="0 0 (\d+) (\d+)" width="\1" height="\2" style="width:100%;height:100%"/.test(src)).toBe(true)
     expect(src).toMatch(/xml:lang="he"/)
     expect(src).toMatch(/direction="rtl"/)
     expect(src).toMatch(/prefers-color-scheme: light/)
     expect(String(sv.props.alt).length).toBeGreaterThan(0)
   }
-  // a 45-column pane keeps the default grid of ROOM_COLS; a wide one seats more per row (the scaled tiles never balloon)
+  // every room of a render shares ONE column count (and so one viewBox width): 3 at ~45 columns, stepping up at breakpoints
+  expect(new Set(svgs.map(sv => /viewBox="0 0 (\d+) /.exec(String(sv.props.source))?.[1])).size).toBe(1)
   expect(roomCols(45)).toBe(ROOM_COLS)
   expect(roomCols(24)).toBe(ROOM_COLS)
-  expect(roomCols(140)).toBe(TILE_MAX_PER_ROW)
-  expect(tilesPerRow(45)).toBe(2)
-  expect(tilesPerRow(400)).toBe(TILE_MAX_PER_ROW)
-  expect((await roomSvgOf(ui, '💬 Ship the v2'))?.source).toMatch(new RegExp(`viewBox="0 0 ${3 * 88 + 2 * 4 + 2 * 4} `))
+  expect(roomCols(89)).toBe(3)
+  expect(roomCols(90)).toBe(4)
+  expect(roomCols(130)).toBe(5)
+  expect(roomCols(140)).toBe(5)
+  expect(roomCols(170)).toBe(6)
+  expect(roomCols(250)).toBe(TILE_MAX_PER_ROW)
+  expect(roomCols(400)).toBe(TILE_MAX_PER_ROW)
+  expect(tilesPerRow(45)).toBe(3)
+  expect((await roomSvgOf(ui, '💬 Ship the v2'))?.source).toMatch(new RegExp(`viewBox="0 0 ${roomWidth(3)} ${ROW_H_TITLED}"`))
+  // every tile has exactly one MODEL PILL: the lead's (Fable, read from its conversation), a1's (Opus), b1's ("?")
+  expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/class="pillt m-fable"[^>]*>Fable 5\.1</)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="pillt m-opus"[^>]*>Opus 5\.5</)
+  expect((await tileOf(ui, 'b1'))?.tile).toMatch(/class="pillt m-other"[^>]*>\?</)
+  for (const sv of svgs) {
+    const src = String(sv.props.source)
+    expect((src.match(/class="pill /g) ?? []).length).toBe((src.match(/<g class="ws /g) ?? []).length)
+  }
+  // the numbers row is tight: no gap between the small dim Buttons
+  expect((await ui.find({ key: 'opens:' + SA }))?.props?.gap).toBe(0)
   // numbered tiles ↔ numbered Buttons: room A = lead-a (1), a1 (2); room B = b1 (1). No tile:<id> Boxes any more.
   for (const [id, n] of [['lead-a', '1'], ['a1', '2'], ['b1', '1']] as const) {
     const t = await tileOf(ui, id)
@@ -548,8 +663,8 @@ test('DESKTOP: each room is ONE scalable interactive SVG with numbered tiles and
   }
   // the tile carries what the text card carried: status, activity, timer (minutes), model, the lead's 💬 — and a full tooltip
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws running fam-read/)
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/🧠 Opus 5\.5/)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/<title>2\. \S+ map session-token validation\nTask of a1\.\n📖 קורא · 🧠 Opus 5\.5 · &lt;1 דק׳<\/title>/)
+  expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/<title>1\. [^\n]*\n[^\n]*\n[^\n]*🧠 Fable 5\.1/)
   expect((await tileOf(ui, 'a1'))?.alt).toMatch(/📖 קורא/)
   expect((await tileOf(ui, 'b1'))?.tile).toMatch(/fam-agent/)
   expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/ is-session/)
@@ -602,6 +717,135 @@ test('DESKTOP: each room is ONE scalable interactive SVG with numbered tiles and
   expect((await tileOf(ui, 'a1'))?.tile.includes('justdone')).toBe(false)
   await clock.advance(JUST_FINISHED_MS + 1500)
   expect((await tileOf(ui, 'a1'))?.tile.includes('⭐')).toBe(false)
+  await ui.unmount()
+})
+
+test('THE FLICKER GUARD: polls with no visible change write NO payload / scanError / view and the desktop pane is NOT redrawn; a visible change or a minute\'s turn publishes ONCE; the terminal keeps ticking', async ($, on) => {
+  const files = quietOffice(T0)
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, files)
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(1500) // the first poll scans the files and publishes
+  expect(captured.writes.payload).toBe(1)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
+  // the pane's render reads `prefs` once per draw; the only other reader is the poll's retitle (one read per
+  // $.ui.open it makes, captured in `opens`) — so this counts the redraws
+  const renders = () => captured.prefsReads - captured.opens.length
+  // the office as scanned: the lead on Fable (its model read from the conversation's tail), q2 on Opus, q1 unknown
+  expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="pillt m-fable"[^>]*>Fable 5\.1</)
+  expect((await tileOf(ui, 'q2'))?.tile).toMatch(/class="pillt m-opus"[^>]*>Opus 5\.5</)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/class="pillt m-other"[^>]*>\?</)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/class="ws running fam-read/)
+  const before = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
+  const writes0 = { ...captured.writes }
+  const desktop0 = renders()
+  // FIVE quiet polls (same wall-clock minute: T0 is 20 s past one): nothing drawn changed → nothing written, nothing redrawn
+  for (let i = 0; i < 5; i++) await clock.advance(1500)
+  expect(minuteClock(clock.now())).toBe(minuteClock(T0 + 1500))
+  expect(captured.writes.payload).toBe(writes0.payload)
+  expect(captured.writes.scanError).toBe(writes0.scanError)
+  expect(captured.writes.view).toBe(writes0.view)
+  expect(renders()).toBe(desktop0) // the desktop pane was NOT drawn again
+  expect((await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))).toEqual(before)
+  // ...while the tick was written every poll — it reaches the TEXT surfaces alone: a terminal pane redraws on each
+  // (its mm:ss advance), the desktop never subscribes to it
+  expect(captured.writes.tick).toBe(writes0.tick + 5)
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
+  const terminal0 = renders()
+  const clockText = async () => (await term.find({ type: 'Text', text: /^\d\d:\d\d$/ }))?.text
+  const c0 = await clockText()
+  expect(c0).toBeDefined()
+  for (let i = 0; i < 3; i++) await clock.advance(1500)
+  expect(renders()).toBeGreaterThanOrEqual(terminal0 + 3)
+  expect(await clockText()).not.toBe(c0)
+  expect(captured.writes.payload).toBe(writes0.payload)
+  await term.unmount()
+  const desktop1 = renders()
+  await clock.advance(1500)
+  expect(renders()).toBe(desktop1)
+  // the same payload at the same minute keys the same; scanned_ms is not part of what is drawn
+  const sample = { ...EMPTY_PAYLOAD, agents: fixture(), scanned_ms: 1 }
+  expect(renderKey(sample, T0)).toBe(renderKey({ ...sample, scanned_ms: 2, versions: ['9.9.9'], skipped: 4 }, T0 + 1500))
+  expect(renderKey(sample, T0)).not.toBe(renderKey({ ...sample, agents: sample.agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a)) }, T0))
+  expect(renderKey(sample, T0)).not.toBe(renderKey(sample, T0 + 60_000))
+  expect(renderKey(sample, T0, { a2: T0 })).not.toBe(renderKey(sample, T0, {}))
+  // a VISIBLE change: q1 dispatches Write → exactly one publish, one desktop redraw, the tile recoloured
+  const q1 = files.get(Q1)!
+  files.set(Q1, {
+    text: q1.text + JSON.stringify({ type: 'user', timestamp: '2026-06-01T10:00:06.000Z', version: '2.1.0', message: { content: [{ type: 'tool_result', content: 'ok' }] } }) + '\n' +
+      JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T10:00:07.000Z', version: '2.1.0', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: 'x' } }] } }) + '\n',
+    mtimeMs: clock.now(),
+  })
+  await clock.advance(1500)
+  expect(captured.writes.payload).toBe(writes0.payload + 1)
+  expect(renders()).toBe(desktop1 + 1)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/class="ws running fam-write/)
+  // quiet again: still nothing
+  for (let i = 0; i < 3; i++) await clock.advance(1500)
+  expect(captured.writes.payload).toBe(writes0.payload + 1)
+  expect(renders()).toBe(desktop1 + 1)
+  // the clocks: the lead's timer counts from its last activity (T0 - 5 s) at MINUTE resolution. The first
+  // minute boundary leaves it under a minute ("<1m": nothing drawn moved → NO publish); the one after
+  // moves it to "1m" → ONE publish, ONE redraw, then quiet again
+  const leadMtime = T0 - 5000
+  expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="timer"[^>]*>&lt;1 דק׳</)
+  const boundary1 = minuteClock(clock.now()) + 60_000
+  await clock.advance(boundary1 - clock.now() + 1500)
+  expect(boundary1 - leadMtime).toBeLessThan(60_000)
+  expect(captured.writes.payload).toBe(writes0.payload + 1)
+  expect(renders()).toBe(desktop1 + 1)
+  // RUNNING_STALE_SEC after its last activity the lead falls idle: a visible change (💤, grey) → one publish
+  const idleAt = leadMtime + RUNNING_STALE_SEC * 1000
+  expect(idleAt).toBeGreaterThan(clock.now())
+  await clock.advance(idleAt - clock.now() + 1500)
+  expect(captured.writes.payload).toBe(writes0.payload + 2)
+  expect(renders()).toBe(desktop1 + 2)
+  expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="ws stale/)
+  const boundary2 = boundary1 + 60_000
+  expect(boundary2).toBeGreaterThan(clock.now())
+  await clock.advance(boundary2 - clock.now() + 1500)
+  expect(captured.writes.payload).toBe(writes0.payload + 3)
+  expect(renders()).toBe(desktop1 + 3)
+  expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="timer"[^>]*>1 דק׳</)
+  await clock.advance(1500)
+  await clock.advance(1500)
+  expect(captured.writes.payload).toBe(writes0.payload + 3)
+  expect(renders()).toBe(desktop1 + 3)
+  await ui.unmount()
+})
+
+test('RESIZE: the rows scale with the pane — one column count for every room, stepping 3 → 4 → 5 → 6 at 45 / 90 / 140 / 200 columns; a resize redraws, a quiet poll after it does not', async ($, on) => {
+  // room A: the lead + four subagents (so 3 columns need two rows), room B: one
+  const agents = [
+    ...fixture().filter(a => a.id !== 'a2'),
+    agent({ id: 'a3', role: 'write the changelog', tool: 'Write', persona_id: 12 }),
+    agent({ id: 'a4', role: 'run the suite', tool: 'Bash', persona_id: 13 }),
+    agent({ id: 'a5', role: 'grep the logs', tool: 'Grep', persona_id: 14 }),
+  ]
+  const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(1500)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
+  const widthsOf = async () => (await ui.findAll({ type: 'Svg' })).map(x => Number(/viewBox="0 0 (\d+) (\d+)"/.exec(String(x.props.source))?.[1]))
+  const heightsOf = async () => (await ui.findAll({ type: 'Svg' })).map(x => Number(/viewBox="0 0 (\d+) (\d+)"/.exec(String(x.props.source))?.[2]))
+  await clock.advance(1500) // the cast has walked in (the one-shot `entering` is gone)
+  for (const [bodyColumns, cols, svgCount] of [[45, 3, 3], [90, 4, 3], [140, 5, 2], [200, 6, 2]] as const) {
+    await ui.redraw({ ...PANE.props, bodyColumns })
+    expect(roomCols(bodyColumns)).toBe(cols)
+    const widths = await widthsOf()
+    expect(widths).toHaveLength(svgCount) // room A: two rows under 5 columns, one from 5; room B: one row
+    expect(new Set(widths).size).toBe(1) // IDENTICAL across rooms and rows
+    expect(widths[0]).toBe(roomWidth(cols))
+    const heights = await heightsOf()
+    // every row hugs its tiles: the titled first row of each room, a bare row for the overflow
+    for (const h of heights) expect([ROW_H, ROW_H_TITLED].includes(h)).toBe(true)
+    expect(heights.filter(h => h === ROW_H_TITLED)).toHaveLength(2) // two rooms, two titles
+    // the numbered Buttons stay one per agent whatever the grid
+    for (const id of ['lead-a', 'a1', 'a3', 'a4', 'a5', 'b1']) expect(await ui.find({ key: `open:${id}` })).toBeDefined()
+    // a quiet poll after the resize draws the very same sources (no change → no reload)
+    const after = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
+    await clock.advance(1500)
+    expect((await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))).toEqual(after)
+  }
   await ui.unmount()
 })
 

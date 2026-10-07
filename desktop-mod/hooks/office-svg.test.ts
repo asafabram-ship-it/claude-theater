@@ -7,10 +7,11 @@ import { PERSONA_EMOJI } from './model'
 import { expect, test } from 'claude-code/testing'
 
 import {
-  ALT_CHAR_CAP, FS_META, FS_NAME, FS_TIMER, MAX_TILES_PER_ROOM_SVG, ROOM_COLS, ROOM_HEAD_H, ROOM_PAD, SVG_SOURCE_LIMIT, TILE_GAP, TILE_H, TILE_W,
-  agentTileSvg, escapeXml, fitText, fitsSvgLimit, fmtClock, fmtMinutes, officeStyle, roomSvg, roomWidth, textPx, tileAlt, tileClasses, tileTitle, tileX, toolFamily,
+  ALT_CHAR_CAP, FS_META, FS_NAME, FS_PILL, FS_TIMER, MAX_TILES_PER_ROOM_SVG, ROOM_COLS, ROOM_HEAD_H, ROOM_PAD, ROW_H, ROW_H_TITLED, SVG_SOURCE_LIMIT, TILE_GAP, TILE_H, TILE_W,
+  UNKNOWN_MODEL_PILL, agentTileSvg, escapeXml, fitText, fitsSvgLimit, fmtClock, fmtMinutes, officeStyle, roomRowSvgs, roomSvg, roomWidth, textPx, tileAlt, tileClasses, tileTitle, tileX, toolFamily,
   type TileDecor,
 } from './office-svg'
+import { modelFamily } from './i18n'
 
 const T0 = 1_700_000_000_000
 const S = 'sess-aaaa-1111-frontend'
@@ -50,8 +51,8 @@ test('RTL: Hebrew tiles carry xml:lang="he", direction="rtl" on the root and the
   expect(he.includes('xml:lang="he"')).toBe(true)
   expect(he.includes('direction="rtl"')).toBe(true)
   expect(he.includes('class="name" x="44" y="82" text-anchor="middle" direction="rtl" unicode-bidi="embed">סקירת אבטחה<')).toBe(true)
-  expect(he.includes('class="act" x="44" y="94" text-anchor="middle" direction="rtl"')).toBe(true)
-  expect(he.includes('class="timer" x="44" y="116" text-anchor="middle" direction="ltr" unicode-bidi="embed">1 דק׳<')).toBe(true)
+  expect(he.includes('class="act" x="44" y="108" text-anchor="middle" direction="rtl"')).toBe(true)
+  expect(he.includes('class="timer" x="44" y="118" text-anchor="middle" direction="ltr" unicode-bidi="embed">1 דק׳<')).toBe(true)
   expect(he.includes('📖 קורא')).toBe(true) // activityLabel in Hebrew
   // the walk-in flips with the direction
   expect(officeStyle(true).includes('translateX(66px)')).toBe(true)
@@ -66,7 +67,7 @@ test('small type: the stylesheet pins the name, meta and timer sizes and the fon
   const css = officeStyle(false)
   expect(css.includes(`.name{font-size:${FS_NAME}px`)).toBe(true)
   expect(css.includes(`.act{font-size:${FS_META}px`)).toBe(true)
-  expect(css.includes(`.model{font-size:${FS_META}px`)).toBe(true)
+  expect(css.includes(`.pillt{font-size:${FS_PILL}px`)).toBe(true)
   expect(css.includes(`.timer{font-size:${FS_TIMER}px`)).toBe(true)
   expect(FS_NAME <= 12 && FS_NAME >= 11).toBe(true)
   expect(FS_META <= 11 && FS_META >= 10).toBe(true)
@@ -146,24 +147,46 @@ test('badges: ⭐ just finished (hop + pop), ⏰ long-running in the timer, ❌ 
   expect(sel.includes('.entering{animation:walkin')).toBe(true)
 })
 
-test('the model tag: 🧠 + modelLabel on its own line, timer below it; no line and a higher timer without a model', () => {
+test('the MODEL PILL: a coloured capsule per family under the name on EVERY tile ("?" neutral when unknown), its text never cut; timer below it', () => {
   const withModel = agentTileSvg(agent({ id: 'm', model: 'claude-haiku-4-5-20251001' }), { elapsedMs: 0 }, { lang: 'en' }).source
-  expect(withModel.includes('class="model"')).toBe(true)
-  expect(withModel.includes('🧠 Haiku 4.5')).toBe(true)
-  expect(withModel.includes('class="timer" x="44" y="116"')).toBe(true)
+  expect(withModel.includes('class="pill m-haiku"')).toBe(true)
+  expect(withModel).toMatch(/class="pillt m-haiku"[^>]*>Haiku 4\.5</)
+  expect(withModel.includes('class="model"')).toBe(false) // the faint grey line is gone
+  expect(withModel.includes('class="timer" x="44" y="118"')).toBe(true)
+  expect(withModel.includes('class="act" x="44" y="108"')).toBe(true)
+  // one pill per tile, every family its own colour token, light and dark
+  for (const [model, fam] of [['claude-opus-5-5', 'opus'], ['claude-sonnet-5-5', 'sonnet'], ['claude-haiku-4-5-20251001', 'haiku'], ['claude-fable-5-1', 'fable'], ['claude-mystery-9', 'other']] as const) {
+    expect(modelFamily(model)).toBe(fam)
+    const src = agentTileSvg(agent({ id: 'f', model }), {}, { lang: 'en' }).source
+    expect((src.match(/class="pill /g) ?? []).length).toBe(1)
+    expect(src.includes(`class="pill m-${fam}"`)).toBe(true)
+    expect(src.includes(`.pill.m-${fam}{fill:var(--m-${fam})}`)).toBe(true)
+  }
+  expect(officeStyle(false)).toMatch(/:root\{--m-opus:#[0-9a-f]{6};--m-sonnet:#[0-9a-f]{6};--m-haiku:#[0-9a-f]{6};--m-fable:#[0-9a-f]{6};--m-other:/)
+  expect(officeStyle(false)).toMatch(/prefers-color-scheme: light\)\{:root\{--m-opus:/)
+  // unknown: the same layout, a neutral "?" pill (never a dropped line)
   const noModel = agentTileSvg(agent({ id: 'n', model: '' }), { elapsedMs: 0 }, { lang: 'en' }).source
-  expect(noModel.includes('class="model"')).toBe(false)
-  expect(noModel.includes('class="timer" x="44" y="105"')).toBe(true)
+  expect(noModel.includes('class="pill m-other"')).toBe(true)
+  expect(noModel).toMatch(new RegExp(`class="pillt m-other"[^>]*>\\${UNKNOWN_MODEL_PILL}<`))
+  expect(noModel.includes('class="timer" x="44" y="118"')).toBe(true)
+  // the pill's text is never truncated away: a long name/activity is fitted, the pill keeps its full label
+  const crowded = agentTileSvg(agent({ id: 'c', role: 'a very long role name that cannot possibly fit a tile', model: 'claude-sonnet-5-5' }), {}, { lang: 'en' }).source
+  expect(crowded).toMatch(/class="pillt m-sonnet"[^>]*>Sonnet 5\.5</)
+  expect(crowded).toMatch(/class="name"[^>]*>[^<]*…</)
+  expect(textPx('Sonnet 5.5', FS_PILL) < TILE_W - 8).toBe(true)
   const hidden = agentTileSvg(agent({ id: 'h', model: 'claude-opus-5-5' }), {}, { lang: 'en', showModel: false }).source
   expect(hidden.includes('🧠')).toBe(false)
+  expect(hidden.includes('class="pill ')).toBe(false)
   // the alt names it too
   expect(tileAlt(agent({ id: 'm', model: 'claude-opus-5-5' }), { star: true }, { lang: 'en' })).toBe('🔬 The Researcher · 📖 Reading · 🧠 Opus 5.5 · ⭐')
   expect(tileAlt(agent({ id: 'm', model: 'claude-opus-5-5' }), { elapsedMs: 150_000, index: 2 }, { lang: 'en' })).toBe('2. 🔬 The Researcher · 📖 Reading · 2m · 🧠 Opus 5.5')
   // the tooltip carries the full details: number + name, task_short, activity · model · elapsed
   expect(tileTitle(agent({ id: 'm', role: 'map tokens', model: 'claude-opus-5-5' }), { elapsedMs: 150_000, index: 2, longRunning: true }, { lang: 'en' }))
     .toBe('2. 🔬 map tokens\nTask of m.\n📖 Reading · 🧠 Opus 5.5 · 2m · ⏰')
+  // the tooltip (and the alt) name the model too — "?" when unknown
   const titled = agentTileSvg(agent({ id: 'm', role: 'map tokens', task: 'Audit <everything> & more. Then stop.' }), { index: 3 }, { lang: 'en' }).source
-  expect(titled.includes('<title>3. 🔬 map tokens\nAudit &lt;everything&gt; &amp; more.\n📖 Reading</title>')).toBe(true)
+  expect(titled.includes('<title>3. 🔬 map tokens\nAudit &lt;everything&gt; &amp; more.\n📖 Reading · 🧠 ?</title>')).toBe(true)
+  expect(tileAlt(agent({ id: 'u', model: '' }), {}, { lang: 'en' })).toBe('🔬 The Researcher · 📖 Reading · 🧠 ?')
   expect(titled.includes('class="numt" x="10" y="13" text-anchor="middle" direction="ltr">3<')).toBe(true)
   // RTL: the number badge sits at the start (right) corner, the lead's 💬 beside it
   const heLead = agentTileSvg(agent({ id: 'l', is_session: true }), { index: 1 }, { lang: 'he' }).source
@@ -216,7 +239,7 @@ test('a tile reports its size and fits the Svg limit by a wide margin', () => {
   const out = agentTileSvg(agent({ id: 'z', role: 'x'.repeat(500), task: 'y'.repeat(2000), model: 'claude-opus-5-5' }), { star: true, longRunning: true, selected: true }, { lang: 'he' })
   expect(out.width).toBe(TILE_W)
   expect(out.height).toBe(TILE_H)
-  expect(out.source.length < 7000).toBe(true) // the style (~4.5 KB) + one tile; long fields are capped (ALT_CHAR_CAP) in title/alt
+  expect(out.source.length < 8000).toBe(true) // the style (~5 KB) + one tile; long fields are capped (ALT_CHAR_CAP) in title/alt
   expect(out.source.includes('x'.repeat(200))).toBe(false)
   expect(out.alt.includes('x'.repeat(ALT_CHAR_CAP) + '…')).toBe(true)
   expect(fitsSvgLimit(out.source)).toBe(true)
@@ -234,7 +257,7 @@ test('the room grid is fixed: ROOM_COLS per row by default, the viewBox width fo
   expect(tileX(2, 3, true)).toBe(ROOM_PAD)
 })
 
-test('roomSvg: viewBox only (no width/height — it scales to the slot), header, a fixed grid, RTL fills from the right, numbered tiles, decors by id, under the limit even for a huge room', () => {
+test('roomSvg: an intrinsic size that fills its box (scales to the slot), header, a fixed grid, RTL fills from the right, numbered tiles, decors by id, under the limit even for a huge room', () => {
   const agents = [
     agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking', task: 'Ship the v2 config migration. Then clean up.' }),
     agent({ id: 'a1', role: 'map session-token validation', model: 'claude-opus-5-5' }),
@@ -246,9 +269,9 @@ test('roomSvg: viewBox only (no width/height — it scales to the slot), header,
   const W = roomWidth(3)
   expect(en.width).toBe(W)
   expect(en.height).toBe(ROOM_HEAD_H + ROOM_PAD + 2 * TILE_H + TILE_GAP + ROOM_PAD) // 4 tiles → two rows of 3
-  expect(en.source.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${en.height}" preserveAspectRatio="xMidYMin meet" xml:lang="en"`)).toBe(true)
-  expect(/<svg [^>]*\bwidth=/.test(en.source)).toBe(false)
-  expect(/<svg [^>]*\bheight=/.test(en.source)).toBe(false)
+  // the root carries its intrinsic size (so the host's box gets the markup's own height at the drawn
+  // width — a viewBox alone fell back to a 300×150 box that squeezed a tall room) and CSS that fills the box
+  expect(en.source.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${en.height}" width="${W}" height="${en.height}" style="width:100%;height:100%" preserveAspectRatio="xMidYMin meet" xml:lang="en"`)).toBe(true)
   expect(en.source.includes('class="room-title" x="8" y="14" text-anchor="start"')).toBe(true)
   expect(en.source.includes('💬 Ship the v2 config migration.')).toBe(true)
   expect(en.source.includes('>acme-web<')).toBe(true)
@@ -266,7 +289,7 @@ test('roomSvg: viewBox only (no width/height — it scales to the slot), header,
   // ...and at the right in RTL
   const he = roomSvg(agents, {}, { lang: 'he', title: 'שליחת גרסה 2' })
   expect(he.source.includes(`translate(${tileX(0, 3, true)} ${y0})" data-id="lead"`)).toBe(true)
-  expect(he.source.includes(`class="room-title" x="${W - 8}" y="14" text-anchor="end" direction="rtl"`)).toBe(true)
+  expect(he.source.includes(`class="room-title" x="${W - 8}" y="14" text-anchor="start" direction="rtl"`)).toBe(true)
   expect(he.source.includes('xml:lang="he"')).toBe(true)
   // the title is cut from its END by px, keeping its beginning
   const longTitle = roomSvg(agents, {}, { lang: 'en', title: 'Session without choosing a project and a very long rest of the sentence that cannot fit' })
@@ -288,6 +311,88 @@ test('roomSvg: viewBox only (no width/height — it scales to the slot), header,
   expect(big.source.length <= SVG_SOURCE_LIMIT).toBe(true)
   expect(big.source.includes('>+25<')).toBe(true)
   expect((big.source.match(/data-id="m/g) ?? []).length).toBe(MAX_TILES_PER_ROOM_SVG)
+})
+
+test('ROOM TITLES, RTL and LTR: the beginning stays at the start edge, the cut is at the END ("…" last), the anchor follows the text direction', () => {
+  const agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' })]
+  const W = roomWidth(3)
+  const titleOf = (src: string) => /class="room-title"[^>]*>([^<]*)</.exec(src)?.[1] ?? ''
+  const anchorOf = (src: string) => /class="room-title" x="([^"]+)" y="14" text-anchor="([^"]+)" direction="([^"]+)"/.exec(src)
+  // Hebrew, long: a real-looking topic — its START ("💬 תבדוק את התיקייה") is kept, its tail cut with …
+  const heLong = roomSvg(agents, {}, { lang: 'he', title: 'תבדוק את התיקייה של הפרויקט ותסכם לי מה חסר בתיעוד של כל אחד מהמודולים', small: 'agent-theater' }).source
+  const heT = titleOf(heLong)
+  expect(heT.startsWith('💬 תבדוק את התיקייה')).toBe(true)
+  expect(heT.endsWith('…')).toBe(true)
+  expect(heT.includes('מהמודולים')).toBe(false)
+  expect(textPx(heT, FS_NAME) <= W - 16).toBe(true)
+  // the anchor: `start` at the RIGHT edge for an rtl text (its start IS its right end). An rtl `end` at the
+  // right edge would run the whole title off the viewBox and leave only its tail — the "…ות את התיקייה" bug.
+  const heA = anchorOf(heLong)
+  expect(heA?.[1]).toBe(String(W - 8))
+  expect(heA?.[2]).toBe('start')
+  expect(heA?.[3]).toBe('rtl')
+  // Hebrew, short: drawn whole
+  const heShort = roomSvg(agents, {}, { lang: 'he', title: 'הנשר' }).source
+  expect(titleOf(heShort)).toBe('💬 הנשר')
+  // the small label under RTL sits at the far (left) edge, ltr, anchored at its own start
+  expect(heLong.includes(`class="room-small" x="8" y="14" text-anchor="start" direction="ltr">agent-theater<`)).toBe(true)
+  // English, long: the start kept at the LEFT edge, cut at the end
+  const enLong = roomSvg(agents, {}, { lang: 'en', title: 'Session without choosing a project and a very long rest of the sentence that cannot fit', small: 'acme-web' }).source
+  const enT = titleOf(enLong)
+  expect(enT.startsWith('💬 Session without')).toBe(true)
+  expect(enT.endsWith('…')).toBe(true)
+  expect(enT.includes('cannot fit')).toBe(false)
+  const enA = anchorOf(enLong)
+  expect(enA?.[1]).toBe('8')
+  expect(enA?.[2]).toBe('start')
+  expect(enA?.[3]).toBe('ltr')
+  expect(enLong.includes(`class="room-small" x="${W - 8}" y="14" text-anchor="end" direction="ltr">acme-web<`)).toBe(true)
+  // English, short: whole
+  expect(titleOf(roomSvg(agents, {}, { lang: 'en', title: 'research' }).source)).toBe('💬 research')
+  // mixed: an English topic in a Hebrew office keeps its beginning too
+  const mixed = roomSvg(agents, {}, { lang: 'he', title: 'Fix the flicker in office-svg.ts and make the titles readable under RTL please' }).source
+  expect(titleOf(mixed).startsWith('💬 Fix the flicker')).toBe(true)
+  expect(titleOf(mixed).endsWith('…')).toBe(true)
+})
+
+test('roomRowSvgs: ONE SVG PER ROW — the same viewBox width for every row, the title on the first, tiles numbered across rows, "+N" past the cap', () => {
+  const five = [1, 2, 3, 4, 5].map(i => agent({ id: `r${i}`, role: `agent ${i}`, model: i % 2 ? 'claude-opus-5-5' : '' }))
+  const rows = roomRowSvgs(five, {}, { lang: 'he', title: 'חמישה', small: 'proj', cols: 3 })
+  expect(rows).toHaveLength(2)
+  expect(rows.map(r => r.width)).toEqual([roomWidth(3), roomWidth(3)])
+  expect(rows[0]?.height).toBe(ROW_H_TITLED)
+  expect(rows[1]?.height).toBe(ROW_H)
+  expect(ROW_H).toBe(ROOM_PAD + TILE_H + ROOM_PAD)
+  expect(ROW_H_TITLED).toBe(ROOM_HEAD_H + ROW_H)
+  expect(rows[0]?.source).toMatch(/class="room-title"[^>]*>💬 חמישה</)
+  expect(rows[1]?.source.includes('class="room-title"')).toBe(false)
+  // every row's viewBox is W × its height, with the intrinsic size on the root
+  for (const r of rows) {
+    expect(r.source.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${r.width} ${r.height}" width="${r.width}" height="${r.height}" style="width:100%;height:100%"`)).toBe(true)
+    expect(fitsSvgLimit(r.source)).toBe(true)
+  }
+  // numbering runs across the rows: 1..3 on the first, 4..5 on the second
+  for (let i = 1; i <= 3; i++) expect(rows[0]?.source.includes(`direction="ltr">${i}</text>`)).toBe(true)
+  for (let i = 4; i <= 5; i++) expect(rows[1]?.source.includes(`direction="ltr">${i}</text>`)).toBe(true)
+  expect(rows[0]?.source.includes('data-id="r3"')).toBe(true)
+  expect(rows[1]?.source.includes('data-id="r4"')).toBe(true)
+  // RTL: the 4th tile starts the second row at the RIGHT edge
+  expect(rows[1]?.source.includes(`translate(${tileX(0, 3, true)} ${ROOM_PAD})" data-id="r4"`)).toBe(true)
+  // every tile of every row has exactly one model pill; the tiles' alts carry the model
+  const pills = rows.reduce((n, r) => n + (r.source.match(/class="pill /g) ?? []).length, 0)
+  expect(pills).toBe(5)
+  expect(rows[0]?.alt).toMatch(/🧠 Opus 5\.5/)
+  expect(rows[1]?.alt).toMatch(/🧠 \?/)
+  // one row when it fits; a bare room is one (empty) row
+  expect(roomRowSvgs(five, {}, { lang: 'en', title: 't', cols: 5 })).toHaveLength(1)
+  expect(roomRowSvgs([], {}, { lang: 'en', title: 't', cols: 3 })).toHaveLength(1)
+  // over the cap: the last row ends in "+N"
+  const many: Agent[] = []
+  for (let i = 0; i < MAX_TILES_PER_ROOM_SVG + 7; i++) many.push(agent({ id: `m${i}` }))
+  const capped = roomRowSvgs(many, {}, { lang: 'en', title: 'big', cols: 8 })
+  expect(capped.reduce((n, r) => n + (r.source.match(/data-id="m/g) ?? []).length, 0)).toBe(MAX_TILES_PER_ROOM_SVG)
+  expect(capped[capped.length - 1]?.source.includes('>+7<')).toBe(true)
+  expect(capped.every(r => r.width === roomWidth(8))).toBe(true)
 })
 
 test('STABLE SOURCE: two renders 1.5 s apart are byte-identical for a running agent; a phase / tool change, a new badge or a selection changes it', () => {

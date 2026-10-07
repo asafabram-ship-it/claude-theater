@@ -54,6 +54,15 @@ test('spawn → tool → thinking → result keeps start_ms and the last tool', 
   expect(live.a1?.start_ms).toBe(T0)
 })
 
+test('mergeLive marks a failed/killed live agent `failed` (the pane draws ❌ from the payload, never from the live map)', () => {
+  let live = spawn('a1')
+  live = liveAgentReturned(live, 't-a1', undefined, true, T0 + 1)
+  const merged = mergeLive(payloadOf(), live, SESSION, T0 + 2)
+  expect(merged.agents.find(a => a.id === 'a1')?.failed).toBe(true)
+  const ok = mergeLive(payloadOf(), spawn('a2'), SESSION, T0 + 2)
+  expect('failed' in (ok.agents.find(a => a.id === 'a2') ?? {})).toBe(false)
+})
+
 test('a background Agent call returns a launch acknowledgment, not a result: the agent stays running', () => {
   const live = spawn('a1')
   const ack = 'Async agent launched successfully. (This tool result is internal metadata — never quote it.)\nagentId: a1 (internal ID)\nThe agent is working in the background.'

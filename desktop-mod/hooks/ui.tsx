@@ -19,12 +19,14 @@
 //   help     the keyboard-shortcuts popover (PAGE renderHelp) while open
 //   drawer   the selected agent (PAGE fillDrawer): chips (status, subagent_type,
 //            duration/elapsed, tool), model, activity, task, result, "shortened"
-//   DESKTOP  (e.surface === 'desktop') each ROOM is instead ONE animated SVG from
-//            office-svg.ts (roomSvg: title row + a fixed grid of roomCols() tiles
-//            per row — character at a desk, 10–12 px texts, light/dark, walk-in /
-//            bob / hop / ⭐ pop) with only a viewBox, so it scales to the pane's
-//            width. The Svg is a leaf and Box has no onPress, so under it sits one
-//            compact row of small numbered Buttons 'open:<id>' (label "1", "2", …)
+//   DESKTOP  (e.surface === 'desktop') each ROOM is instead animated SVG ROWS from
+//            office-svg.ts (roomRowSvgs: the title on the first row + roomCols()
+//            tiles per row, the SAME count for every room of the render — a
+//            character at a desk, 10–12 px texts, light/dark, walk-in / bob / hop /
+//            ⭐ pop) scaled through their viewBox to the pane's width (bigger tiles
+//            in a wider pane; the count steps up only at breakpoints). The Svg is a
+//            leaf and Box has no onPress, so under the rows sits one tight row of
+//            small numbered Buttons 'open:<id>' (label "1", "2", …)
 //            matching the number badge on each tile; the tile's <title> tooltip
 //            carries the full details. The engine's room header line keeps only
 //            📌 and the counts (the title is in the SVG: no wrapping, no lone 💬).
@@ -40,7 +42,8 @@
 //            finished"). Cards fill the row: 1 per row under COLS2_FROM, 2 to
 //            COLS3_FROM, 3 past it. A card is two lines, no frame:
 //              ● 💬 emoji name ⭐⏰❌              mm:ss   (💬 on the lead's name only)
-//                activity · subagent_type · 🧠 model     (a "·" only between two parts)
+//                activity · 🧠 model · subagent_type     (a "·" only between two parts;
+//                                                         the model ALWAYS, "🧠 ?" when unknown)
 //            the name a plain Button (Enter/click opens the drawer); ● is the
 //            status colour (▸ focused, ◉ selected), ⏰ ≥ LONG_RUNNING_MS, ⭐
 //            within JUST_FINISHED_MS, ❌ failed/killed (from the live map).
@@ -53,7 +56,10 @@
 //   from Button/Input closures declared in this file (so `$` never crosses an
 //   import — validate rule).
 // - Read state with read($, atom) so the pane redraws on every $.state.set;
-//   atoms are declared in THIS file (validate rule), never imported.
+//   atoms are declared in THIS file (validate rule), never imported. The pane
+//   reads payload / prefs / view / scanError (+ tick off the desktop) and NOT
+//   the live map: a live agent's every tool.call writes it, and a redraw
+//   reloads the desktop's Svg frames (see renderKey — the flicker guard).
 // - Draw with the table of e.surface: `$.ui.resolve(e)`. Width is
 //   e.props.bodyColumns (narrower than the viewport when docked).
 // - Hebrew default; `dirOf(prefs.lang)` decides the row direction (RTL = row-reverse).
@@ -100,8 +106,8 @@ import type { EngineInterface, On } from 'claude-code'
 
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
-import type { Agent, LiveAgent, Payload, Prefs, View } from './model'
-import { ROOM_COLS, TILE_W, WALK_IN_MS, roomSvg, type TileDecor } from './office-svg'
+import type { Agent, Payload, Prefs, View } from './model'
+import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS, roomRowSvgs, type TileDecor } from './office-svg'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
 
@@ -111,7 +117,8 @@ const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, E
 const prefsAtom = atom({ plugin: 'agent-theater', key: 'prefs' } as const, DEFAULT_PREFS)
 const viewAtom = atom({ plugin: 'agent-theater', key: 'view' } as const, DEFAULT_VIEW)
 const scanErrorAtom = atom({ plugin: 'agent-theater', key: 'scanError' } as const, null)
-const liveAtom = atom({ plugin: 'agent-theater', key: 'live' } as const, {} as Record<string, LiveAgent>)
+/** The poll's clock: read ONLY on the text surfaces (their mm:ss tick with it); the desktop never subscribes, so a tick reloads no frame. */
+const tickAtom = atom({ plugin: 'agent-theater', key: 'tick' } as const, 0)
 
 /** $.store key of the per-room "show finished" overrides (PAGE ct_roomDone). */
 export const STORE_ROOM_DONE_KEY = 'roomDone'
@@ -131,16 +138,18 @@ const DING_ASSET = 'sounds/done.wav'
 /** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
 const BURST_MS = 1050
 /**
- * DESKTOP: the office is drawn as one scalable SVG per room (office-svg.ts).
- * The desktop's column width is not reported, so this is a conservative lower
- * bound (px per column) used only to decide how many tiles a row of a WIDE
- * pane holds (roomCols): at 6 px/col a ~45-column pane keeps the default
- * ROOM_COLS and a 140-column pane seats 8, so the scaled tiles stay about the
- * same size on screen whatever the width.
+ * DESKTOP: the office is drawn as scalable SVG rows (office-svg.ts) that fill
+ * the pane's width, so the tiles GROW with the pane. The tiles per row step
+ * up only at breakpoints (bodyColumns): ROOM_COLS (3) under COLS_STEP_FROM +
+ * COLS_STEP, then one more every COLS_STEP columns — 4 from 90, 5 from 130,
+ * 6 from 170, 7 from 210, TILE_MAX_PER_ROW (8) from 250. Just under a
+ * breakpoint a tile is about twice its size at 45 columns; just past one it
+ * is still larger than at 45 (90/372 > 45/284 viewBox units per column), so
+ * a wider pane means bigger tiles first and more tiles second. One count for
+ * every room of a render (roomCols(width) once).
  */
-export const DESKTOP_PX_PER_COL = 6
-/** Columns one tile would take on the desktop at scale 1 (TILE_W / DESKTOP_PX_PER_COL, rounded up). */
-export const TILE_COLS = Math.ceil(TILE_W / DESKTOP_PX_PER_COL)
+export const COLS_STEP_FROM = 50
+export const COLS_STEP = 40
 /** The widest desktop row (a very wide pane stays an office, not a strip). */
 export const TILE_MAX_PER_ROW = 8
 /** The finish poll's hop + ⭐ pop: `justdone` is passed while the star is younger than this (under POLL_MS: one poll). */
@@ -411,16 +420,14 @@ export function gridFor(width: number): { perRow: number; cardW: number } {
   return { perRow, cardW }
 }
 
-/** DESKTOP tiles per row at scale 1 for a body of `width` columns: TILE_COLS each with a 1-column gutter, at least 1, at most TILE_MAX_PER_ROW. */
-export function tilesPerRow(width: number): number {
+/** DESKTOP: tiles per row for a body of `width` columns — ROOM_COLS, +1 per COLS_STEP columns past COLS_STEP_FROM, at most TILE_MAX_PER_ROW. */
+export function roomCols(width: number): number {
   const w = Math.max(MIN_WIDTH, width)
-  return Math.max(1, Math.min(TILE_MAX_PER_ROW, Math.floor((w + 1) / (TILE_COLS + 1))))
+  return Math.max(ROOM_COLS, Math.min(TILE_MAX_PER_ROW, ROOM_COLS + Math.floor(Math.max(0, w - COLS_STEP_FROM) / COLS_STEP)))
 }
 
-/** DESKTOP: the room SVG's fixed grid — ROOM_COLS per row, more in a pane wide enough to seat more at scale 1 (so the scaled tiles never balloon). */
-export function roomCols(width: number): number {
-  return Math.max(ROOM_COLS, tilesPerRow(width))
-}
+/** The same count (every room of a render shares it). */
+export const tilesPerRow = roomCols
 
 /** DESKTOP: the clock the tiles are timed from — the wall-clock minute, so every room's timers tick (and its SVG reloads) together, once a minute. */
 export function minuteClock(now: number): number {
@@ -448,6 +455,36 @@ export function walkIns(firstSeen: Record<string, number>, all: readonly Agent[]
 /** The office the pane draws: the demo while `view.demo`, else the scanned payload. */
 export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number): Payload {
   return view.demo ? demoPayload(now) : payload
+}
+
+/**
+ * THE FLICKER GUARD's projection: everything the pane DRAWS of a payload at
+ * `now`, as one string — and nothing it does not (scanned_ms, versions,
+ * skipped, raw timestamps). Two payloads with the same key draw the same
+ * office, so the poll publishes only when the key moved (register.tsx): a
+ * $.state.set redraws every reader, a redraw of the pane re-creates the
+ * desktop's interactive Svg frames (restarting their animations), so a
+ * per-tick write WAS the flicker. Time enters at the resolution it is drawn:
+ * the elapsed MINUTE (the desktop tile's timer; the text surfaces tick their
+ * mm:ss from the tick atom instead), the ⏰ long-running flag, and the ⭐ ids
+ * still inside the JUST_FINISHED window (`stars`: the beat's
+ * view.justFinished) — so a star's expiry and a minute's turn still redraw,
+ * once.
+ */
+export function renderKey(payload: Payload, now: number, stars: Readonly<Record<string, number>> = {}): string {
+  const parts: string[] = [payload.demo ? 'D' : 'S', String(payload.oversized)]
+  for (const a of payload.agents) {
+    const el = agentElapsed(a, minuteClock(now))
+    parts.push([
+      a.id, a.persona_id, a.emoji, a.role, a.subagent_type, a.status, a.tool, a.phase, a.task_short, a.task, a.result ?? '\u0000',
+      a.session, a.session_full, a.cwd, a.project, a.is_session ? 1 : 0, a.closed ? 1 : 0, a.is_workflow ? 1 : 0, a.truncated ? 1 : 0,
+      a.model, a.topic ?? '', a.failed ? 1 : 0,
+      el === null ? 'x' : Math.max(0, Math.floor(el / 60_000)), isLongRunning(a, now) ? 1 : 0,
+    ].join('\u0001'))
+  }
+  const alive = Object.entries(stars).filter(([, t]) => now - t < JUST_FINISHED_MS).map(([id]) => id).sort()
+  parts.push(alive.join(','))
+  return parts.join('\u0002')
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +634,11 @@ export function registerUi(on: On): void {
     const payload = await read($, payloadAtom)
     const view = await read($, viewAtom)
     const scanError = await read($, scanErrorAtom)
-    const live = await read($, liveAtom)
+    // the desktop draws SVG tiles (office-svg.ts) in a scalable grid; every other surface the text cards
+    const desktop = e.surface === 'desktop'
+    // the text surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT
+    // (its tiles show minutes, and a redraw reloads its frames — the tick must never reach it)
+    if (!desktop) await read($, tickAtom)
     const roomDone = await loadRoomDone($)
     // the clock is the engine's; a host without one (a bare test) falls back to the module's
     const now = await $.clock.now().catch(() => Date.now())
@@ -607,10 +648,8 @@ export function registerUi(on: On): void {
     const row = rtl ? 'row-reverse' : 'row'
     const width = Math.max(MIN_WIDTH, e.props.bodyColumns || 80)
     const compact = width < COMPACT_BELOW
-    // the desktop draws SVG tiles (office-svg.ts) in a pixel-budgeted grid; every other surface the text cards
-    const desktop = e.surface === 'desktop'
-    const { perRow: textPerRow, cardW } = gridFor(width)
-    const perRow = desktop ? tilesPerRow(width) : textPerRow
+    const { perRow, cardW } = gridFor(width)
+    const cols = roomCols(width) // ONE count for every room of this render
     const innerW = cardW - 2 // the status mark + its space
     const office = effectivePayload(payload, view, now)
     const all = office.agents
@@ -710,12 +749,11 @@ export function registerUi(on: On): void {
     const drawer = selected && (() => {
       const a = selected
       const dur = agentElapsed(a, now, true)
-      // ❌ failed/killed comes from the live map (engine_status is not in the payload), as the card draws it
-      const liveS = live[a.id]?.engine_status
-      const failed = liveS === 'failed' || liveS === 'killed'
+      // ❌ failed/killed: live.ts merged the engine's status into the payload (the pane never reads the live map)
+      const failed = a.failed === true
       const stx = failed ? `❌ ${L.dFailed}` : a.status === 'running' ? L.dWorking : a.status === 'done' ? L.dDone : L.dStale
       const chips = [stx, a.subagent_type, (a.status === 'done' ? L.dDuration : L.dElapsed) + fmt(dur), a.tool].filter(Boolean)
-      const model = modelLabel(a.model)
+      const model = modelLabel(a.model) || UNKNOWN_MODEL_PILL // the row is always there ("?" when unknown)
       const inner = width - 4
       return (
         <Box key="drawer" flexDirection="column" borderStyle="double" paddingX={1}>
@@ -727,8 +765,8 @@ export function registerUi(on: On): void {
           <Box flexDirection={row} flexWrap="wrap" gap={1}>
             {chips.map(c => <Text key={`chip:${c}`} inverse>{` ${clip(c, inner - 2)} `}</Text>)}
           </Box>
-          {model ? <Text bold>{L.dModel}</Text> : null}
-          {model ? <Text key="model">{`🧠 ${model}`}</Text> : null}
+          <Text bold>{L.dModel}</Text>
+          <Text key="model">{`🧠 ${model}`}</Text>
           <Text bold>{L.dAction}</Text>
           <Text>{activityLabel(a, lang)}</Text>
           <Text bold>{L.dTask}</Text>
@@ -742,16 +780,15 @@ export function registerUi(on: On): void {
 
     // --- one card (PAGE createWS/updateWS): two lines, the row's full width, no frame ---
     //   ● 💬 emoji name ⭐⏰❌         mm:ss      (💬 on the lead only)
-    //     activity · type · 🧠 model
+    //     activity · 🧠 model · type   (the model always: "🧠 ?" when unknown)
     const card = (a: Agent) => {
       const name = cardName(a, lang)
-      const liveA = live[a.id]
-      const failed = liveA !== undefined && (liveA.engine_status === 'failed' || liveA.engine_status === 'killed')
+      const failed = a.failed === true
       const star = a.status === 'done' && a.id in stars && now - (stars[a.id] ?? 0) < JUST_FINISHED_MS
       const badges = [failed ? '❌' : '', star ? '⭐' : '', isLongRunning(a, now) ? '⏰' : ''].filter(Boolean).join('')
       const sub = a.role ? (a.subagent_type || personaName(a.persona_id, lang)) : a.subagent_type
-      const model = modelLabel(a.model)
-      const modelTag = model ? `🧠 ${model}` : ''
+      // the model is ALWAYS on line 2, right after the activity ("🧠 ?" when unknown): which model runs each agent is never in doubt
+      const modelTag = `🧠 ${modelLabel(a.model) || UNKNOWN_MODEL_PILL}`
       const isFocused = focused?.id === a.id
       const isSelected = selected?.id === a.id
       const color = a.status === 'running' ? 'green' : a.status === 'stale' ? 'yellow' : undefined
@@ -761,10 +798,10 @@ export function registerUi(on: On): void {
       // the lead's 💬 rides its name on the first line (never a glyph of its own anywhere)
       const nameLabel = clip(`${a.is_session ? `${LEAD_MARK} ` : ''}${a.emoji} ${name}`, innerW - cellWidth(timer) - 1 - (badges ? cellWidth(badges) + 1 : 0))
       const activity = activityLabel(a, lang)
-      const subBudget = innerW - cellWidth(activity) - (modelTag ? cellWidth(modelTag) + 3 : 0) - 3
+      const subBudget = innerW - cellWidth(activity) - cellWidth(modelTag) - 3 - 3
       const subText = sub && subBudget >= 4 ? clip(sub, subBudget) : ''
-      // line 2: the non-empty parts, a "·" only BETWEEN two of them (never a dangling separator)
-      const line2 = joinParts([activity, subText, modelTag])
+      // line 2: activity · 🧠 model · type — the non-empty parts, a "·" only BETWEEN two of them (never a dangling separator)
+      const line2 = joinParts([activity, modelTag, subText])
       const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
       const burst = bursting
         ? e.surface === 'terminal' // (the desktop never reaches here: its room SVG's hop + ⭐ pop are the celebration)
@@ -798,17 +835,19 @@ export function registerUi(on: On): void {
       )
     }
 
-    // --- DESKTOP: a room as ONE scalable SVG + a compact row of numbered open Buttons (see the header) ---
-    //     The tiles' decor is built from a minute-quantized clock and one-shot flags, so the SVG source
-    //     is byte-identical between polls unless something visible changed (no frame reload, no flicker).
+    // --- DESKTOP: a room as scalable SVG ROWS (same viewBox width for every room, so every tile is the
+    //     same size) + ONE tight row of small numbered open Buttons (see the header). The tiles' decor
+    //     is built from a minute-quantized clock and one-shot flags, so a source is byte-identical
+    //     between polls unless something visible changed — and the poll does not redraw the pane at
+    //     all unless renderKey moved (register.tsx), so the frames reload only on a visible change
+    //     (or a resize: the width picks the columns).
     const nowMin = minuteClock(now)
     const desktopRoom = (s: string, members: readonly Agent[], title: string, small: string) => {
       if (e.surface !== 'desktop') return null // (narrows the element table to the desktop's, which has Svg)
       const { Svg } = $.ui.resolve(e)
       const decors = new Map<string, TileDecor>()
       members.forEach((a, i) => {
-        const liveA = live[a.id]
-        const failed = liveA !== undefined && (liveA.engine_status === 'failed' || liveA.engine_status === 'killed')
+        const failed = a.failed === true
         const starAt = stars[a.id]
         const star = a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS
         decors.set(a.id, {
@@ -819,10 +858,12 @@ export function registerUi(on: On): void {
           selected: selected?.id === a.id, focused: focused?.id === a.id, entering: entering.has(a.id),
         })
       })
-      const room = roomSvg(members, decors, { lang, title, small, cols: roomCols(width), nameOf: a => cardName(a, lang) })
+      const rowsSvg = roomRowSvgs(members, decors, { lang, title, small, cols, nameOf: a => cardName(a, lang) })
+      // no width/height props: the box takes the slot's width and the markup's own height at it (the
+      // markup carries its intrinsic size), so the rows scale with the pane and hug their tiles
       return [
-        <Svg key={`roomsvg:${s}`} source={room.source} alt={room.alt} isInteractive />,
-        <Box key={`opens:${s}`} flexDirection={row} flexWrap="wrap" gap={1}>
+        ...rowsSvg.map((r, i) => <Svg key={`roomsvg:${s}:${i}`} source={r.source} alt={r.alt} isInteractive />),
+        <Box key={`opens:${s}`} flexDirection={row} flexWrap="wrap" gap={0}>
           {members.map((a, i) => {
             const lit = selected?.id === a.id || focused?.id === a.id
             return <Button key={`open:${a.id}`} plain dimColor={!lit} hover={{ dimColor: false }} label={String(i + 1)} onPress={() => openAgent(a.id)} />
@@ -850,8 +891,9 @@ export function registerUi(on: On): void {
       const smallText = !compact && titleBudget - cellWidth(titleText) > cellWidth(small) + 4 ? small : ''
       // the desktop's header line holds only 📌 and the counts: the title is drawn in the room SVG
       // (fitted by px from its end, RTL-correct), so the line never wraps or strands a 💬
+      // the desktop packs its rooms (the SVG row has its own padding; the numbers row separates them)
       return (
-        <Box key={`room:${s}`} flexDirection="column" marginTop={1}>
+        <Box key={`room:${s}`} flexDirection="column" marginTop={desktop ? 0 : 1}>
           <Box flexDirection={row} justifyContent="space-between" gap={1}>
             <Box flexDirection={row} gap={1}>
               <Button key={`pin:${s}`} plain dimColor={!pinOn} label={pinOn ? '📌' : '○'} onPress={() => togglePin(s)} />

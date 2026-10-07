@@ -25,8 +25,8 @@
 // Status of a live agent (liveStatus, the port of Python compute_status with
 // closed=false — the current conversation is open by definition):
 //   1. engine_status completed/failed/killed, or a result present → 'done'
-//      (failed/killed draw ❌ in the ui: engine_status is not in the payload, so
-//      the ui reads it from the live map).
+//      (failed/killed set `failed` on the merged agent → ❌ in the ui; the pane never
+//      reads the live map itself).
 //   2. in flight (engine says running AND a tool was dispatched at some point —
 //      Python's "last assistant dispatched a tool / last record is a tool_result")
 //      and silent <= IN_FLIGHT_MAX_SEC → 'running' (a long Bash is not "idle").
@@ -273,6 +273,8 @@ function liveToAgent(a: LiveAgent, now: number, sessionId: string, scan: Agent |
     truncated,
     // live wins when agent.spawn named a model; else the transcript's latest assistant record
     model: a.model || scan?.model || '',
+    // ❌ as the engine reports it (the pane draws it from the payload, never from the live map)
+    ...(a.engine_status === 'failed' || a.engine_status === 'killed' ? { failed: true } : {}),
   }
 }
 

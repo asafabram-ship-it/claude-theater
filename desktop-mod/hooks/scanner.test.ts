@@ -932,6 +932,46 @@ test("scanAll: every agent carries `model` — '' when the transcript names none
   expect(byId(o.agents, 'sess-aaaa-1111').model).toBe('')
 })
 
+test("the lead's model is read RELIABLY from the session file's tail: a conversation without subagents gets it when its file grows, one read, throttled, oversized through io.tail", async () => {
+  resetScannerCaches()
+  const fs = office()
+  const f = `${PROJ}/sess-ffff-6666.jsonl`
+  // a lonely open chat: no Agent spawns (no name map wanted), no assistant record yet
+  fs.put(f, parentTranscript('sess-ffff-6666', 'Lonely chat.', []), NOW - 2 * MIN)
+  fs.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
+  const io = fs.io()
+  expect(byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666').model).toBe('')
+  // the model answers: an assistant record naming it lands in the file (topic/cwd are settled, so no
+  // other read wants the file) → the next scan reads its TAIL once and the lead carries the model
+  const answer = (model: string) => JSON.stringify({ type: 'assistant', sessionId: 'sess-ffff-6666', message: { model, content: [{ type: 'text', text: 'hi' }] } }) + '\n'
+  fs.put(f, fs.files.get(f)!.text + answer('claude-opus-5-5'), NOW + 2000)
+  const reads = fs.reads.length
+  expect(byId((await scanAll(io, NOW + 3000)).agents, 'sess-ffff-6666').model).toBe('claude-opus-5-5')
+  expect(fs.reads.slice(reads)).toEqual([f])
+  // unchanged file: no read at all
+  expect(byId((await scanAll(io, NOW + 4500)).agents, 'sess-ffff-6666').model).toBe('claude-opus-5-5')
+  expect(fs.reads.slice(reads)).toEqual([f])
+  // a chatty lead is not re-read every tick: a switch within GLOB_TTL_SEC of the last tail read waits for it
+  fs.put(f, fs.files.get(f)!.text + answer('claude-sonnet-5-5'), NOW + 5000)
+  expect(byId((await scanAll(io, NOW + 6000)).agents, 'sess-ffff-6666').model).toBe('claude-opus-5-5')
+  expect(fs.reads.slice(reads)).toEqual([f])
+  expect(byId((await scanAll(io, NOW + 10_000)).agents, 'sess-ffff-6666').model).toBe('claude-sonnet-5-5')
+  expect(fs.reads.slice(reads)).toEqual([f, f])
+  // every lead of the office carries a string model; the ones whose files name none stay ''
+  for (const a of (await scanAll(io, NOW + 10_000)).agents.filter(x => x.is_session)) expect(typeof a.model).toBe('string')
+  // an OVERSIZED conversation: no whole read possible → the tail closure finds the model; without it ''
+  resetScannerCaches()
+  const fs2 = office()
+  fs2.put(f, parentTranscript('sess-ffff-6666', 'Huge chat.', []) + answer('claude-fable-5-1'), NOW - MIN, FS_READ_LIMIT + 1)
+  fs2.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
+  const tails: string[] = []
+  const withTail = fs2.io({ tail: async (path, bytes) => { tails.push(path); return fs2.files.get(path)!.text.slice(-bytes) } })
+  expect(byId((await scanAll(withTail, NOW)).agents, 'sess-ffff-6666').model).toBe('claude-fable-5-1')
+  expect(tails).toEqual([f])
+  resetScannerCaches()
+  expect(byId((await scanAll(fs2.io(), NOW)).agents, 'sess-ffff-6666').model).toBe('')
+})
+
 test('demoPayload: every demo agent names a plausible model', async () => {
   const p = demoPayload(NOW, 7)
   for (const a of p.agents) expect(a.model).toMatch(/^claude-(opus|sonnet|haiku|fable)-\d/)

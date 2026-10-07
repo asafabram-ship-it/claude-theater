@@ -18,10 +18,15 @@
 //                   (nothing answers it in a test harness, or a name clash)
 //                   never stops the office from scanning.
 //   poll            while the pane is up: scanAll(scanIo($)) → liveAged
-//                   ($.agent.list()) → mergeLive → $.state payload (+ the
-//                   "🟢 N · " working count in the pane title, PAGE's
-//                   document.title); the ⭐/chime "finish beat" runs in ui.tsx's
-//                   render hook (a plugin never sees its own state.set).
+//                   ($.agent.list()) → mergeLive → $.state payload ONLY IF what
+//                   the pane draws changed (renderKey: the flicker guard — a
+//                   state write redraws the pane and a redraw re-creates the
+//                   desktop's Svg frames), scanError only on change, `tick`
+//                   every poll (read by the text surfaces alone, for their
+//                   mm:ss) (+ the "🟢 N · " working count in the pane title,
+//                   PAGE's document.title, only when N changes); the ⭐/chime
+//                   "finish beat" runs in ui.tsx's render hook (a plugin never
+//                   sees its own state.set).
 //                   While the pane is closed (never opened, or closed by the
 //                   person) the files are NOT scanned — PAGE polled only while
 //                   the panel was visible — only the live map is aged so the
@@ -67,7 +72,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive } from './live'
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { paneTitle, registerUi, workingCount } from './ui'
+import { paneTitle, registerUi, renderKey, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -77,6 +82,7 @@ const prefsAtom = atom({ plugin: 'agent-theater', key: 'prefs' } as const, DEFAU
 const viewAtom = atom({ plugin: 'agent-theater', key: 'view' } as const, DEFAULT_VIEW)
 const paneOpenedAtom = atom({ plugin: 'agent-theater', key: 'paneOpened' } as const, false)
 const scanErrorAtom = atom({ plugin: 'agent-theater', key: 'scanError' } as const, null)
+const tickAtom = atom({ plugin: 'agent-theater', key: 'tick' } as const, 0)
 
 /** Is the office pane open (and the one shown) on some surface? One cheap round trip; false when unanswerable. */
 async function paneIsUp($: EngineInterface): Promise<boolean> {
@@ -198,6 +204,8 @@ function scanIo($: EngineInterface): ScanIo {
 let polling = false
 /** The working count last written into the pane title (PAGE's document.title); undefined until the first poll. */
 let lastRun: number | undefined
+/** renderKey of the payload last published, at its publish time; undefined until the first publish (and after a hot reload: one publish). */
+let lastKey: string | undefined
 
 /**
  * One poll. Pane up: scan the files (or the demo cast), age + merge this
@@ -227,10 +235,24 @@ export async function poll($: EngineInterface): Promise<void> {
     if (!scanned) return
     const { error, ...payload } = scanned
     const merged = mergeLive(payload, aged, sessionId, now)
-    // Never roll the office back: a slower, older scan loses to a newer publish.
-    const published = await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
-    await update($, scanErrorAtom, () => error ?? null)
-    const run = workingCount(published)
+    // THE FLICKER GUARD. Every $.state.set redraws the pane, and a redraw
+    // re-creates the desktop's interactive Svg frames (their animations restart:
+    // the flicker), so the office is published ONLY when what it draws changed:
+    // renderKey (ui.tsx) projects a payload at `now` onto what is drawn —
+    // minute-resolution clocks, the ⭐ ids still inside their window (the beat's
+    // view.justFinished), never scanned_ms or raw timestamps. The text
+    // surfaces' mm:ss tick from `tick` instead, which the desktop never reads.
+    const key = renderKey(merged, now, view.justFinished)
+    // (the second test: what is IN state draws differently — a hook beneath rewrote the value, or a reload)
+    if (key !== lastKey || renderKey(await read($, payloadAtom), now, view.justFinished) !== key) {
+      // Never roll the office back: a slower, older scan loses to a newer publish.
+      await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
+      lastKey = key
+    }
+    const curError = await read($, scanErrorAtom)
+    if ((error ?? null) !== curError) await update($, scanErrorAtom, () => error ?? null)
+    await update($, tickAtom, () => now)
+    const run = workingCount(merged)
     if (run !== lastRun) {
       // PAGE: document.title = (run ? "🟢 N · " : "") + docTitle, on every poll.
       // An open id is retitled in place (never a second instance); no `focus`.

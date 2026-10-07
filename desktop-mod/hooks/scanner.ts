@@ -674,18 +674,18 @@ export function parentSessionFile(agentPath: string, sessionId: string): string 
 type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo>; notices: Map<string, number | null> }
 type ProjectCacheEntry = { mtimeMs: number; oversized: boolean; cwd: string }
 type SessionCacheEntry = { mtimeMs: number; oversized: boolean; topic: string; cwd: string }
-type ModelCacheEntry = { mtimeMs: number; model: string }
+type ModelCacheEntry = { mtimeMs: number; model: string; /** when the tail was last read for it (ms; 0 = noted from a read made anyway) */ at: number }
 
 const NAME_CACHE = new Map<string, NameCacheEntry>() // parent file → Agent/Task prompt → {description, subagent_type}
 const PROJECT_CACHE = new Map<string, ProjectCacheEntry>() // parent file → the conversation's real working dir
 const SESSION_CACHE = new Map<string, SessionCacheEntry>() // session file → (topic, cwd)
 /**
- * session file → the lead's model (latest assistant record). Filled
- * OPPORTUNISTICALLY: whenever a scan reads the whole session file anyway
+ * session file → the lead's model (latest assistant record). Read by
+ * sessionModelFor (the file's tail, mtime-cached, throttled) and also filled
+ * opportunistically whenever a scan reads the whole session file anyway
  * (nameMapFor for a parent with subagents, sessionSummary's head read on a
- * file that fits) — never a read of its own, so a settled lead without
- * subagents keeps the model seen at its last read. Mirrors the "no extra file
- * reads" rule of projectCwdFor/sessionSummary.
+ * file that fits), so the dedicated tail read is skipped while that mtime is
+ * current. Evicted with the session (scanSessions).
  */
 const SESSION_MODEL_CACHE = new Map<string, ModelCacheEntry>()
 
@@ -695,12 +695,29 @@ function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | 
   const cached = SESSION_MODEL_CACHE.get(sessionFile)
   if (cached && cached.mtimeMs === mtimeMs) return
   const model = parseLastModel(whole)
-  SESSION_MODEL_CACHE.set(sessionFile, { mtimeMs, model: model || cached?.model || '' })
+  SESSION_MODEL_CACHE.set(sessionFile, { mtimeMs, model: model || cached?.model || '', at: 0 })
 }
 
-/** The lead's model as last seen ("" when the session file was never read whole). */
-export function sessionModelFor(sessionFile: string): string {
-  return SESSION_MODEL_CACHE.get(sessionFile)?.model ?? ''
+/**
+ * The room lead's model, read RELIABLY (not only when some other read of the
+ * session file happened to fetch its text): the latest assistant
+ * `message.model` in the file's TAIL — readTail: the whole file when it fits
+ * $.fs.read, else its last TAIL_MAX_BYTES through the optional `io.tail`
+ * closure (an oversized conversation degrades to "" without it, as the other
+ * oversized reads do). Cached by mtime; a conversation that keeps growing is
+ * re-read at most every GLOB_TTL_SEC (as an oversized transcript's tail is),
+ * so a 1.5 s poll never re-reads a chatty lead every tick; a tail that names
+ * no model keeps the last known one. A read made anyway (noteSessionModel:
+ * the name map, the summary's head) is reused when its mtime is current.
+ */
+export async function sessionModelFor(io: ScanIo, sessionFile: string, st: FsStat, now: number): Promise<string> {
+  const cached = SESSION_MODEL_CACHE.get(sessionFile)
+  if (cached && (cached.mtimeMs === st.mtimeMs || now - cached.at < GLOB_TTL_SEC * 1000)) return cached.model
+  const read = await readTail(io, sessionFile, st.size)
+  const model = read.text === null ? '' : parseLastModel(read.text)
+  const entry: ModelCacheEntry = { mtimeMs: st.mtimeMs, model: model || cached?.model || '', at: now }
+  SESSION_MODEL_CACHE.set(sessionFile, entry)
+  return entry.model
 }
 
 /** Python name_map_for's parse: every Agent/Task tool_use → first spawn of a prompt wins. */
@@ -1608,7 +1625,7 @@ async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<st
       closed,
       is_workflow: false,
       truncated: false,
-      model: sessionModelFor(path),
+      model: await sessionModelFor(io, path, st, now),
       topic,
     })
   }

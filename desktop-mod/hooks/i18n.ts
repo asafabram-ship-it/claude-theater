@@ -127,6 +127,14 @@ export function activityLabel(a: Pick<Agent, 'status' | 'phase' | 'tool'>, lang:
 /** Model families the label names (lower-case id token → display name). */
 const MODEL_FAMILIES: Readonly<Record<string, string>> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' }
 
+/** The family colour token of a model id: 'opus' | 'sonnet' | 'haiku' | 'fable', or 'other' (an unknown family, or ""). */
+export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'other'
+export function modelFamily(model: string): ModelFamily {
+  const m = /^(?:claude-)?([a-z]+)/i.exec((model ?? '').trim())
+  const fam = (m?.[1] ?? '').toLowerCase()
+  return fam === 'opus' || fam === 'sonnet' || fam === 'haiku' || fam === 'fable' ? fam : 'other'
+}
+
 /**
  * A short human name for a model id: "claude-opus-5-5" → "Opus 5.5",
  * "claude-haiku-4-5-20251001" → "Haiku 4.5", "claude-fable-5-1" → "Fable 5.1",

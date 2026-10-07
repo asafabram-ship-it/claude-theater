@@ -76,6 +76,13 @@ export type TheaterAgent = {
    * lead by session_summary(); absent on subagents.
    */
   topic?: string
+  /**
+   * Mod-only: true when the engine's events say this session's subagent
+   * failed or was killed (live.ts merges it in, so the pane never reads the
+   * live map itself — a tool.call of a live agent must not redraw the office).
+   * Absent otherwise.
+   */
+  failed?: boolean
 }
 
 /** What one scan of ~/.claude produces: the office. Replaces the server's JSON reply. */
@@ -165,6 +172,12 @@ declare module 'claude-code' {
       paneOpened: boolean
       /** The last scan error's message, drawn dim in the footer; null when the scan is healthy. */
       scanError: string | null
+      /**
+       * The poll's clock (ms), written every tick while the pane is up. Read
+       * ONLY by the text surfaces' pane (their mm:ss timers tick with it); the
+       * desktop never reads it, so a tick redraws no room SVG (no frame reload).
+       */
+      tick: number
     }
   }
 }

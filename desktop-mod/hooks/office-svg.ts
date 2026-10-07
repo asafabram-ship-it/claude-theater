@@ -7,8 +7,9 @@
 // keyframe animations, light/dark via prefers-color-scheme. This module draws
 // the VS Code extension's office (claude_theater.py PAGE: a character bobbing
 // at a desk, a glowing monitor in the tool-family colour, ⭐ just finished, ⏰
-// long-running, dim finished, grayscale idle) — one SVG per ROOM (roomSvg), a
-// fixed grid of ROOM_COLS tiles per row that scales to the pane's width.
+// long-running, dim finished, grayscale idle) — one SVG per ROW of a room
+// (roomRowSvgs over roomSvg), a fixed grid of `cols` tiles per row (the same
+// count for every room of a render) that scales to the pane's width.
 //
 // PURE: no `$`, no engine import, no state. Every string is XML-escaped here.
 //
@@ -54,7 +55,7 @@
 // header line, nav, footer) stays the engine's elements on every surface.
 
 import type { Agent, TheaterStatus } from './model'
-import { activityLabel, modelLabel, type Lang } from './i18n'
+import { activityLabel, modelFamily, modelLabel, type Lang } from './i18n'
 import { personaName } from './personas'
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,13 @@ export const FS_META = 10.5
 export const FS_TIMER = 10
 export const FS_HEAD = 24
 export const FS_NUM = 9
+/** The model pill's text. */
+export const FS_PILL = 9.5
+/** The model pill: height and x padding (viewBox px). */
+export const PILL_H = 12
+export const PILL_PAD = 5
+/** What the pill says when the model is unknown (the line is never dropped: every tile keeps one layout). */
+export const UNKNOWN_MODEL_PILL = '?'
 
 /** Tool colour family (PAGE toolFamily): the monitor's glow. */
 export type ToolFamily = '' | 'search' | 'read' | 'write' | 'cmd' | 'agent'
@@ -257,7 +265,14 @@ export function officeStyle(rtl: boolean): string {
   return `
 :root{--bg:#121a30;--bg2:#0e1426;--ink:#e8ecff;--ink2:#dde4ff;--dim:#aeb8df;--dimmer:#97a2cf;--ok:#7ee29a;--idle:#e6c07e;--done:#9fb0e6;--accent:#5b6ee0;--act:#9db0e6;--actdone:#8fc09a;--hover:rgba(255,255,255,.06);--chair:#2b3360;--chair2:#1b2342;--torso:#5566cc;--shadow:rgba(0,0,0,.5);--num:#2b3360;--numt:#e8ecff}
 @media (prefers-color-scheme: light){:root{--bg:#ffffff;--bg2:#f5f7fd;--ink:#1b2240;--ink2:#27314f;--dim:#4c577a;--dimmer:#5f6a8c;--ok:#1f8f4d;--idle:#9a6b12;--done:#3a4ea8;--accent:#3a4ad6;--act:#3a4ea8;--actdone:#1f8f4d;--hover:rgba(0,0,0,.05);--chair:#6b74a8;--chair2:#4d567f;--torso:#5566cc;--shadow:rgba(0,0,0,.28);--num:#dfe4f7;--numt:#1b2240}}
+:root{--m-opus:#7b5cf0;--m-sonnet:#2f7fe8;--m-haiku:#1fa876;--m-fable:#d9872b;--m-other:#3a4470;--m-ink:#ffffff;--m-other-ink:#e8ecff}
+@media (prefers-color-scheme: light){:root{--m-opus:#6a48e0;--m-sonnet:#1f66cc;--m-haiku:#13875e;--m-fable:#c06f12;--m-other:#cfd6ea;--m-ink:#ffffff;--m-other-ink:#1b2240}}
 svg{font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif}
+.pill{stroke:none}
+.pill.m-opus{fill:var(--m-opus)}.pill.m-sonnet{fill:var(--m-sonnet)}.pill.m-haiku{fill:var(--m-haiku)}.pill.m-fable{fill:var(--m-fable)}.pill.m-other{fill:var(--m-other)}
+.pillt{font-size:${FS_PILL}px;fill:var(--m-ink);font-weight:700;letter-spacing:.2px}
+.pillt.m-other{fill:var(--m-other-ink)}
+.done .pill{opacity:.7}
 .bg{fill:transparent;rx:10}
 .ws:hover .bg{fill:var(--hover)}
 .ws.selected .frame{stroke:var(--accent);stroke-width:1.5}
@@ -274,7 +289,6 @@ svg{font-family:"Segoe UI","Arial Hebrew",system-ui,sans-serif}
 .name{font-size:${FS_NAME}px;fill:var(--ink2);font-weight:600}
 .is-session .name{fill:var(--ink);font-weight:700}
 .act{font-size:${FS_META}px;fill:var(--act)}
-.model{font-size:${FS_META}px;fill:var(--dimmer)}
 .timer{font-size:${FS_TIMER}px;fill:var(--dimmer)}
 .badge{font-size:12px}
 .num{fill:var(--num);stroke:var(--accent);stroke-width:.75}
@@ -329,8 +343,7 @@ export function tileAlt(a: Agent, d: TileDecor, opts: TileOpts): string {
   const bits = [`${d.index ? `${d.index}. ` : ''}${a.emoji} ${name}`, activityLabel(a, opts.lang)]
   const el = fmtMinutes(d.elapsedMs, opts.lang)
   if (el) bits.push(el)
-  const model = opts.showModel === false ? '' : modelLabel(a.model)
-  if (model) bits.push(`🧠 ${model}`)
+  if (opts.showModel !== false) bits.push(`🧠 ${modelLabel(a.model) || UNKNOWN_MODEL_PILL}`)
   if (d.star) bits.push('⭐')
   if (d.longRunning) bits.push('⏰')
   if (d.failed) bits.push('❌')
@@ -344,7 +357,7 @@ export function tileAlt(a: Agent, d: TileDecor, opts: TileOpts): string {
  */
 export function tileTitle(a: Agent, d: TileDecor, opts: TileOpts): string {
   const name = capChars(opts.name ?? (a.role || personaName(a.persona_id, opts.lang)))
-  const model = opts.showModel === false ? '' : modelLabel(a.model)
+  const model = opts.showModel === false ? '' : modelLabel(a.model) || UNKNOWN_MODEL_PILL
   const el = fmtMinutes(d.elapsedMs, opts.lang)
   const line3 = [activityLabel(a, opts.lang), model ? `🧠 ${model}` : '', el, d.longRunning ? '⏰' : '', d.failed ? '❌' : '', d.star ? '⭐' : ''].filter(Boolean).join(' · ')
   return [`${d.index ? `${d.index}. ` : ''}${a.emoji} ${name}`, capChars(a.task_short), line3].filter(Boolean).join('\n')
@@ -353,6 +366,11 @@ export function tileTitle(a: Agent, d: TileDecor, opts: TileOpts): string {
 /**
  * The inner markup of one tile at origin (0,0), TILE_W × TILE_H: a `<g>` with
  * the status classes. Shared by agentTileSvg (one per SVG) and roomSvg (many).
+ * Under the name sits the MODEL PILL (`.pill.m-<family>` + `.pillt`): a
+ * coloured capsule per family — Opus violet, Sonnet blue, Haiku green, Fable
+ * amber, anything else (and "?" for an unknown model) neutral — readable in
+ * light and dark; every tile has exactly one, so which model each agent runs
+ * on is read at a glance.
  */
 export function tileGroup(a: Agent, d: TileDecor, opts: TileOpts, x = 0, y = 0): string {
   const lang = opts.lang
@@ -361,13 +379,19 @@ export function tileGroup(a: Agent, d: TileDecor, opts: TileOpts, x = 0, y = 0):
   const cx = TILE_W / 2
   const name = opts.name ?? (a.role || personaName(a.persona_id, lang))
   const activity = activityLabel(a, lang)
-  const model = opts.showModel === false ? '' : modelLabel(a.model)
+  // the model pill: ALWAYS drawn (a "?" neutral pill when unknown) so every tile keeps one layout;
+  // its text is never cut away — only the name and the activity are fitted
+  const showPill = opts.showModel !== false
+  const modelText = modelLabel(a.model) || UNKNOWN_MODEL_PILL
+  const family = modelLabel(a.model) ? modelFamily(a.model) : 'other'
   const el = fmtMinutes(d.elapsedMs, lang)
   const timer = el ? (d.longRunning ? '⏰ ' : '') + el : d.longRunning ? '⏰' : ''
   const maxPx = TILE_W - 8
   const nameT = escapeXml(fitText(name, maxPx, FS_NAME))
   const actT = escapeXml(fitText(activity, maxPx, FS_META))
-  const modelT = model ? escapeXml(fitText(`🧠 ${model}`, maxPx, FS_META)) : ''
+  const pillRaw = fitText(modelText, maxPx - 2 * PILL_PAD, FS_PILL)
+  const pillT = escapeXml(pillRaw)
+  const pillW = Math.min(maxPx, Math.ceil(textPx(pillRaw, FS_PILL)) + 2 * PILL_PAD)
   const title = escapeXml(tileTitle(a, d, opts))
   const cls = tileClasses(a, d)
   // corner badges: start corner the number badge then 💬 (lead); end corner ⭐ / ❌ (inset-inline-end flips under RTL)
@@ -400,11 +424,15 @@ export function tileGroup(a: Agent, d: TileDecor, opts: TileOpts, x = 0, y = 0):
     `<circle class="hand r" cx="${cx + 16}" cy="56" r="4"/>`,
     `</g>`,
   ].join('')
+  // lines: name 82 · model pill 85–97 (text 94) · activity 108 · timer 118
   const text = [
     `<text class="name" x="${cx}" y="82" text-anchor="middle" direction="${dir}" unicode-bidi="embed">${nameT}</text>`,
-    `<text class="act" x="${cx}" y="94" text-anchor="middle" direction="${dir}" unicode-bidi="embed">${actT}</text>`,
-    modelT ? `<text class="model" x="${cx}" y="105" text-anchor="middle" direction="${dir}" unicode-bidi="embed">${modelT}</text>` : '',
-    timer ? `<text class="timer" x="${cx}" y="${modelT ? 116 : 105}" text-anchor="middle" direction="ltr" unicode-bidi="embed">${escapeXml(timer)}</text>` : '',
+    showPill
+      ? `<rect class="pill m-${family}" x="${(cx - pillW / 2).toFixed(1)}" y="85" width="${pillW}" height="${PILL_H}" rx="${PILL_H / 2}"/>` +
+        `<text class="pillt m-${family}" x="${cx}" y="94" text-anchor="middle" direction="ltr" unicode-bidi="embed">${pillT}</text>`
+      : '',
+    `<text class="act" x="${cx}" y="${showPill ? 108 : 94}" text-anchor="middle" direction="${dir}" unicode-bidi="embed">${actT}</text>`,
+    timer ? `<text class="timer" x="${cx}" y="${showPill ? 118 : 105}" text-anchor="middle" direction="ltr" unicode-bidi="embed">${escapeXml(timer)}</text>` : '',
   ].join('')
   return (
     `<g class="${cls}" transform="translate(${x} ${y})" data-id="${escapeXml(a.id)}">` +
@@ -423,7 +451,15 @@ export function tileGroup(a: Agent, d: TileDecor, opts: TileOpts, x = 0, y = 0):
  */
 function svgOpen(width: number, height: number, lang: Lang, label: string, fixed: boolean): string {
   const rtl = lang === 'he'
-  const size = fixed ? `width="${width}" height="${height}" ` : 'preserveAspectRatio="xMidYMin meet" '
+  // SCALABLE (fixed=false): the width/height ATTRIBUTES give the markup an intrinsic size
+  // (the host sizes the Svg box as "the markup's own height at the drawn width" — a
+  // viewBox alone has no intrinsic size and a browser falls back to 300×150, which squeezed
+  // a two-row room to half the height of a one-row room), while the inline CSS makes the
+  // drawing FILL that box, so it scales with the pane through the viewBox. FIXED (a single
+  // tile at its own size): attributes alone.
+  const size = fixed
+    ? `width="${width}" height="${height}" `
+    : `width="${width}" height="${height}" style="width:100%;height:100%" preserveAspectRatio="xMidYMin meet" `
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" ${size}` +
     `xml:lang="${lang}" lang="${lang}" direction="${rtl ? 'rtl' : 'ltr'}" role="img" aria-label="${escapeXml(label)}">` +
@@ -451,6 +487,8 @@ export type RoomOpts = TileOpts & {
   nameOf?: (a: Agent) => string
   /** Tiles per row (default ROOM_COLS); the viewBox width follows, the SVG scales to the slot. */
   cols?: number
+  /** Agents NOT drawn (the caller cut them): a "+N" label after the last tile (roomRowSvgs' last row). */
+  extra?: number
 }
 
 /**
@@ -467,7 +505,7 @@ export function roomSvg(agents: readonly Agent[], decors: ReadonlyMap<string, Ti
   const cols = Math.max(1, Math.floor(opts.cols ?? ROOM_COLS))
   const width = roomWidth(cols)
   const shown = agents.slice(0, MAX_TILES_PER_ROOM_SVG)
-  const extra = agents.length - shown.length
+  const extra = agents.length - shown.length + Math.max(0, Math.floor(opts.extra ?? 0))
   const rows = Math.max(1, Math.ceil((shown.length + (extra > 0 ? 1 : 0)) / cols))
   const headH = opts.title ? ROOM_HEAD_H : 0
   const height = headH + ROOM_PAD + rows * TILE_H + (rows - 1) * TILE_GAP + ROOM_PAD
@@ -477,12 +515,16 @@ export function roomSvg(agents: readonly Agent[], decors: ReadonlyMap<string, Ti
   }
   const parts: string[] = []
   if (opts.title) {
+    // The title's BEGINNING sits at the start edge (right under RTL, left under LTR) and the
+    // text runs toward the far edge, cut from its END by fitText ("…" last). SVG's text-anchor
+    // follows the text's own direction: for an rtl text `start` IS its right end — so the
+    // anchor is "start" at the start edge in both directions (an rtl "end" at the right edge
+    // ran the whole title off the right side of the viewBox: only its tail stayed visible).
     const tx = rtl ? width - 8 : 8
-    const anchor = rtl ? 'end' : 'start'
     const smallT = opts.small ? fitText(opts.small, width * 0.3, FS_META) : ''
     const smallPx = smallT ? textPx(smallT, FS_META) + 8 : 0
     const titleT = escapeXml(fitText(`💬 ${opts.title}`, width - 16 - smallPx, FS_NAME))
-    parts.push(`<text class="room-title" x="${tx}" y="14" text-anchor="${anchor}" direction="${rtl ? 'rtl' : 'ltr'}" unicode-bidi="embed">${titleT}</text>`)
+    parts.push(`<text class="room-title" x="${tx}" y="14" text-anchor="start" direction="${rtl ? 'rtl' : 'ltr'}" unicode-bidi="embed">${titleT}</text>`)
     if (smallT) {
       const sx = rtl ? 8 : width - 8
       parts.push(`<text class="room-small" x="${sx}" y="14" text-anchor="${rtl ? 'start' : 'end'}" direction="ltr">${escapeXml(smallT)}</text>`)
@@ -504,6 +546,46 @@ export function roomSvg(agents: readonly Agent[], decors: ReadonlyMap<string, Ti
     .filter(Boolean).join(' | ')
   const source = svgOpen(width, height, lang, alt, false) + parts.join('') + '</svg>'
   return { source, width, height, alt }
+}
+
+/** The viewBox height of one row SVG (no title) and of the first row (title row included). */
+export const ROW_H = ROOM_PAD + TILE_H + ROOM_PAD
+export const ROW_H_TITLED = ROOM_HEAD_H + ROW_H
+
+/**
+ * A room as ONE SVG PER ROW of `cols` tiles — every row the same viewBox
+ * width (and the same height, the first row's title band apart), so however
+ * the host fits a drawing into its box every row of every room scales alike
+ * (one tall SVG per room was fitted by its height: a two-row room drew its
+ * tiles at half the size of a one-row room). The title (and `small`) go on
+ * the first row; tiles are numbered 1..N across the rows (decor.index when
+ * the caller gives one); past MAX_TILES_PER_ROOM_SVG agents the last row
+ * ends in "+N". The pane stacks the rows under the room's header line.
+ */
+export function roomRowSvgs(agents: readonly Agent[], decors: ReadonlyMap<string, TileDecor> | Record<string, TileDecor>, opts: RoomOpts): SvgOut[] {
+  const cols = Math.max(1, Math.floor(opts.cols ?? ROOM_COLS))
+  const shown = agents.slice(0, MAX_TILES_PER_ROOM_SVG)
+  const extra = agents.length - shown.length
+  const decorOf = (id: string, i: number): TileDecor => {
+    const d = (decors instanceof Map ? decors.get(id) : (decors as Record<string, TileDecor>)[id]) ?? {}
+    return d.index ? d : { ...d, index: i + 1 }
+  }
+  const out: SvgOut[] = []
+  const rows = Math.max(1, Math.ceil((shown.length + (extra > 0 ? 1 : 0)) / cols))
+  for (let r = 0; r < rows; r++) {
+    const chunk = shown.slice(r * cols, (r + 1) * cols)
+    const rowDecors: Record<string, TileDecor> = {}
+    chunk.forEach((a, j) => { rowDecors[a.id] = decorOf(a.id, r * cols + j) })
+    const last = r === rows - 1
+    out.push(roomSvg(chunk, rowDecors, {
+      ...opts,
+      cols,
+      title: r === 0 ? opts.title : '',
+      small: r === 0 ? opts.small : '',
+      extra: last ? extra : 0,
+    }))
+  }
+  return out
 }
 
 /** True when a source fits SvgProps.source. */

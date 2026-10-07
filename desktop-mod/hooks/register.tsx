@@ -400,5 +400,31 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // The band above the prompt: a way back into the office without a slash
+  // command. Shown only while this conversation has subagents working and the
+  // pane is not on screen; pressing it opens (or raises) the pane. The count is
+  // the live map's (engine events), since the file scan rests while the pane is
+  // closed.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    try {
+      if (e.props.hasSurvey) return next(e)
+      const live = await read($, liveAtom)
+      const working = Object.values(live).filter(a => a.engine_status === 'running').length
+      if (working === 0 || (await paneIsUp($))) return next(e)
+      const prefs = await read($, prefsAtom)
+      const label = prefs.lang === 'he'
+        ? `🎭 התיאטרון · ${working} ${working === 1 ? 'עובד' : 'עובדים'} — לחצו לפתיחה`
+        : `🎭 Theater · ${working} working — press to open`
+      const { Box, Button } = $.ui.resolve(e)
+      return (
+        <Box>
+          <Button key="open-theater" label={label} onPress={() => openPane($)} />
+        </Box>
+      )
+    } catch {
+      return next(e)
+    }
+  }).catch(($, e, next) => next(e))
+
   registerUi(on)
 }

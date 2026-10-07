@@ -1,0 +1,7 @@
+{
+  "name": "agent-theater",
+  "version": "0.1.0",
+  "description": "Claude Theater as a mod: a live office of your Claude Code subagents, one room per open conversation, 48 personas, Hebrew/English, inside the Code tab.",
+  "author": { "name": "Asaf Abramzon", "email": "asafabram@gmail.com" },
+  "types": "./types/index.d.ts"
+}

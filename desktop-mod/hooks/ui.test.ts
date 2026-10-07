@@ -16,6 +16,7 @@ import {
   CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   TILE_MAX_PER_ROW, minuteClock, renderKey, roomCols, tilesPerRow,
+  splitSentence,
 } from './ui'
 import { ROOM_COLS, ROW_H, ROW_H_TITLED, roomWidth } from './office-svg'
 
@@ -208,6 +209,13 @@ test('layout budget: cell widths, end-clipping with an ellipsis, the card grid p
 })
 
 type On = Parameters<typeof mock.store>[0]
+
+/** The pane's message (empty office, no match): an engine Text on the text surfaces, a line of the message SVG on the desktop. */
+async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Promise<{ props: Record<string, unknown> } | undefined> }, surface: string, re: RegExp): Promise<boolean> {
+  if (surface !== 'desktop') return (await ui.find({ type: 'Text', text: re })) !== undefined
+  const svg = await ui.find({ type: 'Svg' })
+  return svg !== undefined && re.test(String(svg.props.source))
+}
 
 /** An in-memory ~/.claude for `beneath`: path → text + mtime (sizes are the text's length). */
 type MemFiles = Map<string, { text: string; mtimeMs: number }>
@@ -555,7 +563,7 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
     expect(await ui.find({ key: 'open:b1' })).toBeDefined()
     expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
     await ui.input({ key: 'search', text: 'zzz-nothing' })
-    expect(await ui.find({ type: 'Text', text: /אין סוכנים שתואמים/ })).toBeDefined()
+    expect(await messageOf(ui, surface, /אין סוכנים שתואמים/)).toBe(true)
     await ui.input({ key: 'search', text: '', kind: 'change' })
     expect(await ui.find({ key: 'open:a1' })).toBeDefined()
     // help popover
@@ -746,9 +754,9 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect(captured.writes.view).toBe(writes0.view)
   expect(renders()).toBe(desktop0) // the desktop pane was NOT drawn again
   expect((await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))).toEqual(before)
-  // ...while the tick was written every poll — it reaches the TEXT surfaces alone: a terminal pane redraws on each
-  // (its mm:ss advance), the desktop never subscribes to it
-  expect(captured.writes.tick).toBe(writes0.tick + 5)
+  // THE TICK GUARD: with only the desktop drawing the pane, not even the tick is written (the desktop app
+  // redraws the pane on any write of the plugin's) — the idle desktop office sees NO write at all
+  expect(captured.writes.tick).toBe(writes0.tick)
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
   const terminal0 = renders()
   const clockText = async () => (await term.find({ type: 'Text', text: /^\d\d:\d\d$/ }))?.text
@@ -870,7 +878,7 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(1500)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ type: 'Text', text: /The office is empty/ })).toBeDefined()
+  expect(await messageOf(ui, 'desktop', /The office is empty/)).toBe(true)
   await ui.press({ key: 'watchDemo' })
   // (the desktop's room titles live in the room SVGs, never in an engine Text)
   expect(await roomSvgOf(ui, '💬 Ship the v2 config migration')).toBeDefined()
@@ -887,6 +895,26 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   expect(await ui.find({ key: 'open:demo-newcomer-hh' })).toBeDefined()
   // exit restores the real (empty) office
   await ui.press({ key: 'demo' })
-  expect(await ui.find({ type: 'Text', text: /The office is empty/ })).toBeDefined()
+  expect(await messageOf(ui, 'desktop', /The office is empty/)).toBe(true)
   await ui.unmount()
+})
+
+test('DESKTOP RTL: the empty office is an RTL SVG message (the desktop Text cannot be set right-to-left); the search placeholder drops its trailing ellipsis; the terminal keeps its Text lines', async ($, on) => {
+  expect(splitSentence('הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:')).toEqual(['הפעילו סוכן ב-Claude Code', 'או הציצו איך נראה משרד עמוס:'])
+  beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
+  const src = String((await desk.find({ type: 'Svg' }))?.props?.source)
+  expect(src).toMatch(/<text class="room-title"[^>]*text-anchor="middle" direction="rtl"[^>]*>המשרד ריק<\/text>/)
+  expect(src).toMatch(/direction="rtl"[^>]*>הפעילו סוכן ב-Claude Code<\/text>/)
+  expect(src).toMatch(/direction="rtl"[^>]*>או הציצו איך נראה משרד עמוס:<\/text>/)
+  expect(await desk.find({ type: 'Text', text: /Claude Code/ })).toBeUndefined()
+  expect(await desk.find({ key: 'watchDemo' })).toBeDefined()
+  expect((await desk.find({ key: 'search' }))?.props?.placeholder).toBe('🔍 חיפוש סוכנים')
+  await desk.unmount()
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
+  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  expect(await term.find({ type: 'Text', text: /^הפעילו סוכן ב-Claude Code - או/ })).toBeDefined()
+  expect((await term.find({ key: 'search' }))?.props?.placeholder).toBe('🔍 חיפוש סוכנים…')
+  await term.unmount()
 })

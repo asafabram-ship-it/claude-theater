@@ -107,7 +107,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
 import type { Agent, Payload, Prefs, View } from './model'
-import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS, roomRowSvgs, type TileDecor } from './office-svg'
+import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS, messageSvg, roomRowSvgs, type TileDecor } from './office-svg'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
 
@@ -154,6 +154,25 @@ export const COLS_STEP = 40
 export const TILE_MAX_PER_ROW = 8
 /** The finish poll's hop + ⭐ pop: `justdone` is passed while the star is younger than this (under POLL_MS: one poll). */
 export const TILE_HOP_MS = 1000
+
+/** A long sentence split at its " - " / " — " so each part is its own short line (the desktop empty state). */
+export function splitSentence(s: string): string[] {
+  return s.split(/\s[-—]\s/).map(x => x.trim()).filter(Boolean)
+}
+
+/**
+ * THE TICK GUARD. `tick` (the text surfaces' mm:ss clock) is written by the
+ * poll only while a TEXT surface has drawn the pane lately: the desktop app
+ * redraws the pane on a write of any value of the plugin, so a per-poll tick
+ * with only the desktop open WAS the flicker. Set by the render hook.
+ */
+let textSurfaceDrawnAt = -Infinity
+/** How long a text surface's last draw keeps the tick running (it redraws on every tick, so a live one renews it). */
+export const TEXT_SURFACE_TTL_MS = 10_000
+/** Should the poll write the tick at `now`? */
+export function textSurfaceActive(now: number): boolean {
+  return now - textSurfaceDrawnAt < TEXT_SURFACE_TTL_MS
+}
 
 /** The pane title shown in the tab: PAGE document.title = (run ? "🟢 N · " : "") + docTitle. */
 export function paneTitle(lang: Lang, run = 0): string {
@@ -642,9 +661,12 @@ export function registerUi(on: On): void {
     const roomDone = await loadRoomDone($)
     // the clock is the engine's; a host without one (a bare test) falls back to the module's
     const now = await $.clock.now().catch(() => Date.now())
+    if (!desktop) textSurfaceDrawnAt = now
     const lang = prefs.lang
     const L: Strings = I18N[lang]
     const rtl = dirOf(lang) === 'rtl'
+    // desktop + Hebrew: a column's short lines hug its right edge
+    const colAlign = desktop && rtl ? 'flex-end' : undefined
     const row = rtl ? 'row-reverse' : 'row'
     const width = Math.max(MIN_WIDTH, e.props.bodyColumns || 80)
     const compact = width < COMPACT_BELOW
@@ -717,7 +739,7 @@ export function registerUi(on: On): void {
           const { Input } = $.ui.resolve(e)
           return (
             <Box flexDirection={row}>
-              <Input key="search" placeholder={`🔍 ${L.searchPlaceholder}`} value={q} onInput={setSearch} onSubmit={setSearch} />
+              <Input key="search" placeholder={`🔍 ${desktop && rtl ? L.searchPlaceholder.replace(/…$/, '') : L.searchPlaceholder}`} value={q} onInput={setSearch} onSubmit={setSearch} />
             </Box>
           )
         })()
@@ -730,7 +752,7 @@ export function registerUi(on: On): void {
       [L.scMute, 'm'], [L.scLang, 'l'], [L.scDemo, 'd'], [L.scHelp, 'h'],
     ]
     const help = view.helpOpen && (
-      <Box key="help" flexDirection="column" borderStyle="round" paddingX={1}>
+      <Box key="help" flexDirection="column" alignItems={colAlign} borderStyle="round" paddingX={1}>
         <Box flexDirection={row} justifyContent="space-between">
           <Text bold>{L.helpTitle}</Text>
           <Button key="closeHelp" plain role="dismiss" label="✕" onPress={toggleHelp} />
@@ -756,7 +778,7 @@ export function registerUi(on: On): void {
       const model = modelLabel(a.model) || UNKNOWN_MODEL_PILL // the row is always there ("?" when unknown)
       const inner = width - 4
       return (
-        <Box key="drawer" flexDirection="column" borderStyle="double" paddingX={1}>
+        <Box key="drawer" flexDirection="column" alignItems={colAlign} borderStyle="double" paddingX={1}>
           <Box flexDirection={row} justifyContent="space-between" gap={1}>
             <Text bold>{clip(`${a.emoji} ${personaName(a.persona_id, lang)}`, inner - 10)}</Text>
             <Button key="close" hotkey="x" plain role="dismiss" label={compact ? '✕' : `✕ ${L.close}`} onPress={closeDrawer} />
@@ -919,6 +941,16 @@ export function registerUi(on: On): void {
       )
     })
 
+    // --- DESKTOP: a message as SVG text. The desktop lays every Text out left-to-right and refuses the
+    //     bidi marks that would fix it, so a Hebrew line holding Latin ("ב-Claude Code") or ending in
+    //     ":" came out scrambled; an SVG <text direction="rtl"> is ordered (and centered) correctly ---
+    const desktopMessage = (title: string, lines: readonly string[]) => {
+      if (e.surface !== 'desktop') return null
+      const { Svg } = $.ui.resolve(e)
+      const m = messageSvg(title, lines, lang)
+      return <Svg source={m.source} alt={m.alt} />
+    }
+
     // --- empty states (PAGE emptyHTML) ---
     const empty = order.length === 0 && (() => {
       const kind = emptyKind(q, all.length, showDone)
@@ -926,8 +958,12 @@ export function registerUi(on: On): void {
       return (
         <Box key="empty" flexDirection="column" alignItems="center" marginTop={1}>
           <Text>🏢</Text>
-          <Text bold wrap="wrap">{msg}</Text>
-          {kind === 'office' ? <Text dimColor wrap="wrap">{L.emptySub}</Text> : null}
+          {desktopMessage(msg, kind === 'office' ? splitSentence(L.emptySub) : []) ?? (
+            <Box flexDirection="column" alignItems="center">
+              <Text bold wrap="wrap">{msg}</Text>
+              {kind === 'office' ? <Text dimColor wrap="wrap">{L.emptySub}</Text> : null}
+            </Box>
+          )}
           {kind === 'office' ? <Button key="watchDemo" variant="primary" label={L.watchDemo} onPress={() => void setDemo($, true)} /> : null}
         </Box>
       )

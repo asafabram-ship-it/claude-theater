@@ -72,7 +72,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive } from './live'
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { paneTitle, registerUi, renderKey, workingCount } from './ui'
+import { paneTitle, registerUi, renderKey, textSurfaceActive, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -251,7 +251,9 @@ export async function poll($: EngineInterface): Promise<void> {
     }
     const curError = await read($, scanErrorAtom)
     if ((error ?? null) !== curError) await update($, scanErrorAtom, () => error ?? null)
-    await update($, tickAtom, () => now)
+    // the tick only while a text surface draws the pane (the TICK GUARD, ui.tsx): on the desktop
+    // any write of ours redraws the pane, so an idle desktop office must see no write at all
+    if (textSurfaceActive(now)) await update($, tickAtom, () => now)
     const run = workingCount(merged)
     if (run !== lastRun) {
       // PAGE: document.title = (run ? "🟢 N · " : "") + docTitle, on every poll.

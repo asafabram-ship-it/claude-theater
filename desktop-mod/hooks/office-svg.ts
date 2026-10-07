@@ -467,6 +467,29 @@ function svgOpen(width: number, height: number, lang: Lang, label: string, fixed
   )
 }
 
+/** The desktop message's width (viewBox units) and line heights. */
+export const MSG_W = 284
+const MSG_TITLE_H = 22
+const MSG_LINE_H = 17
+
+/**
+ * A short centered message (the empty office) as scalable SVG: a bold title
+ * and dim lines, each fitted to the width, in the language's direction —
+ * the desktop's own Text cannot be set right-to-left.
+ */
+export function messageSvg(title: string, lines: readonly string[], lang: Lang): SvgOut {
+  const dir = lang === 'he' ? 'rtl' : 'ltr'
+  const cx = MSG_W / 2
+  const height = MSG_TITLE_H + lines.length * MSG_LINE_H + 6
+  const parts = [svgOpen(MSG_W, height, lang, [title, ...lines].join(' '), false)]
+  parts.push(`<text class="room-title" x="${cx}" y="16" text-anchor="middle" direction="${dir}" unicode-bidi="embed">${escapeXml(fitText(title, MSG_W - 8, FS_NAME))}</text>`)
+  lines.forEach((line, i) => {
+    parts.push(`<text class="room-small" x="${cx}" y="${MSG_TITLE_H + 13 + i * MSG_LINE_H}" text-anchor="middle" direction="${dir}" unicode-bidi="embed">${escapeXml(fitText(line, MSG_W - 8, FS_META))}</text>`)
+  })
+  parts.push('</svg>')
+  return { source: parts.join(''), width: MSG_W, height, alt: capChars([title, ...lines].join(' — ')) }
+}
+
 /** One agent as a small animated tile (TILE_W × TILE_H) at its own size. */
 export function agentTileSvg(a: Agent, d: TileDecor, opts: TileOpts): SvgOut {
   const alt = tileAlt(a, d, opts)

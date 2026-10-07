@@ -34,3 +34,52 @@ export function personaName(personaId: number | undefined, lang: 'he' | 'en'): s
 export function personaEmoji(personaId: number | undefined): string {
   return (typeof personaId === 'number' ? PERSONA_EMOJI[personaId] : undefined) ?? PERSONA_EMOJI[0] ?? '🤖'
 }
+
+/** The slice of an agent `assignDistinctPersonas` reads and writes. */
+export type PersonaSeat = {
+  id: string
+  session_full: string
+  persona_id: number
+  emoji: string
+  is_session: boolean
+  start_ms: number | null
+}
+
+/**
+ * Python resolve_personas, the stateless half (a fresh process has no
+ * remembered seats): within a room (session_full, or the agent's own id when
+ * sessionless) the lead sits first, then agents oldest-first, and each takes
+ * the first free slot linear-probed from its hash base, so two agents of one
+ * room never share an avatar. Rooms larger than the cast reuse the base slot.
+ * Mutates `persona_id` / `emoji` in place and returns the same array.
+ * Used by the demo office; the scanner keeps its own (stateful) port.
+ */
+export function assignDistinctPersonas<A extends PersonaSeat>(agents: A[]): A[] {
+  const rooms = new Map<string, A[]>()
+  for (const a of agents) {
+    const key = a.session_full || a.id
+    const room = rooms.get(key)
+    if (room) room.push(a)
+    else rooms.set(key, [a])
+  }
+  const n = PERSONA_EMOJI.length
+  for (const members of rooms.values()) {
+    members.sort((x, y) =>
+      (x.is_session ? 0 : 1) - (y.is_session ? 0 : 1) ||
+      (x.start_ms ?? 0) - (y.start_ms ?? 0) ||
+      (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
+    const taken = new Set<number>()
+    for (const a of members) {
+      const base = ((a.persona_id % n) + n) % n
+      let slot = base
+      for (let k = 0; k < n; k++) {
+        const cand = (base + k) % n
+        if (!taken.has(cand)) { slot = cand; break }
+      }
+      taken.add(slot)
+      a.persona_id = slot
+      a.emoji = PERSONA_EMOJI[slot] ?? PERSONA_EMOJI[0] ?? '🤖'
+    }
+  }
+  return agents
+}

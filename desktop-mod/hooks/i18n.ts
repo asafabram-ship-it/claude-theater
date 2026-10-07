@@ -30,6 +30,7 @@ export type Strings = {
   emptyOffice: string; emptySub: string; watchDemo: string; demoLabel: string; exitDemo: string
   langHint: string; close: string; loading: string; helpTitle: string; helpHint: string
   scSearch: string; scFinished: string; scMove: string; scOpen: string; scClose: string
+  scMute: string; scLang: string; scDemo: string; scHelp: string; scPrev: string; scNext: string
   resultTruncated: string; searchPlaceholder: string; emptyNoMatch: string
   mute: string; unmute: string; finishedToast: string
   srResults: (n: number) => string; srNoMatch: string; srCleared: string; pin: string; unpin: string
@@ -39,6 +40,7 @@ export type Strings = {
   dAction: string; dTask: string; dResult: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
+  roomTitle: string; details: string; keysHint: string
   personas: readonly string[]; tools: Readonly<Record<string, string>>
 }
 
@@ -52,6 +54,8 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     loading: 'Loading…', helpTitle: 'Keyboard shortcuts', helpHint: 'Keyboard shortcuts',
     scSearch: 'Search', scFinished: 'Show / hide finished', scMove: 'Move between agents',
     scOpen: 'Open details', scClose: 'Close panel',
+    scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scHelp: 'This help',
+    scPrev: 'Previous agent', scNext: 'Next agent',
     resultTruncated: 'Result shortened — open the terminal for the full output',
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
     mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished',
@@ -66,6 +70,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
     oversizedN: n => `${n} transcript${n === 1 ? '' : 's'} over 4 MiB skipped`,
+    roomTitle: 'Conversation', details: 'Details', keysHint: 'focus the pane (ctrl+x tab) for the hotkeys',
     personas: PERSONAS_EN, tools: TOOLS_EN,
   },
   he: {
@@ -77,6 +82,8 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     loading: 'טוען…', helpTitle: 'קיצורי מקלדת', helpHint: 'קיצורי מקלדת',
     scSearch: 'חיפוש', scFinished: 'הצג / הסתר שהושלמו', scMove: 'מעבר בין סוכנים',
     scOpen: 'פתיחת פרטים', scClose: 'סגירת החלונית',
+    scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scHelp: 'העזרה הזו',
+    scPrev: 'הסוכן הקודם', scNext: 'הסוכן הבא',
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש.',
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',
@@ -91,6 +98,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי MCP',
     oversizedN: n => `${n} תמלילים מעל 4MiB דולגו`,
+    roomTitle: 'שיחה', details: 'פרטים', keysHint: 'למקשי הקיצור מקדו את החלונית (ctrl+x tab)',
     personas: PERSONAS_HE, tools: TOOLS_HE,
   },
 }

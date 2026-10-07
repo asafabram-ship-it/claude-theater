@@ -19,11 +19,20 @@
 //   help     the keyboard-shortcuts popover (PAGE renderHelp) while open
 //   drawer   the selected agent (PAGE fillDrawer): chips (status, subagent_type,
 //            duration/elapsed, tool), model, activity, task, result, "shortened"
-//   DESKTOP  (e.surface === 'desktop') each card is instead an animated SVG tile
-//            from office-svg.ts (character at a desk, 10–12 px texts, light/dark,
-//            walk-in / bob / hop / ⭐ pop) in a keyed Box with the plain Button
-//            'open:<id>' ("⋯") under it — the Svg is a leaf and Box has no onPress,
-//            so that Button is the press target; TILE_COLS per tile, tilesPerRow()
+//   DESKTOP  (e.surface === 'desktop') each ROOM is instead ONE animated SVG from
+//            office-svg.ts (roomSvg: title row + a fixed grid of roomCols() tiles
+//            per row — character at a desk, 10–12 px texts, light/dark, walk-in /
+//            bob / hop / ⭐ pop) with only a viewBox, so it scales to the pane's
+//            width. The Svg is a leaf and Box has no onPress, so under it sits one
+//            compact row of small numbered Buttons 'open:<id>' (label "1", "2", …)
+//            matching the number badge on each tile; the tile's <title> tooltip
+//            carries the full details. The engine's room header line keeps only
+//            📌 and the counts (the title is in the SVG: no wrapping, no lone 💬).
+//            STABLE SOURCE: the SVG markup is identical between polls unless
+//            something visible changed (the frame reloads — and every animation
+//            restarts — on each source change): elapsed time at minute resolution
+//            from a clock quantized to the wall-clock minute, the one-shot classes
+//            (entering, justdone) only on the poll that triggers them.
 //   rooms    one per conversation (session_full): pinned first 📌, then rooms with
 //            a running agent, then by last activity (PAGE's sort). Room header,
 //            one line: 📌/○ · 💬 topic-or-project (clipped from its end) · small
@@ -92,7 +101,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
 import type { Agent, LiveAgent, Payload, Prefs, View } from './model'
-import { TILE_W, WALK_IN_MS, agentTileSvg, type TileDecor } from './office-svg'
+import { ROOM_COLS, TILE_W, WALK_IN_MS, roomSvg, type TileDecor } from './office-svg'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
 
@@ -122,19 +131,20 @@ const DING_ASSET = 'sounds/done.wav'
 /** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
 const BURST_MS = 1050
 /**
- * DESKTOP: the office is drawn as SVG tiles (office-svg.ts), sized in CSS px,
- * inside Boxes sized in columns. The desktop's column width is not reported,
- * so this is a conservative lower bound (px per column): a tile's Box is
- * TILE_COLS wide and never narrower than its 96 px drawing. At 6 px/col a
- * ~45-column pane fits two tiles per row; a wider column only adds air.
+ * DESKTOP: the office is drawn as one scalable SVG per room (office-svg.ts).
+ * The desktop's column width is not reported, so this is a conservative lower
+ * bound (px per column) used only to decide how many tiles a row of a WIDE
+ * pane holds (roomCols): at 6 px/col a ~45-column pane keeps the default
+ * ROOM_COLS and a 140-column pane seats 8, so the scaled tiles stay about the
+ * same size on screen whatever the width.
  */
 export const DESKTOP_PX_PER_COL = 6
-/** Columns one SVG tile's Box takes on the desktop (TILE_W / DESKTOP_PX_PER_COL, rounded up). */
+/** Columns one tile would take on the desktop at scale 1 (TILE_W / DESKTOP_PX_PER_COL, rounded up). */
 export const TILE_COLS = Math.ceil(TILE_W / DESKTOP_PX_PER_COL)
 /** The widest desktop row (a very wide pane stays an office, not a strip). */
 export const TILE_MAX_PER_ROW = 8
-/** The label of the desktop tile's press target (the texts live in the SVG; this is the one engine-sized glyph). */
-export const TILE_OPEN_LABEL = '⋯'
+/** The finish poll's hop + ⭐ pop: `justdone` is passed while the star is younger than this (under POLL_MS: one poll). */
+export const TILE_HOP_MS = 1000
 
 /** The pane title shown in the tab: PAGE document.title = (run ? "🟢 N · " : "") + docTitle. */
 export function paneTitle(lang: Lang, run = 0): string {
@@ -401,10 +411,20 @@ export function gridFor(width: number): { perRow: number; cardW: number } {
   return { perRow, cardW }
 }
 
-/** DESKTOP tiles per row for a body of `width` columns: TILE_COLS each with a 1-column gutter, at least 1, at most TILE_MAX_PER_ROW. */
+/** DESKTOP tiles per row at scale 1 for a body of `width` columns: TILE_COLS each with a 1-column gutter, at least 1, at most TILE_MAX_PER_ROW. */
 export function tilesPerRow(width: number): number {
   const w = Math.max(MIN_WIDTH, width)
   return Math.max(1, Math.min(TILE_MAX_PER_ROW, Math.floor((w + 1) / (TILE_COLS + 1))))
+}
+
+/** DESKTOP: the room SVG's fixed grid — ROOM_COLS per row, more in a pane wide enough to seat more at scale 1 (so the scaled tiles never balloon). */
+export function roomCols(width: number): number {
+  return Math.max(ROOM_COLS, tilesPerRow(width))
+}
+
+/** DESKTOP: the clock the tiles are timed from — the wall-clock minute, so every room's timers tick (and its SVG reloads) together, once a minute. */
+export function minuteClock(now: number): number {
+  return Math.floor(now / 60_000) * 60_000
 }
 
 /**
@@ -738,23 +758,6 @@ export function registerUi(on: On): void {
       const done = a.status === 'done'
       const mark = isSelected ? '◉' : isFocused ? '▸' : '●'
       const timer = fmt(agentElapsed(a, now))
-      // --- DESKTOP: the animated SVG tile (name, activity, 🧠 model, timer, ⭐⏰❌💬 all drawn inside at 10–12 px)
-      //     + the one pressable element the API allows beside a leaf Svg: a plain Button keyed 'open:<id>'.
-      //     The keyed Box is a hover scope (lifts the dim Button); the tile's hop + ⭐ pop replace the confetti here.
-      if (desktop) {
-        const { Svg } = $.ui.resolve(e)
-        const decor: TileDecor = {
-          elapsedMs: agentElapsed(a, now), star, longRunning: isLongRunning(a, now), failed,
-          selected: isSelected, focused: isFocused, entering: entering.has(a.id),
-        }
-        const tile = agentTileSvg(a, decor, { lang, name })
-        return (
-          <Box key={`tile:${a.id}`} flexDirection="column" alignItems="center" width={TILE_COLS}>
-            <Svg source={tile.source} alt={tile.alt} width={tile.width} height={tile.height} isInteractive />
-            <Button key={`open:${a.id}`} plain dimColor={!isSelected && !isFocused} hover={{ dimColor: false }} label={TILE_OPEN_LABEL} onPress={() => openAgent(a.id)} />
-          </Box>
-        )
-      }
       // the lead's 💬 rides its name on the first line (never a glyph of its own anywhere)
       const nameLabel = clip(`${a.is_session ? `${LEAD_MARK} ` : ''}${a.emoji} ${name}`, innerW - cellWidth(timer) - 1 - (badges ? cellWidth(badges) + 1 : 0))
       const activity = activityLabel(a, lang)
@@ -764,7 +767,7 @@ export function registerUi(on: On): void {
       const line2 = joinParts([activity, subText, modelTag])
       const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
       const burst = bursting
-        ? e.surface === 'terminal' // (the desktop returned its tile above: its hop + ⭐ pop are the celebration)
+        ? e.surface === 'terminal' // (the desktop never reaches here: its room SVG's hop + ⭐ pop are the celebration)
           ? (() => {
               const { Client } = $.ui.resolve(e)
               return <Client key={`confetti:${a.id}`} module="./confetti.tsx" props={{ seed: personaIndex(a.id), width: innerW }} width={innerW} height={1} />
@@ -795,6 +798,39 @@ export function registerUi(on: On): void {
       )
     }
 
+    // --- DESKTOP: a room as ONE scalable SVG + a compact row of numbered open Buttons (see the header) ---
+    //     The tiles' decor is built from a minute-quantized clock and one-shot flags, so the SVG source
+    //     is byte-identical between polls unless something visible changed (no frame reload, no flicker).
+    const nowMin = minuteClock(now)
+    const desktopRoom = (s: string, members: readonly Agent[], title: string, small: string) => {
+      if (e.surface !== 'desktop') return null // (narrows the element table to the desktop's, which has Svg)
+      const { Svg } = $.ui.resolve(e)
+      const decors = new Map<string, TileDecor>()
+      members.forEach((a, i) => {
+        const liveA = live[a.id]
+        const failed = liveA !== undefined && (liveA.engine_status === 'failed' || liveA.engine_status === 'killed')
+        const starAt = stars[a.id]
+        const star = a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS
+        decors.set(a.id, {
+          index: i + 1,
+          elapsedMs: agentElapsed(a, nowMin),
+          star, justdone: star && now - (starAt ?? 0) < TILE_HOP_MS,
+          longRunning: isLongRunning(a, now), failed,
+          selected: selected?.id === a.id, focused: focused?.id === a.id, entering: entering.has(a.id),
+        })
+      })
+      const room = roomSvg(members, decors, { lang, title, small, cols: roomCols(width), nameOf: a => cardName(a, lang) })
+      return [
+        <Svg key={`roomsvg:${s}`} source={room.source} alt={room.alt} isInteractive />,
+        <Box key={`opens:${s}`} flexDirection={row} flexWrap="wrap" gap={1}>
+          {members.map((a, i) => {
+            const lit = selected?.id === a.id || focused?.id === a.id
+            return <Button key={`open:${a.id}`} plain dimColor={!lit} hover={{ dimColor: false }} label={String(i + 1)} onPress={() => openAgent(a.id)} />
+          })}
+        </Box>,
+      ]
+    }
+
     // --- rooms (PAGE ensureRoom + the room header): one line each ---
     const roomBoxes = rooms.map(s => {
       const st = stat.get(s)
@@ -812,13 +848,15 @@ export function registerUi(on: On): void {
       const titleBudget = width - 3 - countsW - 2
       const titleText = clip(`💬 ${title}`, titleBudget)
       const smallText = !compact && titleBudget - cellWidth(titleText) > cellWidth(small) + 4 ? small : ''
+      // the desktop's header line holds only 📌 and the counts: the title is drawn in the room SVG
+      // (fitted by px from its end, RTL-correct), so the line never wraps or strands a 💬
       return (
         <Box key={`room:${s}`} flexDirection="column" marginTop={1}>
           <Box flexDirection={row} justifyContent="space-between" gap={1}>
             <Box flexDirection={row} gap={1}>
               <Button key={`pin:${s}`} plain dimColor={!pinOn} label={pinOn ? '📌' : '○'} onPress={() => togglePin(s)} />
-              <Text bold>{titleText}</Text>
-              {smallText ? <Text dimColor>{smallText}</Text> : null}
+              {desktop ? null : <Text bold>{titleText}</Text>}
+              {!desktop && smallText ? <Text dimColor>{smallText}</Text> : null}
             </Box>
             <Box flexDirection={row} gap={1}>
               <Text>{countBits[0]}</Text>
@@ -828,11 +866,13 @@ export function registerUi(on: On): void {
                 : null}
             </Box>
           </Box>
-          {chunks.map((chunk, i) => (
-            <Box key={`row:${s}:${i}`} flexDirection={row} gap={1}>
-              {chunk.map(card)}
-            </Box>
-          ))}
+          {desktop
+            ? desktopRoom(s, members, title, small)
+            : chunks.map((chunk, i) => (
+              <Box key={`row:${s}:${i}`} flexDirection={row} gap={1}>
+                {chunk.map(card)}
+              </Box>
+            ))}
         </Box>
       )
     })

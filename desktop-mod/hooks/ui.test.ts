@@ -15,8 +15,9 @@ import { demoPayload } from './scanner'
 import {
   CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
-  TILE_MAX_PER_ROW, TILE_OPEN_LABEL, tilesPerRow,
+  TILE_MAX_PER_ROW, minuteClock, roomCols, tilesPerRow,
 } from './ui'
+import { ROOM_COLS } from './office-svg'
 
 const T0 = 1_700_000_000_000
 const SA = 'sess-aaaa-1111-frontend'
@@ -242,10 +243,24 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
 /** A mounted drawing's finder (what `$.ui.mount` answers), structurally. */
 type Mounted = { findAll: (q: { type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }
 
-/** DESKTOP: a card's texts live inside its SVG tile; the tile whose markup carries `data-id="<id>"`. */
-async function tileOf(ui: Mounted, id: string): Promise<{ source: string; alt: string; isInteractive: unknown } | undefined> {
+/**
+ * DESKTOP: a card's texts live inside its ROOM's SVG (one per room); the room SVG whose markup
+ * carries `data-id="<id>"`, and the tile's own `<g>` markup cut out of it.
+ */
+async function tileOf(ui: Mounted, id: string): Promise<{ source: string; tile: string; alt: string; isInteractive: unknown; width: unknown; height: unknown } | undefined> {
   const t = (await ui.findAll({ type: 'Svg' })).find(x => String(x.props.source).includes(`data-id="${id}"`))
-  return t ? { source: String(t.props.source), alt: String(t.props.alt), isInteractive: t.props.isInteractive } : undefined
+  if (!t) return undefined
+  const source = String(t.props.source)
+  const start = source.lastIndexOf('<g class="ws', source.indexOf(`data-id="${id}"`))
+  const end = source.indexOf('<g class="ws', start + 1)
+  const tile = source.slice(start, end < 0 ? source.lastIndexOf('</svg>') : end)
+  return { source, tile, alt: String(t.props.alt), isInteractive: t.props.isInteractive, width: t.props.width, height: t.props.height }
+}
+
+/** DESKTOP: the room SVG of session `s` (the one whose alt starts with its title). */
+async function roomSvgOf(ui: Mounted, titleStart: string): Promise<{ source: string; alt: string } | undefined> {
+  const t = (await ui.findAll({ type: 'Svg' })).find(x => String(x.props.alt).startsWith(titleStart))
+  return t ? { source: String(t.props.source), alt: String(t.props.alt) } : undefined
 }
 
 test('the office draws rooms, cards, counts and the footer on every surface', async ($, on) => {
@@ -258,12 +273,19 @@ test('the office draws rooms, cards, counts and the footer on every surface', as
     expect((await ui.find({ type: 'Text', text: /משרד הסוכנים/ }))).toBeDefined()
     expect((await ui.find({ type: 'Text', text: /🟢 3 עובדים/ }))?.text).toMatch(/✅ 1 סיימו/)
     // rooms: A leads with its topic, B with its project; A first (newer activity)
-    expect(await ui.find({ type: 'Text', text: /💬 Ship the v2 config migration\./ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
+    if (surface === 'desktop') {
+      // the desktop's room title is drawn inside the room SVG (no engine Text with 💬 anywhere)
+      expect((await roomSvgOf(ui, '💬 Ship the v2 config migration.'))?.source).toMatch(/class="room-title"[^>]*>💬 Ship the v2 config migration\.</)
+      expect((await roomSvgOf(ui, '💬 research'))?.source).toMatch(/class="room-title"[^>]*>💬 research</)
+      expect(await ui.find({ type: 'Text', text: /💬/ })).toBeUndefined()
+    } else {
+      expect(await ui.find({ type: 'Text', text: /💬 Ship the v2 config migration\./ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
+    }
     // cards: the Agent description is the name; MCP tool → 🔌 server; finished hidden
     expect(await ui.find({ key: 'open:a1' })).toBeDefined()
     if (surface === 'desktop') {
-      // the desktop's card is an SVG tile: its texts are in the markup / alt, the Button a glyph
+      // the desktop's card is a tile of its room's SVG: its texts are in the markup / alt, the Button its number
       expect((await tileOf(ui, 'a1'))?.alt).toMatch(/map session-token validation/)
       expect((await tileOf(ui, 'a1'))?.alt).toMatch(/📖 קורא/)
       expect((await tileOf(ui, 'b1'))?.alt).toMatch(/🔌 github/)
@@ -311,9 +333,9 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
       expect(await ui.find({ type: 'Text', text: /(^·\s+\S|\S\s+·$)/ })).toBeUndefined()
       // the lead's 💬 rides its name on the card's first line; no lone 💬 anywhere
       if (surface === 'desktop') {
-        expect((await tileOf(ui, 'lead-a'))?.source).toMatch(/ is-session[" ]/)
-        expect((await tileOf(ui, 'lead-a'))?.source.includes(LEAD_MARK)).toBe(true)
-        expect((await tileOf(ui, 'a1'))?.source.includes(LEAD_MARK)).toBe(false)
+        expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/ is-session[" ]/)
+        expect((await tileOf(ui, 'lead-a'))?.tile.includes(LEAD_MARK)).toBe(true)
+        expect((await tileOf(ui, 'a1'))?.tile.includes(LEAD_MARK)).toBe(false)
       } else {
         expect((await ui.find({ key: 'open:lead-a' }))?.text.startsWith(`${LEAD_MARK} `)).toBe(true)
         expect((await ui.find({ key: 'open:a1' }))?.text.includes(LEAD_MARK)).toBe(false)
@@ -322,11 +344,20 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
       // the search is the Input alone: no submit button beside it
       expect(await ui.find({ type: 'Button', text: /^(חיפוש|Search)$/ })).toBeUndefined()
       // room headers keep their beginning; the timer sits on the card's first line
-      expect(await ui.find({ type: 'Text', text: /^💬 Ship the v2/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
-      // a1 started 30 s before T0; the poll advanced 1.5 s
-      if (surface === 'desktop') expect((await tileOf(ui, 'a1'))?.source).toMatch(/>00:3\d</)
-      else expect(await ui.find({ type: 'Text', text: /^00:3\d$/ })).toBeDefined()
+      if (surface === 'desktop') {
+        expect((await roomSvgOf(ui, '💬 Ship the v2'))?.source).toMatch(/class="room-title"[^>]*>💬 Ship the v2/)
+        expect((await roomSvgOf(ui, '💬 research'))?.source).toMatch(/class="room-title"[^>]*>💬 research</)
+        // the engine's header line holds 📌 and the counts alone: no Text with a 💬, so nothing to wrap or strand
+        expect(await ui.find({ type: 'Text', text: /💬/ })).toBeUndefined()
+      } else {
+        expect(await ui.find({ type: 'Text', text: /^💬 Ship the v2/ })).toBeDefined()
+        expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
+      }
+      // a1 started 30 s before T0; the poll advanced 1.5 s — the desktop tile says it in minutes (no seconds: a stable source)
+      if (surface === 'desktop') {
+        expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="timer"[^>]*>&lt;1 דק׳</)
+        expect((await tileOf(ui, 'a1'))?.source.includes('00:3')).toBe(false)
+      } else expect(await ui.find({ type: 'Text', text: /^00:3\d$/ })).toBeDefined()
       if (bodyColumns < 60) {
         // compact: icon-only header and toolbar, no worded counts, no key-hint chips
         expect(await ui.find({ type: 'Text', text: /🟢3 ✅1/ })).toBeDefined()
@@ -341,7 +372,7 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
       }
       // the name label is clipped to the card, never wider than it
       const g = gridFor(bodyColumns)
-      if (surface === 'desktop') expect((await ui.find({ key: 'open:a1' }))?.text).toBe(TILE_OPEN_LABEL)
+      if (surface === 'desktop') expect((await ui.find({ key: 'open:a1' }))?.text).toBe('2') // the lead is 1, a1 is 2 in room A
       else expect(cellWidth((await ui.find({ key: 'open:a1' }))?.text ?? '')).toBeLessThanOrEqual(g.cardW - 2 - 6)
       // the drawer shows the model row
       await ui.press({ key: 'open:a1' })
@@ -477,63 +508,100 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   await ui.unmount()
 })
 
-test('DESKTOP: every card is an interactive SVG tile with its open button; a newcomer walks in; the finish is the tile\'s own (no confetti Client)', async ($, on) => {
+test('DESKTOP: each room is ONE scalable interactive SVG with numbered tiles and a row of numbered open Buttons; a newcomer walks in; the finish is the tile\'s own (no confetti Client)', async ($, on) => {
   let agents = fixture()
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(1500)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  // three visible agents → three tiles, each interactive, each with a one-glyph open Button beside it
-  const tiles = await ui.findAll({ type: 'Svg' })
-  expect(tiles).toHaveLength(3)
-  for (const id of ['lead-a', 'a1', 'b1']) {
+  // two rooms → two SVGs, each interactive, with a viewBox and NO width/height (markup or props) so it scales to the slot
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs).toHaveLength(2)
+  for (const sv of svgs) {
+    expect(sv.props.isInteractive).toBe(true)
+    expect(sv.props.width).toBeUndefined()
+    expect(sv.props.height).toBeUndefined()
+    const src = String(sv.props.source)
+    expect(src.length).toBeLessThan(131072)
+    expect(/^<svg [^>]*viewBox="0 0 \d+ \d+"/.test(src)).toBe(true)
+    expect(/^<svg [^>]*\bwidth=/.test(src)).toBe(false)
+    expect(/^<svg [^>]*\bheight=/.test(src)).toBe(false)
+    expect(src).toMatch(/xml:lang="he"/)
+    expect(src).toMatch(/direction="rtl"/)
+    expect(src).toMatch(/prefers-color-scheme: light/)
+    expect(String(sv.props.alt).length).toBeGreaterThan(0)
+  }
+  // a 45-column pane keeps the default grid of ROOM_COLS; a wide one seats more per row (the scaled tiles never balloon)
+  expect(roomCols(45)).toBe(ROOM_COLS)
+  expect(roomCols(24)).toBe(ROOM_COLS)
+  expect(roomCols(140)).toBe(TILE_MAX_PER_ROW)
+  expect(tilesPerRow(45)).toBe(2)
+  expect(tilesPerRow(400)).toBe(TILE_MAX_PER_ROW)
+  expect((await roomSvgOf(ui, '💬 Ship the v2'))?.source).toMatch(new RegExp(`viewBox="0 0 ${3 * 88 + 2 * 4 + 2 * 4} `))
+  // numbered tiles ↔ numbered Buttons: room A = lead-a (1), a1 (2); room B = b1 (1). No tile:<id> Boxes any more.
+  for (const [id, n] of [['lead-a', '1'], ['a1', '2'], ['b1', '1']] as const) {
     const t = await tileOf(ui, id)
     expect(t).toBeDefined()
-    expect(t?.isInteractive).toBe(true)
-    expect(t?.source.length).toBeLessThan(131072)
-    expect(t?.source).toMatch(/xml:lang="he"/)
-    expect(t?.source).toMatch(/direction="rtl"/)
-    expect(t?.source).toMatch(/prefers-color-scheme: light/)
-    expect(t?.alt.length).toBeGreaterThan(0)
-    expect((await ui.find({ key: `open:${id}` }))?.text).toBe(TILE_OPEN_LABEL)
-    expect(await ui.find({ key: `tile:${id}` })).toBeDefined()
+    expect(t?.tile).toMatch(new RegExp(`class="numt"[^>]*>${n}</text>`))
+    expect((await ui.find({ key: `open:${id}` }))?.text).toBe(n)
+    expect(await ui.find({ key: `tile:${id}` })).toBeUndefined()
   }
-  // the tile carries what the text card carried: status, activity, timer, model, the lead's 💬
-  expect((await tileOf(ui, 'a1'))?.source).toMatch(/class="ws running fam-read/)
-  expect((await tileOf(ui, 'a1'))?.source).toMatch(/🧠 Opus 5\.5/)
+  // the tile carries what the text card carried: status, activity, timer (minutes), model, the lead's 💬 — and a full tooltip
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws running fam-read/)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/🧠 Opus 5\.5/)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/<title>2\. \S+ map session-token validation\nTask of a1\.\n📖 קורא · 🧠 Opus 5\.5 · &lt;1 דק׳<\/title>/)
   expect((await tileOf(ui, 'a1'))?.alt).toMatch(/📖 קורא/)
-  expect((await tileOf(ui, 'b1'))?.source).toMatch(/fam-agent/)
-  expect((await tileOf(ui, 'lead-a'))?.source).toMatch(/ is-session/)
-  // a ~45-column pane seats two tiles per row
-  expect(tilesPerRow(45)).toBe(2)
-  expect(tilesPerRow(24)).toBe(1)
-  expect(tilesPerRow(400)).toBe(TILE_MAX_PER_ROW)
-  // the Button opens the drawer exactly as the text card's did
+  expect((await tileOf(ui, 'b1'))?.tile).toMatch(/fam-agent/)
+  expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/ is-session/)
+  expect((await tileOf(ui, 'lead-a'))?.tile.includes(LEAD_MARK)).toBe(true)
+  // STABLE: the next poll (1.5 s later, same wall-clock minute) redraws the very same sources — no frame reload, no flicker
+  const before = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
+  expect(before.some(src => src.includes(' entering'))).toBe(true) // first sight: the whole cast walked in
+  await clock.advance(1500)
+  const settled = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
+  expect(settled.some(src => src.includes(' entering'))).toBe(false) // one-shot: gone on the next poll
+  await clock.advance(1500)
+  const again = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
+  expect(again).toEqual(settled)
+  expect(minuteClock(clock.now())).toBe(minuteClock(clock.now() - 3000))
+  // a phase change (a1 moves from Read to Write) changes room A's source and leaves room B's alone
+  agents = fixture().map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
+  await clock.advance(1500)
+  const changed = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
+  expect(changed[0]).not.toBe(again[0])
+  expect(changed[1]).toBe(again[1])
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws running fam-write/)
+  // the Button opens the drawer exactly as the text card's did; the selection lights the tile (a visible change)
   await ui.press({ key: 'open:a1' })
   expect(await ui.find({ key: 'close' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^🧠 Opus 5\.5$/ })).toBeDefined()
-  expect((await tileOf(ui, 'a1'))?.source).toMatch(/ selected/)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/ selected/)
   await ui.press({ key: 'close' })
-  expect((await tileOf(ui, 'a1'))?.source.includes(' selected')).toBe(false)
-  // a newcomer walks in on the poll that first shows it, and has sat down by the next
-  agents = [...fixture(), agent({ id: 'newbie', role: 'index the docs', tool: 'Grep', persona_id: 5 })]
+  expect((await tileOf(ui, 'a1'))?.tile.includes(' selected')).toBe(false)
+  // a newcomer walks in on the poll that first shows it (one-shot), and has sat down by the next; it gets the next number
+  agents = [...agents, agent({ id: 'newbie', role: 'index the docs', tool: 'Grep', persona_id: 5 })]
   await clock.advance(1500)
-  expect((await tileOf(ui, 'newbie'))?.source).toMatch(/ entering/)
-  expect((await tileOf(ui, 'a1'))?.source.includes(' entering')).toBe(false)
+  expect((await tileOf(ui, 'newbie'))?.tile).toMatch(/ entering/)
+  expect((await tileOf(ui, 'a1'))?.tile.includes(' entering')).toBe(false)
+  expect((await ui.find({ key: 'open:newbie' }))?.text).toBe('3')
   await clock.advance(1500)
-  expect((await tileOf(ui, 'newbie'))?.source.includes(' entering')).toBe(false)
-  // a finish: toast + chime as before, ⭐ + hop in the tile, and NO confetti Client on the desktop
+  expect((await tileOf(ui, 'newbie'))?.tile.includes(' entering')).toBe(false)
+  // a finish: toast + chime as before, ⭐ + hop (one-shot) in the tile, and NO confetti Client on the desktop
   agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
   await ui.press({ key: 'showDone' })
   await clock.advance(1500)
   expect(captured.toasts).toEqual(['map session-token validation — סיים'])
   expect(captured.plays).toBe(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect((await tileOf(ui, 'a1'))?.source).toMatch(/ recent justdone/)
-  expect((await tileOf(ui, 'a1'))?.source).toMatch(/⭐/)
-  expect((await tileOf(ui, 'a1'))?.source).toMatch(/class="ws done/)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/ recent justdone/)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws done/)
+  // the next poll keeps the ⭐ (static) and drops the one-shot hop
+  await clock.advance(1500)
+  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
+  expect((await tileOf(ui, 'a1'))?.tile.includes('justdone')).toBe(false)
   await clock.advance(JUST_FINISHED_MS + 1500)
-  expect((await tileOf(ui, 'a1'))?.source.includes('⭐')).toBe(false)
+  expect((await tileOf(ui, 'a1'))?.tile.includes('⭐')).toBe(false)
   await ui.unmount()
 })
 
@@ -560,8 +628,10 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /The office is empty/ })).toBeDefined()
   await ui.press({ key: 'watchDemo' })
-  expect(await ui.find({ type: 'Text', text: /💬 Ship the v2 config migration/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /💬 Plan the static-regeneration rollout/ })).toBeDefined()
+  // (the desktop's room titles live in the room SVGs, never in an engine Text)
+  expect(await roomSvgOf(ui, '💬 Ship the v2 config migration')).toBeDefined()
+  expect(await roomSvgOf(ui, '💬 Plan the static-regeneration rollout')).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /💬/ })).toBeUndefined()
   expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeDefined()
   expect((await ui.find({ key: 'demo' }))?.text).toMatch(/Exit/)
   // phase 6 of the loop: the finisher completes on a visible card (demo forces "show finished");

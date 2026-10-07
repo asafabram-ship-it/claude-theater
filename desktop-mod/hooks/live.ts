@@ -49,6 +49,15 @@ export type LiveMap = Record<string, LiveAgent>
 /** Engine task statuses that mean the loop is over. */
 const TERMINAL_STATUSES: readonly string[] = ['completed', 'failed', 'killed']
 
+/**
+ * The text the Agent tool returns for a `run_in_background` spawn (2.1.288:
+ * "Async agent launched successfully. … The agent is working in the
+ * background."): an acknowledgment, not the subagent's report.
+ */
+export function isLaunchAck(text: string | undefined): boolean {
+  return typeof text === 'string' && /^\s*Async agent launched/i.test(text)
+}
+
 /** What the agent.spawn hook knows once `next` returned. */
 export type SpawnInfo = {
   agentId: string
@@ -105,6 +114,10 @@ export function liveToolReturned(live: LiveMap, agentId: string, now: number): L
 export function liveAgentReturned(live: LiveMap, toolUseId: string, text: string | undefined, isError: boolean, now: number): LiveMap {
   const entry = Object.values(live).find(a => a.tool_use_id === toolUseId)
   if (!entry) return live
+  // A background Agent call returns at once with a launch acknowledgment, not
+  // the subagent's result: the agent keeps running (its end comes from
+  // $.agent.list / the scanner's transcript or task-notification detection).
+  if (!isError && isLaunchAck(text)) return live
   const { result, truncated } = clipResult(text ?? '')
   return {
     ...live,

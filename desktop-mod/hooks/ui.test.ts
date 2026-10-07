@@ -13,8 +13,8 @@ import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
 import { demoPayload } from './scanner'
 import {
-  CARD_MAX_W, COLS2_FROM, COLS3_FROM, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
-  headerCounts, isLongRunning, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
+  CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
+  headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
 } from './ui'
 
 const T0 = 1_700_000_000_000
@@ -173,6 +173,14 @@ test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop
   expect(paneTitle('he', 0)).toBe('🎭 התיאטרון')
 })
 
+test('joinParts: a "·" only between two non-empty parts, never dangling', () => {
+  expect(joinParts(['📖 קורא', 'Explore', '🧠 Opus 5.5'])).toEqual(['📖 קורא', '·', 'Explore', '·', '🧠 Opus 5.5'])
+  expect(joinParts(['📖 קורא', '', '🧠 Opus 5.5'])).toEqual(['📖 קורא', '·', '🧠 Opus 5.5']) // empty subagent_type leaves no trace
+  expect(joinParts(['📖 קורא', '', ''])).toEqual(['📖 קורא'])
+  expect(joinParts(['', 'x', ''])).toEqual(['x'])
+  expect(joinParts([])).toEqual([])
+})
+
 test('layout budget: cell widths, end-clipping with an ellipsis, the card grid per bodyColumns', () => {
   expect(cellWidth('abc')).toBe(3)
   expect(cellWidth('שלום')).toBe(4)
@@ -271,8 +279,16 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
         expect(await ui.find({ key })).toBeDefined()
       }
       expect(await ui.find({ key: 'open:a2' })).toBeUndefined()
-      // the model tag: a1 runs on claude-opus-5-5 → a dim "· 🧠 Opus 5.5" on its second line (the only agent with a model)
-      expect((await ui.find({ type: 'Text', text: /🧠/ }))?.text).toBe('· 🧠 Opus 5.5')
+      // the model tag: a1 runs on claude-opus-5-5 → a dim "🧠 Opus 5.5" segment on its second line (the only agent with a model)
+      expect((await ui.find({ type: 'Text', text: /🧠/ }))?.text).toBe('🧠 Opus 5.5')
+      // the "·" is its own segment BETWEEN two parts: no Text carries a dangling separator at either end
+      expect(await ui.find({ type: 'Text', text: /(^·\s+\S|\S\s+·$)/ })).toBeUndefined()
+      // the lead's 💬 rides its name on the card's first line; no lone 💬 anywhere
+      expect((await ui.find({ key: 'open:lead-a' }))?.text.startsWith(`${LEAD_MARK} `)).toBe(true)
+      expect((await ui.find({ key: 'open:a1' }))?.text.includes(LEAD_MARK)).toBe(false)
+      expect(await ui.find({ type: 'Text', text: /^\s*💬\s*$/ })).toBeUndefined()
+      // the search is the Input alone: no submit button beside it
+      expect(await ui.find({ type: 'Button', text: /^(חיפוש|Search)$/ })).toBeUndefined()
       // room headers keep their beginning; the timer sits on the card's first line
       expect(await ui.find({ type: 'Text', text: /^💬 Ship the v2/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
@@ -297,10 +313,11 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
       expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /^🧠 Opus 5\.5$/ })).toBeDefined()
       await ui.press({ key: 'close' })
-      // b1 carries no model → no model row, no tag anywhere in its drawer
+      // b1 carries no model → no model row, no tag anywhere in its drawer (the only 🧠 left is a1's dim card segment)
       await ui.press({ key: 'open:b1' })
       expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeUndefined()
-      expect(await ui.find({ type: 'Text', text: /^🧠/ })).toBeUndefined()
+      expect((await ui.find({ type: 'Text', text: /^🧠/ }))?.props?.dimColor).toBe(true)
+      expect(await ui.find({ type: 'Text', text: /^🧠/, key: 'model' })).toBeUndefined()
       await ui.press({ key: 'close' })
       await ui.unmount()
     }

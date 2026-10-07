@@ -263,9 +263,34 @@ export type TranscriptEvent = {
   version: string
   /** `message.model` ("claude-opus-5-5", ...; "" when absent or not a string). Set on assistant records. */
   model: string
+  /**
+   * The text handed back by a terminal hand-back tool_use in this message
+   * (SubagentHandback's `input.message`, StructuredOutput's structured input
+   * as prose/JSON); null when the message calls no such tool.
+   */
+  handback: string | null
   /** The raw parsed record (for `cwd`, `sessionId`, ...). */
   raw: Record<string, unknown>
 }
+
+/**
+ * Tools whose call IS the subagent's final act: the engine ends the loop on
+ * them and relays the input to the parent (a background Agent-tool subagent
+ * reports through SubagentHandback; a workflow subagent through
+ * StructuredOutput). Seen in 2.1.288 transcripts: the call's record carries
+ * `stop_reason: null`, then a user tool_result ("Report delivered") closes
+ * the file — nothing else is ever appended unless the parent resumes it.
+ */
+export const HANDBACK_TOOLS: readonly string[] = ['SubagentHandback', 'StructuredOutput']
+
+/**
+ * The parent's `<task-notification>` for a finished subagent may land in the
+ * parent file a few hundred ms BEFORE the subagent's own tool_result is
+ * flushed (observed: 230 ms). A notification this close before the agent
+ * file's mtime still counts as "after it"; a resumed agent (SendMessage)
+ * moves its mtime well past this and is live again.
+ */
+export const NOTICE_SLACK_MS = 10_000
 
 /** Python iso_to_ms: an ISO-8601 timestamp → ms since epoch, null when unreadable. */
 export function isoToMs(s: unknown): number | null {
@@ -291,6 +316,7 @@ export function parseAgentEvent(line: string): TranscriptEvent | null {
   const textParts: string[] = []
   const toolUses: string[] = []
   let hasToolResult = false
+  let handback: string | null = null
   if (Array.isArray(content)) {
     for (const block of content) {
       if (block === null || typeof block !== 'object') continue
@@ -302,6 +328,10 @@ export function parseAgentEvent(line: string): TranscriptEvent | null {
       } else if (bt === 'tool_use') {
         const name = b.name
         toolUses.push(typeof name === 'string' ? name : '')
+        if (typeof name === 'string' && HANDBACK_TOOLS.includes(name)) {
+          const inp = asRecord(b.input)
+          handback = typeof inp.message === 'string' ? inp.message : workflowResultText(b.input)
+        }
       } else if (bt === 'tool_result') {
         hasToolResult = true
       }
@@ -324,6 +354,7 @@ export function parseAgentEvent(line: string): TranscriptEvent | null {
     // must not later crash majorMinor()/sorting).
     version: typeof ver === 'string' ? ver : '',
     model: typeof model === 'string' ? model.trim() : '',
+    handback,
     raw: rec,
   }
 }
@@ -394,34 +425,77 @@ export function lastToolUseName(events: TranscriptEvent[]): string {
 
 export type DoneInfo = {
   isDone: boolean
+  /**
+   * "Done once idle": the last turn LOOKS final (a text answer, no tool) but
+   * its record carries no stop_reason — the norm in 2.1.288 transcripts, where
+   * every content block is its own record and the stop_reason is written only
+   * sometimes. The text may still be followed by a tool_use within seconds, so
+   * the agent counts as done only once silent for RUNNING_STALE_SEC
+   * (computeStatus), where it would otherwise read "idle" for ever.
+   */
+  idle: boolean
   endMs: number | null
   result: string | null
   truncated: boolean
 }
 
-const NOT_DONE: DoneInfo = { isDone: false, endMs: null, result: null, truncated: false }
+const NOT_DONE: DoneInfo = { isDone: false, idle: false, endMs: null, result: null, truncated: false }
+
+/** The message's last tool_use is a terminal hand-back (SubagentHandback / StructuredOutput). */
+function isHandbackTurn(ev: TranscriptEvent): boolean {
+  const lastTool = ev.toolUses[ev.toolUses.length - 1]
+  return lastTool !== undefined && HANDBACK_TOOLS.includes(lastTool)
+}
 
 /**
- * Python detect_done: the last user/assistant event is an assistant message
- * with NO tool_use and a stop_reason that is not in CONTINUATION_STOP_REASONS
- * (deny-list: tool_use, pause_turn). Result text collapsed and clipped with
- * clipResult().
+ * Python detect_done, extended for the 2.1.288 transcript shapes seen in real
+ * journals:
+ *   - the last user/assistant event is an assistant text (no tool_use) with a
+ *     stop_reason not in CONTINUATION_STOP_REASONS → done (Python's rule);
+ *     with NO stop_reason → `idle` (done once silent, see DoneInfo);
+ *   - the last assistant turn calls a HANDBACK tool (optionally followed by
+ *     its own user tool_result) → done at once, the hand-back's input text as
+ *     the result; any other pending tool_use → not done;
+ *   - a user record with text after that (the parent resumed the agent) → not
+ *     done again (never-pin semantics: new activity reopens the agent).
+ * Result text collapsed and clipped with clipResult().
  */
 export function detectDone(events: TranscriptEvent[]): DoneInfo {
-  let last: TranscriptEvent | null = null
-  for (let i = events.length - 1; i >= 0; i--) {
+  let i = events.length - 1
+  for (; i >= 0; i--) {
     const ev = events[i]
-    if (ev && (ev.kind === 'assistant' || ev.kind === 'user')) {
-      last = ev
-      break
-    }
+    if (ev && (ev.kind === 'assistant' || ev.kind === 'user')) break
   }
-  if (last === null || last.kind !== 'assistant') return { ...NOT_DONE }
-  const hasTool = last.toolUses.length > 0
-  const done = !hasTool && last.stopReason !== null && !CONTINUATION_STOP_REASONS.includes(last.stopReason)
-  if (!done) return { ...NOT_DONE }
+  if (i < 0) return { ...NOT_DONE }
+  let last = events[i]!
+  let resultTs: number | null = null
+  if (last.kind === 'user') {
+    // only the hand-back's own tool_result may follow the final turn; a prompt resumes the agent
+    if (!last.hasToolResult || last.text) return { ...NOT_DONE }
+    resultTs = last.tsMs
+    let j = i - 1
+    for (; j >= 0; j--) {
+      const ev = events[j]
+      if (ev && (ev.kind === 'assistant' || ev.kind === 'user')) break
+    }
+    const prev = j >= 0 ? events[j]! : null
+    if (prev === null || prev.kind !== 'assistant' || !isHandbackTurn(prev)) return { ...NOT_DONE }
+    last = prev
+  }
+  if (last.toolUses.length > 0) {
+    if (!isHandbackTurn(last)) return { ...NOT_DONE }
+    const { result, truncated } = clipResult(last.handback ?? last.text)
+    return { isDone: true, idle: false, endMs: resultTs ?? last.tsMs, result, truncated }
+  }
+  if (last.stopReason === null) {
+    // a thinking-only or empty record mid-generation is not an answer
+    if (!last.text) return { ...NOT_DONE }
+    const { result, truncated } = clipResult(last.text)
+    return { isDone: false, idle: true, endMs: last.tsMs, result, truncated }
+  }
+  if (CONTINUATION_STOP_REASONS.includes(last.stopReason)) return { ...NOT_DONE }
   const { result, truncated } = clipResult(last.text)
-  return { isDone: true, endMs: last.tsMs, result, truncated }
+  return { isDone: true, idle: false, endMs: last.tsMs, result, truncated }
 }
 
 /** Python compute_in_flight: last assistant dispatched a tool, or last record is a user tool_result. */
@@ -451,6 +525,8 @@ export function computePhase(events: TranscriptEvent[]): TheaterPhase {
  * session leads. `nowSec`/`mtimeSec` in SECONDS (as Python), to keep the
  * thresholds readable:
  *   1. done wins
+ *   1b. a final-looking answer without a stop_reason (`idleDone`, DoneInfo.idle)
+ *       counts as done once idle — where Python would have shown "stale" for ever
  *   2. closed + idle (raw mtime > RUNNING_STALE_SEC) collapses to done
  *   3. in_flight and not closed and silent <= IN_FLIGHT_MAX_SEC → running
  *   4. else stale when idle, else running
@@ -461,10 +537,12 @@ export function computeStatus(
   isDone: boolean,
   inFlight: boolean,
   closed: boolean,
+  idleDone = false,
 ): TheaterStatus {
   const silent = nowSec - mtimeSec
   const idle = silent > RUNNING_STALE_SEC
   if (isDone) return 'done'
+  if (idleDone && idle) return 'done'
   if (closed && idle) return 'done'
   if (inFlight && !closed && silent <= IN_FLIGHT_MAX_SEC) return 'running'
   return idle ? 'stale' : 'running'
@@ -534,7 +612,7 @@ function parseJournalResults(lines: string[]): Map<string, DoneInfo> {
     const agentId = rec.agentId
     if (typeof agentId !== 'string' || !agentId) continue
     const { result, truncated } = clipResult(workflowResultText(rec.result))
-    out.set(agentId, { isDone: true, endMs: null, result: result || null, truncated })
+    out.set(agentId, { isDone: true, idle: false, endMs: null, result: result || null, truncated })
   }
   return out
 }
@@ -593,7 +671,7 @@ export function parentSessionFile(agentPath: string, sessionId: string): string 
   return p ? p + '.jsonl' : null
 }
 
-type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo> }
+type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo>; notices: Map<string, number | null> }
 type ProjectCacheEntry = { mtimeMs: number; oversized: boolean; cwd: string }
 type SessionCacheEntry = { mtimeMs: number; oversized: boolean; topic: string; cwd: string }
 type ModelCacheEntry = { mtimeMs: number; model: string }
@@ -652,6 +730,55 @@ export function parseNameMap(text: string): Map<string, NameInfo> {
   return m
 }
 
+/** Task statuses a `<task-notification>` reports when the subagent's loop is over. */
+const NOTICE_TERMINAL: readonly string[] = ['completed', 'failed', 'killed']
+
+/**
+ * The parent's record of its subagents' completion: when a background
+ * subagent stops, the engine enqueues a `<task-notification>` into the parent
+ * conversation (a `queue-operation` record and a `queued_command` attachment,
+ * both carrying `<task-id>agentId</task-id>` and `<status>completed</status>`).
+ * Returns agentId → the LATEST terminal notification's timestamp (ms; null
+ * when the record has none). The same task-id notifies again after a resume.
+ */
+export function parseTaskNotifications(text: string): Map<string, number | null> {
+  const out = new Map<string, number | null>()
+  for (const ln of text.split('\n')) {
+    if (!ln.includes('<task-notification>') || !ln.includes('<task-id>')) continue
+    const id = /<task-id>([^<\s]+)<\/task-id>/.exec(ln)?.[1]
+    const status = /<status>([^<]+)<\/status>/.exec(ln)?.[1]?.trim()
+    if (!id || !status || !NOTICE_TERMINAL.includes(status)) continue
+    const rec = parseJsonObject(ln)
+    const ts = rec === null ? null : isoToMs(rec.timestamp)
+    const prior = out.get(id)
+    if (prior === undefined || prior === null || (ts !== null && ts >= prior)) out.set(id, ts)
+  }
+  return out
+}
+
+/** The parent file's parsed entry (name map + task notifications), mtime-cached; null when unreadable. */
+async function parentEntryFor(
+  io: ScanIo,
+  parentFile: string | null,
+  statOf: (path: string) => Promise<FsStat | null>,
+): Promise<NameCacheEntry | null> {
+  if (!parentFile) return null
+  const st = await statOf(parentFile)
+  if (st === null || st.kind !== 'file') return null
+  const cached = NAME_CACHE.get(parentFile)
+  if (cached && cached.mtimeMs === st.mtimeMs) return cached
+  const read = await readWhole(io, parentFile, st.size)
+  const entry: NameCacheEntry = {
+    mtimeMs: st.mtimeMs,
+    oversized: read.oversized,
+    map: read.text === null ? new Map() : parseNameMap(read.text),
+    notices: read.text === null ? new Map() : parseTaskNotifications(read.text),
+  }
+  NAME_CACHE.set(parentFile, entry)
+  if (read.text !== null) noteSessionModel(parentFile, st.mtimeMs, read.text) // the parent IS the room lead's file
+  return entry
+}
+
 /**
  * Python name_map_for: every Agent/Task tool_use in the parent transcript →
  * { normPrompt(prompt): { description, subagent_type } }. mtime-cached per file.
@@ -662,20 +789,30 @@ export async function nameMapFor(
   parentFile: string | null,
   statOf: (path: string) => Promise<FsStat | null> = path => statOrNull(io, path),
 ): Promise<Map<string, NameInfo>> {
-  if (!parentFile) return new Map()
-  const st = await statOf(parentFile)
-  if (st === null || st.kind !== 'file') return new Map()
-  const cached = NAME_CACHE.get(parentFile)
-  if (cached && cached.mtimeMs === st.mtimeMs) return cached.map
-  const read = await readWhole(io, parentFile, st.size)
-  const entry: NameCacheEntry = {
-    mtimeMs: st.mtimeMs,
-    oversized: read.oversized,
-    map: read.text === null ? new Map() : parseNameMap(read.text),
-  }
-  NAME_CACHE.set(parentFile, entry)
-  if (read.text !== null) noteSessionModel(parentFile, st.mtimeMs, read.text) // the parent IS the room lead's file
-  return entry.map
+  return (await parentEntryFor(io, parentFile, statOf))?.map ?? new Map()
+}
+
+/**
+ * The parent's terminal `<task-notification>`s (parseTaskNotifications) —
+ * the engine's own word that a subagent's loop ended, read from the same
+ * cached parse as nameMapFor (no extra file read).
+ */
+export async function taskNotificationsFor(
+  io: ScanIo,
+  parentFile: string | null,
+  statOf: (path: string) => Promise<FsStat | null> = path => statOrNull(io, path),
+): Promise<Map<string, number | null>> {
+  return (await parentEntryFor(io, parentFile, statOf))?.notices ?? new Map()
+}
+
+/**
+ * Whether a parent notification at `noticeMs` (null: undated) ends an agent
+ * whose file was last written at `mtimeMs`: yes unless the agent wrote again
+ * more than NOTICE_SLACK_MS after it (it was resumed).
+ */
+export function noticeEndsAgent(noticeMs: number | null | undefined, mtimeMs: number): boolean {
+  if (noticeMs === undefined) return false
+  return noticeMs === null || noticeMs + NOTICE_SLACK_MS >= mtimeMs
 }
 
 /** Python project_cwd_for's parse: the first non-empty "cwd" within the first 51 lines. */
@@ -721,17 +858,57 @@ export async function projectCwdFor(
   return entry.cwd
 }
 
-/** Python _first_user_text: the text of a user record (string content, or the first text block). */
+/**
+ * Tag names of text the HOST injects into a user record (never typed by the
+ * person): a leading block of one of these that is not closed is dropped whole.
+ */
+const INJECTED_TAG = /^(system-reminder|task-notification|command-|local-command|hook|caveat|agent-message|pasted_content)/i
+
+/**
+ * Removes the host's injected text from a user message: every
+ * `<system-reminder>…</system-reminder>` anywhere (the engine appends them to
+ * typed prompts), then every paired `<tag …>…</tag>` block the text STARTS
+ * with (`<command-name>`, `<local-command-caveat>`, `<task-notification>`,
+ * …). A leading tag that is not closed is kept unless it is a known injection
+ * (a person typing "<div> is broken" keeps their text). Trimmed.
+ */
+export function stripInjectedBlocks(text: string): string {
+  let s = (text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+  for (;;) {
+    const m = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>/.exec(s)
+    if (!m) break
+    const tag = m[1] ?? ''
+    const close = `</${tag}>`
+    const end = s.indexOf(close, m[0].length)
+    if (end < 0) {
+      if (INJECTED_TAG.test(tag)) return ''
+      break
+    }
+    s = s.slice(end + close.length).trim()
+  }
+  return s
+}
+
+/**
+ * Python _first_user_text, on what the person TYPED: the string content or the
+ * first text block that is left non-empty once the host's injected blocks are
+ * stripped (a record whose text blocks are all injections yields ""; a
+ * `isMeta` record — a local command's echo — is never a topic).
+ */
 function firstUserText(rec: Record<string, unknown>): string {
+  if (rec.isMeta === true) return ''
   const c = asRecord(rec.message).content
-  if (typeof c === 'string') return c
+  if (typeof c === 'string') return stripInjectedBlocks(c)
   if (Array.isArray(c)) {
     for (const b of c) {
-      if (b !== null && typeof b === 'object' && (b as Record<string, unknown>).type === 'text') {
-        const t = (b as Record<string, unknown>).text
-        return typeof t === 'string' ? t : ''
+      let t = ''
+      if (typeof b === 'string') t = b
+      else if (b !== null && typeof b === 'object' && (b as Record<string, unknown>).type === 'text') {
+        const raw = (b as Record<string, unknown>).text
+        t = typeof raw === 'string' ? raw : ''
       }
-      if (typeof b === 'string') return b
+      const typed = stripInjectedBlocks(t)
+      if (typed) return typed
     }
   }
   return ''
@@ -748,6 +925,8 @@ export function parseSessionSummary(text: string): { topic: string; cwd: string 
     const rec = parseJsonObject(ln)
     if (rec === null) continue
     if (!cwd) cwd = typeof rec.cwd === 'string' ? rec.cwd : ''
+    // the first user record whose text the PERSON typed (an injected
+    // <system-reminder>/<command-name>/… block alone is skipped, see firstUserText)
     if (!topic && rec.type === 'user') topic = normPrompt(firstUserText(rec))
     if (topic && cwd) break
   }
@@ -1022,6 +1201,8 @@ type AgentCacheEntry = {
   /** The parsed agent, before the per-scan `status`/`closed`/`role` overwrite; null = a negative entry (nothing drawn for this (mtime,size)). */
   adict: Agent | null
   isDone: boolean
+  /** DoneInfo.idle: a final-looking answer with no stop_reason → done once idle (computeStatus). */
+  idleDone: boolean
   inFlight: boolean
   versions: string[]
   skipped: number
@@ -1038,7 +1219,7 @@ const FIRST_LINE_CACHE = new Map<string, string>()
 /** A negative cache entry: the file at this (mtime,size) yields no agent; `skipped`/`oversized` are re-counted on every hit. */
 function negativeEntry(mtimeMs: number, size: number, now: number, opts: { skipped?: number; oversized?: boolean; retry?: boolean } = {}): AgentCacheEntry {
   return {
-    mtimeMs, size, at: now, adict: null, isDone: false, inFlight: false, versions: [], parent: null,
+    mtimeMs, size, at: now, adict: null, isDone: false, idleDone: false, inFlight: false, versions: [], parent: null,
     skipped: opts.skipped ?? 0, oversized: opts.oversized ?? false,
     ...(opts.retry ? { retryAt: now + GLOB_TTL_SEC * 1000 } : {}),
   }
@@ -1306,7 +1487,7 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
         truncated: done.truncated,
         model: lastModel(events),
       }
-      entry = { mtimeMs, size, at: now, adict, isDone: done.isDone, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent }
+      entry = { mtimeMs, size, at: now, adict, isDone: done.isDone, idleDone: done.idle, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent }
       AGENT_CACHE.set(path, entry)
     }
 
@@ -1318,12 +1499,26 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
     // once idle by RAW mtime (the in_flight override only rescues LIVE agents).
     const closed = live !== null && a.session_full !== '' && !live.has(a.session_full)
     a.closed = closed
-    a.status = computeStatus(nowSec, mtimeMs / 1000, entry.isDone, entry.inFlight, closed)
-    // role/subagent_type come from the PARENT file, which the agent-keyed cache
-    // cannot notice changing: re-resolve every scan (name_map_for is mtime-cached).
+    // role/subagent_type — and the engine's completion notice — come from the
+    // PARENT file, which the agent-keyed cache cannot notice changing:
+    // re-resolve every scan (the parent's parse is mtime-cached).
     const parent = entry.parent
     if (parent) seenParents.add(parent)
     if (a.is_workflow) seenJournals.add(joinPath(dirname(path), 'journal.jsonl'))
+    let isDone = entry.isDone
+    let inFlight = entry.inFlight
+    if (!isDone && !a.is_workflow && parent) {
+      // The parent's <task-notification> for this agent (the engine's own word
+      // that the loop ended) wins over a transcript whose last record is a
+      // lingering tool_result — unless the agent wrote again since (resumed).
+      const noticeMs = (await taskNotificationsFor(io, parent, statOf)).get(a.id)
+      if (noticeEndsAgent(noticeMs, mtimeMs)) {
+        isDone = true
+        inFlight = false
+        if (a.end_ms === null) a.end_ms = noticeMs ?? mtimeMs
+      }
+    }
+    a.status = computeStatus(nowSec, mtimeMs / 1000, isDone, inFlight, closed, entry.idleDone)
     const normTask = normPrompt(a.task)
     if (normTask && !a.is_workflow && parent) {
       const info = (await nameMapFor(io, parent, statOf)).get(normTask)

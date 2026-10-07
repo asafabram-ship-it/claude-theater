@@ -25,8 +25,8 @@
 //            label/sid when it fits · 🟢N · ⏳N · ✅N (toggles that room's "show
 //            finished"). Cards fill the row: 1 per row under COLS2_FROM, 2 to
 //            COLS3_FROM, 3 past it. A card is two lines, no frame:
-//              ● emoji name ⭐⏰❌                 mm:ss
-//                activity · subagent_type · 🧠 model   💬 (lead)
+//              ● 💬 emoji name ⭐⏰❌              mm:ss   (💬 on the lead's name only)
+//                activity · subagent_type · 🧠 model     (a "·" only between two parts)
 //            the name a plain Button (Enter/click opens the drawer); ● is the
 //            status colour (▸ focused, ◉ selected), ⏰ ≥ LONG_RUNNING_MS, ⭐
 //            within JUST_FINISHED_MS, ❌ failed/killed (from the live map).
@@ -314,6 +314,25 @@ export function cardName(a: Agent, lang: Lang): string {
   return a.role || personaName(a.persona_id, lang)
 }
 
+/** The lead's chat marker: on the lead card's FIRST line only (before the avatar), never elsewhere, never alone. */
+export const LEAD_MARK = '💬'
+
+/**
+ * The card's second line as segments: the non-empty parts with a lone "·"
+ * between each pair — so the separator exists only BETWEEN two texts and
+ * never dangles at either end (an empty subagent_type or model leaves no
+ * trace), whichever way the row is laid out (RTL rows reverse the segments).
+ */
+export function joinParts(parts: readonly string[]): string[] {
+  const out: string[] = []
+  for (const p of parts) {
+    if (!p) continue
+    if (out.length > 0) out.push('·')
+    out.push(p)
+  }
+  return out
+}
+
 /**
  * Cells a string takes on a terminal row: an emoji / wide glyph 2, a combining
  * mark, variation selector or ZWJ 0, anything else (Hebrew included) 1. An
@@ -581,13 +600,15 @@ export function registerUi(on: On): void {
           : <Button key="demo" hotkey={hk('d')} plain dimColor label={compact ? '🎬' : `🎬 ${L.demoLabel}`} onPress={toggleDemo} />}
       </Box>
     )
-    // --- search: the Input alone (the 🔍 lives in its placeholder; no extra label or jump button) ---
+    // --- search: the Input alone (the 🔍 lives in its placeholder; no label, no submit
+    //     button: a `submitLabel` is drawn as a button beside the field on the desktop, and the
+    //     search already applies on every keystroke through onInput) ---
     const search = e.surface !== 'mobile'
       ? (() => {
           const { Input } = $.ui.resolve(e)
           return (
             <Box flexDirection={row}>
-              <Input key="search" placeholder={`🔍 ${L.searchPlaceholder}`} value={q} submitLabel={L.scSearch} onInput={setSearch} onSubmit={setSearch} />
+              <Input key="search" placeholder={`🔍 ${L.searchPlaceholder}`} value={q} onInput={setSearch} onSubmit={setSearch} />
             </Box>
           )
         })()
@@ -650,8 +671,8 @@ export function registerUi(on: On): void {
     })()
 
     // --- one card (PAGE createWS/updateWS): two lines, the row's full width, no frame ---
-    //   ● emoji name ⭐⏰❌            mm:ss
-    //     activity · type · 🧠 model   💬
+    //   ● 💬 emoji name ⭐⏰❌         mm:ss      (💬 on the lead only)
+    //     activity · type · 🧠 model
     const card = (a: Agent) => {
       const name = cardName(a, lang)
       const liveA = live[a.id]
@@ -667,11 +688,13 @@ export function registerUi(on: On): void {
       const done = a.status === 'done'
       const mark = isSelected ? '◉' : isFocused ? '▸' : '●'
       const timer = fmt(agentElapsed(a, now))
-      const nameLabel = clip(`${a.emoji} ${name}`, innerW - cellWidth(timer) - 1 - (badges ? cellWidth(badges) + 1 : 0))
+      // the lead's 💬 rides its name on the first line (never a glyph of its own anywhere)
+      const nameLabel = clip(`${a.is_session ? `${LEAD_MARK} ` : ''}${a.emoji} ${name}`, innerW - cellWidth(timer) - 1 - (badges ? cellWidth(badges) + 1 : 0))
       const activity = activityLabel(a, lang)
-      const tail = a.is_session ? '💬' : ''
-      const subBudget = innerW - cellWidth(activity) - (modelTag ? cellWidth(modelTag) + 3 : 0) - (tail ? 3 : 0) - 3
+      const subBudget = innerW - cellWidth(activity) - (modelTag ? cellWidth(modelTag) + 3 : 0) - 3
       const subText = sub && subBudget >= 4 ? clip(sub, subBudget) : ''
+      // line 2: the non-empty parts, a "·" only BETWEEN two of them (never a dangling separator)
+      const line2 = joinParts([activity, subText, modelTag])
       const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
       const burst = bursting
         ? (e.surface === 'terminal' || e.surface === 'desktop')
@@ -691,14 +714,14 @@ export function registerUi(on: On): void {
             </Box>
             <Text key={`timer:${a.id}`} dimColor>{timer}</Text>
           </Box>
-          <Box flexDirection={row} justifyContent="space-between" gap={1}>
-            <Box flexDirection={row} gap={1}>
-              <Text>{' '}</Text>
-              <Text color={color} dimColor={done}>{activity}</Text>
-              {subText ? <Text dimColor>{`· ${subText}`}</Text> : null}
-              {modelTag ? <Text key={`model:${a.id}`} dimColor>{`· ${modelTag}`}</Text> : null}
-            </Box>
-            {tail ? <Text dimColor>{tail}</Text> : null}
+          <Box flexDirection={row} gap={1}>
+            <Text>{' '}</Text>
+            {line2.map((seg, i) =>
+              i === 0
+                ? <Text key={`act:${a.id}`} color={color} dimColor={done}>{seg}</Text>
+                : seg === modelTag && modelTag
+                  ? <Text key={`model:${a.id}`} dimColor>{seg}</Text>
+                  : <Text key={`l2:${a.id}:${i}`} dimColor>{seg}</Text>)}
           </Box>
           {burst}
         </Box>

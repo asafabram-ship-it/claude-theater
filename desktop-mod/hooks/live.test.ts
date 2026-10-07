@@ -4,7 +4,7 @@
 import type { AgentInfo } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { liveAged, liveAgedOut, liveAgentReturned, liveSpawned, liveStatus, liveToolReturned, liveToolStarted, mergeLive } from './live'
+import { isLaunchAck, liveAged, liveAgedOut, liveAgentReturned, liveSpawned, liveStatus, liveToolReturned, liveToolStarted, mergeLive } from './live'
 import type { LiveMap } from './live'
 import { EMPTY_PAYLOAD, IN_FLIGHT_MAX_SEC, MAX_AGE_MIN, PERSONA_EMOJI, RUNNING_STALE_SEC, personaIndex } from './model'
 import type { Agent, Payload } from './model'
@@ -52,6 +52,18 @@ test('spawn → tool → thinking → result keeps start_ms and the last tool', 
   // a re-spawn of the same id keeps its first start
   live = liveSpawned(live, { agentId: 'a1', tool_use_id: 't2', description: '', subagentType: '', prompt: '', model: '' }, T0 + 9000)
   expect(live.a1?.start_ms).toBe(T0)
+})
+
+test('a background Agent call returns a launch acknowledgment, not a result: the agent stays running', () => {
+  const live = spawn('a1')
+  const ack = 'Async agent launched successfully. (This tool result is internal metadata — never quote it.)\nagentId: a1 (internal ID)\nThe agent is working in the background.'
+  expect(isLaunchAck(ack)).toBe(true)
+  expect(isLaunchAck('All done.')).toBe(false)
+  expect(isLaunchAck(undefined)).toBe(false)
+  expect(liveAgentReturned(live, 't-a1', ack, false, T0 + 1000)).toBe(live)
+  expect(liveStatus(live.a1!, T0 + 1000)).toBe('running')
+  // a denied/errored launch still marks the agent failed
+  expect(liveAgentReturned(live, 't-a1', ack, true, T0 + 1000).a1?.engine_status).toBe('failed')
 })
 
 test('Agent call denied or errored marks the agent failed; unknown tool_use_id is ignored', () => {

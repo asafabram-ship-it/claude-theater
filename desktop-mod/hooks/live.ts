@@ -258,13 +258,15 @@ function liveToAgent(a: LiveAgent, now: number, sessionId: string, scan: Agent |
     closed: scan?.closed ?? false,
     is_workflow: scan?.is_workflow ?? false,
     truncated,
+    // live wins when agent.spawn named a model; else the transcript's latest assistant record
+    model: a.model || scan?.model || '',
   }
 }
 
 /**
  * PURE merge of the live map over the scanned payload. A live agent REPLACES
  * the scanner's agent of the same id (keeping the scanner's project, cwd,
- * persona_id/emoji, and its task/role when the events carry none); a live
+ * persona_id/emoji, and its task/role/model when the events carry none); a live
  * agent the scanner has not seen yet is added to this session's room
  * (session_full = sessionId, session = its first 8 chars, project/cwd from the
  * room's lead). A done entry past MAX_AGE_MIN is skipped (belt and braces over

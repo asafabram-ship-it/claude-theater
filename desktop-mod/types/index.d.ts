@@ -64,6 +64,14 @@ export type TheaterAgent = {
   /** True when `result` was cut to RESULT_CHAR_LIMIT. */
   truncated: boolean
   /**
+   * Mod-only (not in the Python payload): the model id the agent runs on
+   * ("claude-opus-5-5", "claude-haiku-4-5-20251001", ...), from the latest
+   * assistant record's `message.model` in its transcript — or, for a live
+   * agent of this session, from agent.spawn. "" when unknown. The UI shortens
+   * it with i18n modelLabel().
+   */
+  model: string
+  /**
    * Mod-only (not in the Python payload): the room's topic, filled on the
    * lead by session_summary(); absent on subagents.
    */

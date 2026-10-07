@@ -37,7 +37,7 @@ export type Strings = {
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
   dWorking: string; dDone: string; dStale: string; dFailed: string; dDuration: string; dElapsed: string
-  dAction: string; dTask: string; dResult: string; taskUnavailable: string
+  dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
   roomTitle: string; details: string; keysHint: string
@@ -66,7 +66,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     working: 'working', idleN: 'idle', finished: 'finished',
     dWorking: 'Working', dDone: 'Done', dStale: 'Idle', dFailed: 'Failed',
     dDuration: 'Duration ', dElapsed: 'Elapsed ',
-    dAction: 'Activity', dTask: 'Task', dResult: 'Result',
+    dAction: 'Activity', dTask: 'Task', dResult: 'Result', dModel: 'Model',
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
     oversizedN: n => `${n} transcript${n === 1 ? '' : 's'} over 4 MiB skipped`,
@@ -94,7 +94,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     working: 'עובדים', idleN: 'ממתינים', finished: 'סיימו',
     dWorking: 'עובד', dDone: 'סיים', dStale: 'ממתין', dFailed: 'נכשל',
     dDuration: 'משך ', dElapsed: 'זמן ',
-    dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה',
+    dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי MCP',
     oversizedN: n => `${n} תמלילים מעל 4MiB דולגו`,
@@ -122,6 +122,31 @@ export function activityLabel(a: Pick<Agent, 'status' | 'phase' | 'tool'>, lang:
     return s ? `🔌 ${s}` : L.actMcp
   }
   return L.tools[a.tool] ?? L.actThinking
+}
+
+/** Model families the label names (lower-case id token → display name). */
+const MODEL_FAMILIES: Readonly<Record<string, string>> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' }
+
+/**
+ * A short human name for a model id: "claude-opus-5-5" → "Opus 5.5",
+ * "claude-haiku-4-5-20251001" → "Haiku 4.5", "claude-fable-5-1" → "Fable 5.1",
+ * "claude-sonnet-4-20250514" → "Sonnet 4". Any other id → the raw id without
+ * the "claude-" prefix and a trailing date suffix (-YYYYMMDD). "" stays "".
+ * Also accepts the engine's bare aliases ("opus", "haiku" → "Opus", "Haiku").
+ */
+export function modelLabel(model: string): string {
+  const raw = (model ?? '').trim()
+  if (!raw) return ''
+  const id = raw.replace(/^claude-/i, '').replace(/-\d{8}$/, '')
+  const m = /^([a-z]+)(?:-(\d+(?:-\d+)*))?$/i.exec(id)
+  if (m) {
+    const family = MODEL_FAMILIES[(m[1] ?? '').toLowerCase()]
+    if (family) {
+      const version = (m[2] ?? '').replace(/-/g, '.')
+      return version ? `${family} ${version}` : family
+    }
+  }
+  return id
 }
 
 /** Text direction for a language. */

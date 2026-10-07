@@ -152,7 +152,8 @@ export function joinPath(base: string, ...parts: string[]): string {
 
 /** Why a file's text is unavailable. */
 type Unreadable = { text: null; oversized: boolean }
-type ReadOutcome = { text: string; oversized: false } | Unreadable
+/** `whole`: the entire file text, when the read fetched it anyway (readHead on a file that fits). */
+type ReadOutcome = { text: string; oversized: false; whole?: string } | Unreadable
 
 /**
  * Python read_tail_lines on an in-memory text: when longer than `maxBytes`
@@ -174,7 +175,7 @@ async function readHead(io: ScanIo, path: string, size: number, lines: number): 
   if (size <= FS_READ_LIMIT) {
     try {
       const text = await io.read(path)
-      return { text: text.split('\n').slice(0, lines).join('\n'), oversized: false }
+      return { text: text.split('\n').slice(0, lines).join('\n'), oversized: false, whole: text }
     } catch {
       return { text: null, oversized: false }
     }
@@ -260,6 +261,8 @@ export type TranscriptEvent = {
   tsMs: number | null
   /** The record's `version` field ("" when absent or not a string). */
   version: string
+  /** `message.model` ("claude-opus-5-5", ...; "" when absent or not a string). Set on assistant records. */
+  model: string
   /** The raw parsed record (for `cwd`, `sessionId`, ...). */
   raw: Record<string, unknown>
 }
@@ -309,6 +312,7 @@ export function parseAgentEvent(line: string): TranscriptEvent | null {
 
   const ver = rec.version
   const stop = msg.stop_reason
+  const model = msg.model
   return {
     kind: typeof rtype === 'string' && rtype ? rtype : 'unknown',
     text: textParts.join(' ').trim(),
@@ -319,8 +323,38 @@ export function parseAgentEvent(line: string): TranscriptEvent | null {
     // Only trust a string version stamp (a future build emitting a number/object
     // must not later crash majorMinor()/sorting).
     version: typeof ver === 'string' ? ver : '',
+    model: typeof model === 'string' ? model.trim() : '',
     raw: rec,
   }
+}
+
+/**
+ * The model the agent runs on: `message.model` of the LATEST assistant record
+ * that carries one ("" when none). The latest wins so a mid-run model switch
+ * (or a fallback) shows what runs now.
+ */
+export function lastModel(events: TranscriptEvent[]): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (ev && ev.kind === 'assistant' && ev.model) return ev.model
+  }
+  return ''
+}
+
+/**
+ * `lastModel` over a raw transcript text, scanning from the end so a long
+ * conversation parses only its last few lines; lines without `"model"` are
+ * skipped before the JSON parse. Used for a room lead's model.
+ */
+export function parseLastModel(text: string): string {
+  const lines = (text ?? '').split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ln = lines[i] ?? ''
+    if (!ln.includes('"model"') || !ln.includes('"assistant"')) continue
+    const ev = parseAgentEvent(ln)
+    if (ev && ev.kind === 'assistant' && ev.model) return ev.model
+  }
+  return ''
 }
 
 /**
@@ -562,10 +596,34 @@ export function parentSessionFile(agentPath: string, sessionId: string): string 
 type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo> }
 type ProjectCacheEntry = { mtimeMs: number; oversized: boolean; cwd: string }
 type SessionCacheEntry = { mtimeMs: number; oversized: boolean; topic: string; cwd: string }
+type ModelCacheEntry = { mtimeMs: number; model: string }
 
 const NAME_CACHE = new Map<string, NameCacheEntry>() // parent file → Agent/Task prompt → {description, subagent_type}
 const PROJECT_CACHE = new Map<string, ProjectCacheEntry>() // parent file → the conversation's real working dir
 const SESSION_CACHE = new Map<string, SessionCacheEntry>() // session file → (topic, cwd)
+/**
+ * session file → the lead's model (latest assistant record). Filled
+ * OPPORTUNISTICALLY: whenever a scan reads the whole session file anyway
+ * (nameMapFor for a parent with subagents, sessionSummary's head read on a
+ * file that fits) — never a read of its own, so a settled lead without
+ * subagents keeps the model seen at its last read. Mirrors the "no extra file
+ * reads" rule of projectCwdFor/sessionSummary.
+ */
+const SESSION_MODEL_CACHE = new Map<string, ModelCacheEntry>()
+
+/** Records the lead's model from a whole-file text a scan fetched anyway (by mtime; a model the text does not name leaves the last known one). */
+function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | undefined): void {
+  if (whole === undefined) return
+  const cached = SESSION_MODEL_CACHE.get(sessionFile)
+  if (cached && cached.mtimeMs === mtimeMs) return
+  const model = parseLastModel(whole)
+  SESSION_MODEL_CACHE.set(sessionFile, { mtimeMs, model: model || cached?.model || '' })
+}
+
+/** The lead's model as last seen ("" when the session file was never read whole). */
+export function sessionModelFor(sessionFile: string): string {
+  return SESSION_MODEL_CACHE.get(sessionFile)?.model ?? ''
+}
 
 /** Python name_map_for's parse: every Agent/Task tool_use → first spawn of a prompt wins. */
 export function parseNameMap(text: string): Map<string, NameInfo> {
@@ -616,6 +674,7 @@ export async function nameMapFor(
     map: read.text === null ? new Map() : parseNameMap(read.text),
   }
   NAME_CACHE.set(parentFile, entry)
+  if (read.text !== null) noteSessionModel(parentFile, st.mtimeMs, read.text) // the parent IS the room lead's file
   return entry.map
 }
 
@@ -717,6 +776,7 @@ export async function sessionSummary(
   const read = await readHead(io, sessionFile, st.size, 81)
   const parsed = read.text === null ? { topic: '', cwd: '' } : parseSessionSummary(read.text)
   SESSION_CACHE.set(sessionFile, { mtimeMs: st.mtimeMs, oversized: read.oversized, ...parsed })
+  if (read.text !== null) noteSessionModel(sessionFile, st.mtimeMs, read.whole)
   return parsed
 }
 
@@ -1017,6 +1077,7 @@ export function resetScannerCaches(): void {
   NAME_CACHE.clear()
   PROJECT_CACHE.clear()
   SESSION_CACHE.clear()
+  SESSION_MODEL_CACHE.clear()
   JOURNAL_CACHE.clear()
   GLOB_CACHE.clear()
   PERSONA_ASSIGNED.clear()
@@ -1243,6 +1304,7 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
         closed: false,
         is_workflow: workflow,
         truncated: done.truncated,
+        model: lastModel(events),
       }
       entry = { mtimeMs, size, at: now, adict, isDone: done.isDone, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent }
       AGENT_CACHE.set(path, entry)
@@ -1351,11 +1413,13 @@ async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<st
       closed,
       is_workflow: false,
       truncated: false,
+      model: sessionModelFor(path),
       topic,
     })
   }
   // evict cache entries for session files no longer in the recent window
   for (const p of [...SESSION_CACHE.keys()]) if (!seenSessions.has(p)) SESSION_CACHE.delete(p)
+  for (const p of [...SESSION_MODEL_CACHE.keys()]) if (!seenSessions.has(p)) SESSION_MODEL_CACHE.delete(p)
   return entries
 }
 
@@ -1371,6 +1435,8 @@ type DemoOpts = {
   result?: string | null
   is_session?: boolean
   mtime_offset?: number
+  /** The model id; the demo's default is the mid-tier model. */
+  model?: string
 }
 
 function demoAgent(
@@ -1409,6 +1475,7 @@ function demoAgent(
     closed: false,
     is_workflow: false,
     truncated: false,
+    model: opts.model ?? 'claude-sonnet-5-5',
     ...(opts.is_session ? { topic: task } : {}),
   }
 }
@@ -1431,29 +1498,29 @@ export function demoPayload(now: number, phase?: number): Payload {
   const agents: Agent[] = [
     demoAgent(now, 'demo-research-aa', s2, cwd, 'running', 'WebSearch',
       'Research incremental static regeneration approaches and summarize the trade-offs.',
-      { role: 'research the ISR landscape', subagent_type: 'general-purpose', start_offset: 95 }),
+      { role: 'research the ISR landscape', subagent_type: 'general-purpose', start_offset: 95, model: 'claude-opus-5-5' }),
     demoAgent(now, 'demo-reader-bb', s1, cwd, 'running', 'Read',
       'Read the auth middleware and map every place the session token is validated.',
-      { role: 'map session-token validation', subagent_type: 'Explore', start_offset: 42 }),
+      { role: 'map session-token validation', subagent_type: 'Explore', start_offset: 42, model: 'claude-haiku-4-5-20251001' }),
     demoAgent(now, 'demo-grep-cc', s1, cwd, 'running', 'Grep',
       'Find all TODO and FIXME comments across the repo and group them by file.',
-      { start_offset: 18 }),
+      { start_offset: 18, model: 'claude-haiku-4-5-20251001' }),
     demoAgent(now, 'demo-mcp-dd', s2, cwd, 'running', 'mcp__github__search_issues',
       "Pull the open issues labeled 'bug' and cluster them by component.",
-      { role: 'triage open bugs', subagent_type: 'general-purpose', start_offset: 63 }),
+      { role: 'triage open bugs', subagent_type: 'general-purpose', start_offset: 63, model: 'claude-sonnet-5-5' }),
     demoAgent(now, 'demo-build-ee', s1, cwd, 'stale', 'Bash',
-      'Run the full test suite and report any failures.', { start_offset: 320 }),
+      'Run the full test suite and report any failures.', { start_offset: 320, model: 'claude-sonnet-5-5' }),
     demoAgent(now, 'demo-writer-ff', s2, cwd, 'done', 'Write',
       'Draft the migration guide for the v2 config format.',
       {
-        role: 'draft the v2 migration guide', subagent_type: 'general-purpose', start_offset: 150,
+        role: 'draft the v2 migration guide', subagent_type: 'general-purpose', start_offset: 150, model: 'claude-opus-5-5',
         result: 'Done. Wrote migration-v2.md: a step-by-step guide covering the renamed keys, the '
           + 'deprecation timeline, and a codemod snippet. Flagged two breaking changes for manual review.',
       }),
     demoAgent(now, 'demo-finisher-gg', s1, cwd, finishing ? 'done' : 'running', 'StructuredOutput',
       'Summarize the security review findings into a prioritized list.',
       {
-        role: 'summarize the security review', subagent_type: 'code-reviewer', start_offset: 51,
+        role: 'summarize the security review', subagent_type: 'code-reviewer', start_offset: 51, model: 'claude-fable-5-1',
         result: 'Summary: 3 high, 5 medium, 11 low. Top item: the password-reset token is not '
           + 'compared in constant time.',
       }),
@@ -1462,15 +1529,15 @@ export function demoPayload(now: number, phase?: number): Payload {
     // appears mid-loop so the pane plays its walk-in animation
     agents.push(demoAgent(now, 'demo-newcomer-hh', s2, cwd, 'running', 'Edit',
       'Apply the review fixes to the config loader and re-run the type checker.',
-      { role: 'apply the review fixes', subagent_type: 'general-purpose', start_offset: 3 }))
+      { role: 'apply the review fixes', subagent_type: 'general-purpose', start_offset: 3, model: 'claude-sonnet-5-5' }))
   }
   // the two conversations themselves → each leads its room with the topic as the title
   agents.push(demoAgent(now, 'demo-conv-frontend', s1, cwd, 'running', '',
     'Ship the v2 config migration and clean up the auth middleware.',
-    { start_offset: 380, is_session: true, mtime_offset: 7 }))
+    { start_offset: 380, is_session: true, mtime_offset: 7, model: 'claude-fable-5-1' }))
   agents.push(demoAgent(now, 'demo-conv-research', s2, cwd, 'running', '',
     'Plan the static-regeneration rollout and triage the bug backlog.',
-    { start_offset: 300, is_session: true, mtime_offset: 14 }))
+    { start_offset: 300, is_session: true, mtime_offset: 14, model: 'claude-opus-5-5' }))
   resolvePersonas(agents)
   sortAgents(agents)
   return { agents, versions: ['2.1.0'], skipped: 0, oversized: 0, scanned_ms: now, demo: true }

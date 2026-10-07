@@ -13,8 +13,8 @@ import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
 import { demoPayload } from './scanner'
 import {
-  agentElapsed, cardName, detectFinishes, emptyKind, fmt, headerCounts, isLongRunning, matchesSearch,
-  officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
+  CARD_MAX_W, COLS2_FROM, COLS3_FROM, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
+  headerCounts, isLongRunning, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
 } from './ui'
 
 const T0 = 1_700_000_000_000
@@ -31,7 +31,7 @@ function agent(over: Partial<Agent> & { id: string }): Agent {
     persona_id: 3, emoji: PERSONA_EMOJI[3] ?? '', role: '', subagent_type: '', status: 'running', tool: 'Read', phase: 'tool',
     task, task_short: task.split('. ')[0] + '.', result: null, start_ms: T0 - 30_000, end_ms: null,
     session: SA.slice(0, 8), session_full: SA, cwd: '/home/dev/acme-web', project: '/home/dev/acme-web', mtime_ms: T0 - 1000,
-    is_session: false, closed: false, is_workflow: false, truncated: false, ...over,
+    is_session: false, closed: false, is_workflow: false, truncated: false, model: '', ...over,
   }
 }
 
@@ -39,7 +39,7 @@ function agent(over: Partial<Agent> & { id: string }): Agent {
 function fixture(): Agent[] {
   return [
     agent({ id: 'lead-a', is_session: true, tool: '', phase: 'thinking', task: 'Ship the v2 config migration. Then clean up.', topic: 'Ship the v2 config migration.', start_ms: T0 - 400_000, mtime_ms: T0 - 5000, session: SA.slice(0, 8), session_full: SA }),
-    agent({ id: 'a1', role: 'map session-token validation', subagent_type: 'Explore', tool: 'Read', persona_id: 7 }),
+    agent({ id: 'a1', role: 'map session-token validation', subagent_type: 'Explore', tool: 'Read', persona_id: 7, model: 'claude-opus-5-5' }),
     agent({ id: 'b1', role: 'triage open bugs', subagent_type: 'general-purpose', tool: 'mcp__github__search_issues', session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research', mtime_ms: T0 - 20_000, persona_id: 9 }),
     agent({ id: 'a2', role: 'draft the v2 migration guide', subagent_type: 'general-purpose', status: 'done', tool: 'Write', end_ms: T0 - 2000, result: 'Done. Wrote migration-v2.md.', truncated: true, persona_id: 11 }),
   ]
@@ -173,6 +173,30 @@ test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop
   expect(paneTitle('he', 0)).toBe('🎭 התיאטרון')
 })
 
+test('layout budget: cell widths, end-clipping with an ellipsis, the card grid per bodyColumns', () => {
+  expect(cellWidth('abc')).toBe(3)
+  expect(cellWidth('שלום')).toBe(4)
+  expect(cellWidth('🟢 3')).toBe(4)
+  expect(cellWidth('✍️')).toBe(2) // the variation selector takes no cell
+  expect(clip('Session without choosing a project', 40)).toBe('Session without choosing a project')
+  // the START stays, the END is cut (an RTL row must never lose an English title's beginning)
+  expect(clip('Session without choosing a project', 12)).toBe('Session wit…')
+  expect(cellWidth(clip('🕵️ map session-token validation', 10))).toBeLessThanOrEqual(10)
+  expect(clip('x', 0)).toBe('')
+  expect(clip('abc', 1)).toBe('…')
+  // 1 / 2 / 3 cards per row; cards fill the row (1-cell gutter) and never exceed the body
+  for (const w of [24, 40, 45, 59, 60, 71, 72, 90, 119, 120, 140, 200]) {
+    const g = gridFor(w)
+    expect(g.perRow).toBe(w >= COLS3_FROM ? 3 : w >= COLS2_FROM ? 2 : 1)
+    expect(g.cardW * g.perRow + (g.perRow - 1)).toBeLessThanOrEqual(Math.max(MIN_WIDTH, w))
+    expect(g.cardW).toBeLessThanOrEqual(CARD_MAX_W)
+    expect(g.cardW).toBeGreaterThanOrEqual(20)
+  }
+  expect(gridFor(40).cardW).toBe(40)
+  expect(gridFor(90).cardW).toBe(44)
+  expect(gridFor(140).cardW).toBe(46)
+})
+
 type On = Parameters<typeof mock.store>[0]
 
 function beneath(on: On, current: () => Agent[], store: Record<string, unknown> = {}) {
@@ -232,6 +256,55 @@ test('the office draws rooms, cards, counts and the footer on every surface', as
   // the scan error and the oversized count reach the footer
   agents = fixture()
   await clock.advance(1500)
+})
+
+test('the pane fits narrow, medium and wide bodies: cards, keys, the compact header/toolbar and the 🧠 model tag', async ($, on) => {
+  const agents = fixture()
+  const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(1500)
+  for (const bodyColumns of [40, 70, 140] as const) {
+    for (const surface of ['desktop', 'terminal'] as const) {
+      const ui = await $.ui.mount({ ...PANE, surface, props: { ...PANE.props, bodyColumns } })
+      // every card, room toggle and control is there whatever the width
+      for (const key of ['open:lead-a', 'open:a1', 'open:b1', 'rdone:' + SA, 'pin:' + SA, 'pin:' + SB, 'showDone', 'mute', 'lang', 'help', 'demo', 'search', 'prev', 'next', 'openFocused']) {
+        expect(await ui.find({ key })).toBeDefined()
+      }
+      expect(await ui.find({ key: 'open:a2' })).toBeUndefined()
+      // the model tag: a1 runs on claude-opus-5-5 → a dim "· 🧠 Opus 5.5" on its second line (the only agent with a model)
+      expect((await ui.find({ type: 'Text', text: /🧠/ }))?.text).toBe('· 🧠 Opus 5.5')
+      // room headers keep their beginning; the timer sits on the card's first line
+      expect(await ui.find({ type: 'Text', text: /^💬 Ship the v2/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^00:3\d$/ })).toBeDefined() // a1 started 30 s before T0; the poll advanced 1.5 s
+      if (bodyColumns < 60) {
+        // compact: icon-only header and toolbar, no worded counts, no key-hint chips
+        expect(await ui.find({ type: 'Text', text: /🟢3 ✅1/ })).toBeDefined()
+        expect(await ui.find({ type: 'Text', text: /עובדים/ })).toBeUndefined()
+        expect((await ui.find({ key: 'showDone' }))?.text).toBe('☐')
+        expect((await ui.find({ key: 'lang' }))?.text).toBe('EN')
+        expect((await ui.find({ key: 'demo' }))?.text).toBe('🎬')
+      } else {
+        expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
+        expect((await ui.find({ type: 'Text', text: /🟢 3 עובדים/ }))?.text).toMatch(/✅ 1 סיימו/)
+        expect((await ui.find({ key: 'showDone' }))?.text).toMatch(/הצג שהושלמו/)
+      }
+      // the name label is clipped to the card, never wider than it
+      const g = gridFor(bodyColumns)
+      expect(cellWidth((await ui.find({ key: 'open:a1' }))?.text ?? '')).toBeLessThanOrEqual(g.cardW - 2 - 6)
+      // the drawer shows the model row
+      await ui.press({ key: 'open:a1' })
+      expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^🧠 Opus 5\.5$/ })).toBeDefined()
+      await ui.press({ key: 'close' })
+      // b1 carries no model → no model row, no tag anywhere in its drawer
+      await ui.press({ key: 'open:b1' })
+      expect(await ui.find({ type: 'Text', text: /^מודל$/ })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: /^🧠/ })).toBeUndefined()
+      await ui.press({ key: 'close' })
+      await ui.unmount()
+    }
+  }
 })
 
 test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room toggle, drawer, search', async ($, on) => {

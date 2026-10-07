@@ -25,7 +25,7 @@ function scanAgent(over: Partial<Agent>): Agent {
   return {
     id: 'x', persona_id: 3, emoji: PERSONA_EMOJI[3] ?? '', role: '', subagent_type: '', status: 'running', tool: '', phase: 'thinking',
     task: '', task_short: '', result: null, start_ms: T0, end_ms: null, session: SESSION.slice(0, 8), session_full: SESSION,
-    cwd: '', project: '', mtime_ms: T0, is_session: false, closed: false, is_workflow: false, truncated: false, ...over,
+    cwd: '', project: '', mtime_ms: T0, is_session: false, closed: false, is_workflow: false, truncated: false, model: '', ...over,
   }
 }
 
@@ -156,6 +156,7 @@ test('mergeLive adds an unseen live agent to this session room with the lead pro
   expect(a1.closed).toBe(false)
   expect(a1.persona_id).toBe(personaIndex('a1'))
   expect(a1.emoji).toBe(PERSONA_EMOJI[personaIndex('a1')])
+  expect(a1.model).toBe('haiku') // from agent.spawn
   // the scanner's objects are untouched and the other room is kept
   expect(merged.agents.length).toBe(3)
   expect(merged.agents.some(a => a.id === 'other')).toBe(true)
@@ -220,4 +221,23 @@ test('mergeLive sorts running, stale, done; lead first within a status; newest f
   live = liveAged(live, [listed('new', 'running'), listed('stale', 'running')], T0 + 100)
   const merged = mergeLive(payloadOf(doneOne, oldRunner, lead), live, SESSION, T0 + 200)
   expect(merged.agents.map(a => a.id)).toEqual([SESSION, 'new', 'old', 'stale', 'done'])
+})
+
+test("mergeLive model: live (agent.spawn) wins when non-empty, else the scanner's transcript model, else ''", () => {
+  const scanned = scanAgent({ id: 'a1', model: 'claude-sonnet-5-5' })
+  const scannedNoModel = scanAgent({ id: 'a2', model: '' })
+  let live: LiveMap = { ...spawn('a1') } // model 'haiku'
+  live = liveSpawned(live, { agentId: 'a2', tool_use_id: 't-a2', description: '', subagentType: '', prompt: '', model: '' }, T0)
+  live = liveSpawned(live, { agentId: 'a3', tool_use_id: 't-a3', description: '', subagentType: '', prompt: '', model: 'claude-opus-5-5' }, T0)
+  live = liveAged(live, [listed('z9', 'running')], T0) // listed only: no model known
+  const merged = mergeLive(payloadOf(scanned, scannedNoModel), live, SESSION, T0 + 1)
+  const by = (id: string) => merged.agents.find(a => a.id === id)!
+  expect(by('a1').model).toBe('haiku')
+  expect(by('a2').model).toBe('')
+  expect(by('a3').model).toBe('claude-opus-5-5')
+  expect(by('z9').model).toBe('')
+  // a live entry with no model falls back to the scanner's
+  const fallback = mergeLive(payloadOf(scanAgent({ id: 'a2', model: 'claude-haiku-4-5-20251001' })), { a2: live.a2! }, SESSION, T0 + 1)
+  expect(fallback.agents[0]!.model).toBe('claude-haiku-4-5-20251001')
+  expect(scanned.model).toBe('claude-sonnet-5-5') // the scanner's object is untouched
 })

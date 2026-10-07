@@ -17,6 +17,7 @@ import {
   demoPayload,
   detectDone,
   isWorkflowAgent,
+  lastModel,
   lastToolUseName,
   liveSessionIds,
   nameMapFor,
@@ -24,6 +25,7 @@ import {
   parentSessionFile,
   parseAgentEvent,
   parseEvents,
+  parseLastModel,
   projectCwdFor,
   resetScannerCaches,
   resolvePersonas,
@@ -159,7 +161,7 @@ function parentTranscript(sessionId: string, topic: string, spawns: Array<{ prom
   for (const s of spawns) {
     out.push(JSON.stringify({
       type: 'assistant', sessionId, cwd: '/home/dev/demo-project', timestamp: '2026-06-01T09:00:01.000Z',
-      message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Agent', input: { description: s.description, subagent_type: s.subagent_type, prompt: s.prompt } }] },
+      message: { role: 'assistant', model: 'claude-fable-5-1', content: [{ type: 'tool_use', name: 'Agent', input: { description: s.description, subagent_type: s.subagent_type, prompt: s.prompt } }] },
     }))
   }
   return out.join('\n') + '\n'
@@ -429,7 +431,7 @@ test('resolvePersonas: distinct within a room, stable across scans, pruned', asy
   const mk = (id: string, room: string, start: number, lead = false): Agent => ({
     id, persona_id: 7, emoji: '', role: '', subagent_type: '', status: 'running', tool: '', phase: 'thinking',
     task: '', task_short: '', result: null, start_ms: start, end_ms: null, session: room.slice(0, 8), session_full: room,
-    cwd: '', project: '', mtime_ms: start, is_session: lead, closed: false, is_workflow: false, truncated: false,
+    cwd: '', project: '', mtime_ms: start, is_session: lead, closed: false, is_workflow: false, truncated: false, model: '',
   })
   const a = mk('a', 'r1', 100)
   const b = mk('b', 'r1', 200)
@@ -665,4 +667,91 @@ test('demoPayload: the synthetic office, phased', async () => {
     expect(new Set(members.map(a => a.persona_id)).size).toBe(members.length)
   }
   expect(demoPayload(NOW).agents.length).toBeGreaterThanOrEqual(9)
+})
+
+// ---------------------------------------------------------------------------
+// model: the latest assistant record's message.model
+// ---------------------------------------------------------------------------
+
+/** A transcript whose assistant records name their model (the real engine stamps every assistant record). */
+function modelTranscript(agentId: string, sessionId: string, models: string[], done = false): string {
+  const out = [
+    JSON.stringify({ type: 'user', agentId, sessionId, timestamp: '2026-06-01T14:50:00.000Z', cwd: '/home/dev/demo-project', version: '2.1.0', message: { content: `Task of ${agentId}.` } }),
+  ]
+  models.forEach((model, i) => {
+    out.push(JSON.stringify({ type: 'assistant', timestamp: `2026-06-01T14:50:0${i + 1}.000Z`, version: '2.1.0', message: { model, content: [{ type: 'tool_use', name: 'Read', input: {} }] } }))
+    out.push(JSON.stringify({ type: 'user', timestamp: `2026-06-01T14:50:0${i + 1}.500Z`, version: '2.1.0', message: { content: [{ type: 'tool_result', content: 'ok' }] } }))
+  })
+  if (done) out.push(JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T14:50:09.000Z', version: '2.1.0', message: { content: [{ type: 'text', text: 'Done.' }], stop_reason: 'end_turn' } }))
+  return out.join('\n') + '\n'
+}
+
+test('model: parseAgentEvent reads message.model; lastModel takes the latest assistant record that names one', async () => {
+  const ev = parseAgentEvent('{"type":"assistant","message":{"model":" claude-opus-5-5 ","content":[]}}')!
+  expect(ev.model).toBe('claude-opus-5-5')
+  expect(parseAgentEvent('{"type":"assistant","message":{"model":42,"content":[]}}')?.model).toBe('')
+  expect(parseAgentEvent('{"type":"user","message":{"content":"x"}}')?.model).toBe('')
+  // the fixtures carry no model: "" (never undefined)
+  for (const ev2 of parseEvents(lines('cc-2.1/running.jsonl')).events) expect(ev2.model).toBe('')
+  expect(lastModel(parseEvents(lines('cc-2.1/done.jsonl')).events)).toBe('')
+  // a switch mid-run: the latest wins; a trailing assistant record WITHOUT a model does not erase it
+  const { events } = parseEvents(modelTranscript('m1', 's', ['claude-haiku-4-5-20251001', 'claude-opus-5-5'], true).split('\n'))
+  expect(lastModel(events)).toBe('claude-opus-5-5')
+  // a user record naming a model (never happens) is ignored
+  const odd = parseAgentEvent('{"type":"user","message":{"model":"claude-x","content":"x"}}')!
+  expect(lastModel([...events, odd])).toBe('claude-opus-5-5')
+  expect(lastModel([])).toBe('')
+  // the raw-text variant used for the lead
+  expect(parseLastModel(modelTranscript('m1', 's', ['claude-haiku-4-5-20251001', 'claude-sonnet-5-5']))).toBe('claude-sonnet-5-5')
+  expect(parseLastModel('not json\n{"type":"assistant","message":{"model":"claude-fable-5-1"}}\n{broken "model" "assistant"\n')).toBe('claude-fable-5-1')
+  expect(parseLastModel('')).toBe('')
+})
+
+test("scanAll: every agent carries `model` — '' when the transcript names none, the latest one otherwise; the lead takes its conversation's", async () => {
+  resetScannerCaches()
+  const fs = office()
+  fs.put(`${PROJ}/sess-aaaa-1111/subagents/agent-model-0012.jsonl`, modelTranscript('model-0012', 'sess-aaaa-1111', ['claude-haiku-4-5-20251001', 'claude-opus-5-5']), NOW - 5000)
+  fs.put(`${PROJ}/sess-cccc-3333/subagents/agent-model-0013.jsonl`, modelTranscript('model-0013', 'sess-cccc-3333', ['claude-sonnet-5-5'], true), NOW - 5000)
+  // room C's conversation spawned nothing through Agent (its name map is never wanted), but its
+  // own assistant turns name a model: the lead's model comes from sessionSummary's head read
+  const parentC = `${PROJ}/sess-cccc-3333.jsonl`
+  fs.put(parentC, fs.files.get(parentC)!.text + JSON.stringify({ type: 'assistant', sessionId: 'sess-cccc-3333', message: { model: 'claude-haiku-4-5-20251001', content: [{ type: 'text', text: 'reading' }] } }) + '\n', NOW - 3 * MIN)
+  const io = fs.io()
+  const p = await scanAll(io, NOW)
+  for (const a of p.agents) expect(typeof a.model).toBe('string')
+  expect(byId(p.agents, 'fixture-run-0001').model).toBe('') // the fixture names no model
+  expect(byId(p.agents, 'model-0012').model).toBe('claude-opus-5-5') // the latest assistant record wins
+  expect(byId(p.agents, 'model-0013').model).toBe('claude-sonnet-5-5')
+  expect(byId(p.agents, 'model-0013').status).toBe('done')
+  // leads: room A's Agent spawns (parentTranscript) are assistant records naming claude-fable-5-1,
+  // read whole for the name map; room C through the summary's head read; room B has no
+  // assistant record at all → ''
+  expect(byId(p.agents, 'sess-aaaa-1111').model).toBe('claude-fable-5-1')
+  expect(byId(p.agents, 'sess-cccc-3333').model).toBe('claude-haiku-4-5-20251001')
+  expect(byId(p.agents, 'sess-bbbb-2222').model).toBe('')
+  // cache hit: the model survives without a re-read
+  const reads = fs.reads.length
+  const q = await scanAll(io, NOW + 1500)
+  expect(fs.reads.slice(reads)).toEqual([])
+  expect(byId(q.agents, 'model-0012').model).toBe('claude-opus-5-5')
+  expect(byId(q.agents, 'sess-aaaa-1111').model).toBe('claude-fable-5-1')
+  // the conversation switches model: a changed parent (re-read for its name map anyway) updates the lead
+  const parent = `${PROJ}/sess-aaaa-1111.jsonl`
+  fs.put(parent, fs.files.get(parent)!.text + JSON.stringify({ type: 'assistant', sessionId: 'sess-aaaa-1111', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'switched' }] } }) + '\n', NOW + 2000)
+  expect(byId((await scanAll(io, NOW + 3000)).agents, 'sess-aaaa-1111').model).toBe('claude-opus-5-5')
+  // an oversized parent: no whole read → the lead's model stays unknown, never a crash
+  resetScannerCaches()
+  const fs2 = office()
+  fs2.put(parent, fs2.files.get(parent)!.text, NOW - MIN, FS_READ_LIMIT + 1)
+  const o = await scanAll(fs2.io(), NOW)
+  expect(o.error).toBeUndefined()
+  expect(byId(o.agents, 'sess-aaaa-1111').model).toBe('')
+})
+
+test('demoPayload: every demo agent names a plausible model', async () => {
+  const p = demoPayload(NOW, 7)
+  for (const a of p.agents) expect(a.model).toMatch(/^claude-(opus|sonnet|haiku|fable)-\d/)
+  expect(byId(p.agents, 'demo-reader-bb').model).toBe('claude-haiku-4-5-20251001')
+  expect(byId(p.agents, 'demo-conv-frontend').model).toBe('claude-fable-5-1')
+  expect(new Set(p.agents.map(a => a.model)).size).toBeGreaterThanOrEqual(3)
 })

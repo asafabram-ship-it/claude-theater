@@ -155,5 +155,13 @@ export const DEFAULT_VIEW: TheaterView = {
   focusIndex: -1,
 }
 
+/**
+ * Payload field `model` (TheaterAgent.model, see ../types/index.d.ts): the raw
+ * model id, "" when unknown. Filled by scanner.ts (transcripts: the latest
+ * assistant record's `message.model`) and live.ts (agent.spawn's model wins
+ * when non-empty); shortened for display by i18n.ts `modelLabel()`.
+ */
+export const UNKNOWN_MODEL = '' as const
+
 /** $.store keys (prefs mirror). */
 export const STORE_PREFS_KEY = 'prefs'

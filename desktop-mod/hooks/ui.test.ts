@@ -480,7 +480,7 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
       }
       // the name label is clipped to the card, never wider than it
       const g = gridFor(bodyColumns)
-      if (surface === 'desktop') expect((await ui.find({ key: 'open:a1' }))?.text).toBe('2') // the lead is 1, a1 is 2 in room A
+      if (surface === 'desktop') expect((await ui.find({ key: 'open:a1' }))?.text).toMatch(/^2 /) // the lead is 1, a1 is 2 in room A
       else expect(cellWidth((await ui.find({ key: 'open:a1' }))?.text ?? '')).toBeLessThanOrEqual(g.cardW - 2 - 6)
       // the drawer shows the model row
       await ui.press({ key: 'open:a1' })
@@ -666,7 +666,7 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
     const t = await tileOf(ui, id)
     expect(t).toBeDefined()
     expect(t?.tile).toMatch(new RegExp(`class="numt"[^>]*>${n}</text>`))
-    expect((await ui.find({ key: `open:${id}` }))?.text).toBe(n)
+    expect((await ui.find({ key: `open:${id}` }))?.text).toMatch(new RegExp(`^${n} `))
     expect(await ui.find({ key: `tile:${id}` })).toBeUndefined()
   }
   // the tile carries what the text card carried: status, activity, timer (minutes), model, the lead's 💬 — and a full tooltip
@@ -706,7 +706,7 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   await clock.advance(1500)
   expect((await tileOf(ui, 'newbie'))?.tile).toMatch(/ entering/)
   expect((await tileOf(ui, 'a1'))?.tile.includes(' entering')).toBe(false)
-  expect((await ui.find({ key: 'open:newbie' }))?.text).toBe('3')
+  expect((await ui.find({ key: 'open:newbie' }))?.text).toMatch(/^3 /)
   await clock.advance(1500)
   expect((await tileOf(ui, 'newbie'))?.tile.includes(' entering')).toBe(false)
   // a finish: toast + chime as before, ⭐ + hop (one-shot) in the tile, and NO confetti Client on the desktop

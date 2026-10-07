@@ -206,6 +206,11 @@ let polling = false
 let lastRun: number | undefined
 /** renderKey of the payload last published, at its publish time; undefined until the first publish (and after a hot reload: one publish). */
 let lastKey: string | undefined
+/** The coarse renderKey last published, and when (the CALM GUARD). */
+let lastCoarse: string | undefined
+let lastPublishAt = -Infinity
+/** Activity-only changes (tool / phase / the minute) reach the pane at most this often. */
+export const CALM_MS = 8_000
 
 /**
  * One poll. Pane up: scan the files (or the demo cast), age + merge this
@@ -243,11 +248,19 @@ export async function poll($: EngineInterface): Promise<void> {
     // view.justFinished), never scanned_ms or raw timestamps. The text
     // surfaces' mm:ss tick from `tick` instead, which the desktop never reads.
     const key = renderKey(merged, now, view.justFinished)
-    // (the second test: what is IN state draws differently — a hook beneath rewrote the value, or a reload)
-    if (key !== lastKey || renderKey(await read($, payloadAtom), now, view.justFinished) !== key) {
+    // THE CALM GUARD: on the desktop EVERY redraw of the pane blinks (even a pane of plain Text), so
+    // the moment-to-moment activity (tool / phase, the minute) is batched: published at most once
+    // per CALM_MS. What matters at once (an agent arriving, finishing, failing, a ⭐) is in the
+    // coarse key and publishes on the next poll.
+    const coarse = renderKey(merged, now, view.justFinished, true)
+    const due = coarse !== lastCoarse || now - lastPublishAt >= CALM_MS
+    // (the second test: what is IN state draws differently in substance — a hook beneath rewrote the value, or a reload)
+    if ((key !== lastKey && due) || renderKey(await read($, payloadAtom), now, view.justFinished, true) !== coarse) {
       // Never roll the office back: a slower, older scan loses to a newer publish.
       await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
       lastKey = key
+      lastCoarse = coarse
+      lastPublishAt = now
     }
     const curError = await read($, scanErrorAtom)
     if ((error ?? null) !== curError) await update($, scanErrorAtom, () => error ?? null)

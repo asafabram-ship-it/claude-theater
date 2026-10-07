@@ -3,7 +3,8 @@
 // `Client` (terminal, desktop); the others get a static "🎉✨" line.
 //
 // A surface module has no `$` and no timers but the surface's own frame
-// clock (`surface.every`): it runs a 12-frame burst at ~90 ms, the glyphs
+// clock (`surface.every`): it runs a 12-frame burst at 85 ms (≈ PAGE's 0.85 s
+// fall; the card drops the Client after BURST_MS = 1050 ms), the glyphs
 // rising and spreading across the card's width, then settles on a sparkle
 // line. Props are plain data: { seed, width } (seed = the agent id's hash,
 // so two cards never burst alike).
@@ -17,7 +18,7 @@ type ConfettiState = { frame: number }
 
 const GLYPHS = ['🎉', '✨', '🎊', '⭐', '✅'] as const
 const FRAMES = 12
-const FRAME_MS = 90
+const FRAME_MS = 85
 
 /** The burst's one row at `frame` (exported for the module's own reasoning; the engine calls `Confetti`). */
 export function confettiLine(seed: number, width: number, frame: number): string {

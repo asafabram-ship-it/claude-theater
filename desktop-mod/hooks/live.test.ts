@@ -8,6 +8,7 @@ import { liveAged, liveAgentReturned, liveSpawned, liveStatus, liveToolReturned,
 import type { LiveMap } from './live'
 import { EMPTY_PAYLOAD, IN_FLIGHT_MAX_SEC, PERSONA_EMOJI, RUNNING_STALE_SEC, personaIndex } from './model'
 import type { Agent, Payload } from './model'
+import { resetScannerCaches } from './scanner'
 
 const SESSION = '0123456789abcdef-session'
 const T0 = 1_000_000
@@ -16,7 +17,7 @@ function spawn(id: string, toolUseId = `t-${id}`, now = T0): LiveMap {
   return liveSpawned({}, { agentId: id, tool_use_id: toolUseId, description: `desc ${id}`, subagentType: 'Explore', prompt: `Read ${id}. Then stop.`, model: 'haiku' }, now)
 }
 
-function listed(id: string, status: string, extra: Partial<AgentInfo> = {}): AgentInfo {
+function listed(id: string, status: AgentInfo['status'], extra: Partial<AgentInfo> = {}): AgentInfo {
   return { id, description: `listed ${id}`, type: 'general-purpose', status, ...extra }
 }
 
@@ -143,6 +144,9 @@ test('mergeLive adds an unseen live agent to this session room with the lead pro
 })
 
 test('mergeLive replaces the scanner agent of the same id but keeps its persona, project and cwd', () => {
+  // resolvePersonas remembers seats across scans (Python behaviour); an earlier
+  // test seated (SESSION, a1) elsewhere, so start from an empty office.
+  resetScannerCaches()
   const scanned = scanAgent({ id: 'a1', persona_id: 7, emoji: PERSONA_EMOJI[7] ?? '', project: 'C:/p', cwd: 'C:/p/sub', role: 'old role', subagent_type: 'old', task: 'old task', task_short: 'old task', tool: 'Grep', phase: 'tool', start_ms: T0 - 5 })
   const live = liveToolReturned(liveToolStarted(spawn('a1'), 'a1', 'Bash', T0 + 1), 'a1', T0 + 2)
   const merged = mergeLive(payloadOf(scanned), live, SESSION, T0 + 3)

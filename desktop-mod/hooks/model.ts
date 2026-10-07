@@ -64,8 +64,8 @@ export const FS_READ_LIMIT = 4 * 1024 * 1024
 export const POLL_MS = 1500
 /** ⏰ long-running badge threshold. */
 export const LONG_RUNNING_MS = 10 * 60 * 1000
-/** ⭐ "just finished" window (PAGE: a star for 60 s after end_ms). */
-export const JUST_FINISHED_MS = 60 * 1000
+/** ⭐ "just finished" window (PAGE line 1583: the `recent` class is removed 10 s after the finish). */
+export const JUST_FINISHED_MS = 10 * 1000
 
 /** Display order of statuses. */
 export const STATUS_ORDER: Record<TheaterStatus, number> = { running: 0, stale: 1, done: 2 }

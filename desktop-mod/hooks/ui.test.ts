@@ -167,12 +167,18 @@ type On = Parameters<typeof mock.store>[0]
 function beneath(on: On, current: () => Agent[], store: Record<string, unknown> = {}) {
   const captured = { toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown> }
   const clock = mock.clock(on, { now: T0 })
-  // the store's writes are mirrored here (the test's `$` has no store noun to read back)
-  on('store.set', ($, e, next) => { captured.store[e.key] = e.value; return next(e) })
-  mock.store(on, store)
+  // an in-memory store the test can read back (mock.store would hook store.set
+  // itself, and an event may be hooked only once per module)
+  on('store.get', ($, e) => ({ value: captured.store[e.key] }))
+  on('store.set', ($, e) => { captured.store[e.key] = e.value; return { value: undefined } })
+  on('store.delete', ($, e) => { delete captured.store[e.key]; return { value: undefined } })
+  on('store.keys', () => ({ value: Object.keys(captured.store) }))
   mock.env(on, { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'test-session' }))
+  // nothing beneath the plugins answers command.register: without this the plugin's
+  // session.start would abort before starting the poll
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('agent.list', () => ({ value: [] }))
   // no file system beneath: the scanner sees an empty ~/.claude
   on('fs.exists', () => ({ value: false }))
@@ -180,7 +186,7 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
   on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); return { value: { isPlaced: true as const } } })
-  on('ui.focus', () => ({ value: {} }))
+  on('ui.focus', () => ({}))
   // the poll's payload write becomes the fixture of the moment
   on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) =>
     next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now() } }))
@@ -338,9 +344,10 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /⏰/ })).toBeDefined()
   expect((await ui.find({ key: 'demo' }))?.text).toMatch(/Exit/)
-  // phase 6 of the loop: the finisher completes on a visible card (demo forces "show finished")
+  // phase 6 of the loop: the finisher completes on a visible card (demo forces "show finished");
+  // the office redraws on the poll (POLL_MS), so walk one poll past the phase edge
   const toPhase6 = 6000 - (clock.now() % 12000) + 12000
-  await clock.advance(toPhase6)
+  await clock.advance(toPhase6 + 1500)
   expect(captured.toasts.some(t => t.startsWith('summarize the security review'))).toBe(true)
   expect(captured.plays).toBeGreaterThanOrEqual(1)
   expect(await ui.find({ key: 'open:demo-newcomer-hh' })).toBeDefined()

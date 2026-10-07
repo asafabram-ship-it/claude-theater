@@ -4,8 +4,8 @@
 // module for the finish burst on the surfaces that have a frame clock).
 //
 // OWNER: builder "ui". Contract (register.tsx calls these):
-//   registerUi(on)         adds the ui.render hook for the pane and the state.set
-//                          hook that runs the finish beat (⭐ + chime + toast)
+//   registerUi(on)         adds the ui.render hook for the pane; the finish beat
+//                          (⭐ + chime + toast) runs inside it, see below
 //   paneTitle(lang)        the pane's title for $.ui.open
 //
 // What it draws (spec "עובר כמו שהוא"), top to bottom:
@@ -39,13 +39,20 @@
 // - Every hook is registered with `.catch(($, e, next) => next(e))`.
 //
 // The finish beat (PAGE updateWS: prevStatus running→done on a VISIBLE card →
-// confetti + ding + toast + ⭐): a render hook cannot write, so it runs in a
-// hook on this plugin's own `state.set` of `payload` (raised by the poll every
-// POLL_MS), after `next`: it compares the previous statuses it remembers with
-// the stored payload, writes view.justFinished (the ⭐ + confetti source), plays
-// sounds/done.wav unless muted, and toasts "<name> — finished". As in PAGE the
-// beat fires only for an agent the office shows (its room shows finished, it
-// matches the search, its chat is open) — which is why demo mode forces
+// confetti + ding + toast + ⭐) runs INSIDE the render hook, exactly where PAGE
+// ran it (on every payload the open page received): the poll's $.state.set of
+// `payload` redraws the pane, and the render compares the statuses it remembers
+// with the office it draws — once per scan (scanned_ms), so a redraw caused by
+// a press never replays it. ENGINE FACTS (probed, 2.1.288): a plugin's hooks
+// never see its own $.state.set (so a `state.set{payload}` hook of ours would
+// be dead), a render may toast and play audio, a render may NOT write state,
+// and a `$.clock.after(0, …)` scheduled from the render may. So the beat
+// toasts "<name> — finished" and plays sounds/done.wav (unless muted) at once,
+// draws the ⭐ + confetti from module memory in the same frame, and commits
+// view.justFinished / the selected-agent reset / the pins + roomDone pruning
+// through $.clock.after(0). As in PAGE the beat fires only for an agent the
+// office shows (its room shows finished, it matches the search, its chat is
+// open) and only while the pane is drawn — which is why demo mode forces
 // "show finished" on without persisting it.
 //
 // Demo mode (PAGE ?demo=1): `view.demo` → the pane draws demoOffice(now), the
@@ -85,6 +92,8 @@ export const CARD_W = 26
 const DING_GAP_MS = 400
 /** The finish chime, the plugin's own file. */
 const DING_ASSET = 'sounds/done.wav'
+/** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
+const BURST_MS = 1050
 
 /** The pane title shown in the tab. */
 export function paneTitle(lang: Lang): string {
@@ -385,6 +394,10 @@ export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now
 
 /** PAGE prevStatus: agent id → last status seen, for the finish beat. */
 const prevStatus: Record<string, Agent['status']> = {}
+/** The ⭐ window as the render draws it (agent id → when it finished); mirrored to view.justFinished. */
+let justFinished: Record<string, number> = {}
+/** The scan the beat last ran on (`demo:`/`scan:` + scanned_ms): once per payload, never per redraw. */
+let lastBeatKey = ''
 /** PAGE roomDone, cached from $.store ('roomDone'); null until first read. */
 let roomDoneCache: Record<string, boolean> | null = null
 /** PAGE lastDing: the storm guard. */
@@ -436,62 +449,83 @@ async function ding($: EngineInterface, muted: boolean, now: number): Promise<vo
   await $.audio.play({ asset: DING_ASSET }).catch(() => undefined)
 }
 
+/**
+ * PAGE updateWS over a whole payload, run from the render hook once per scan:
+ * remembers statuses, celebrates the shown agents that just finished (toast +
+ * chime now, ⭐ + confetti from `justFinished`), and commits what needs a
+ * state write (view.justFinished, a vanished selection, pruned pins / room
+ * overrides) through $.clock.after(0) — a render may not write.
+ * Returns the ⭐ map to draw from. Never throws (the beat is decoration).
+ */
+function finishBeat(
+  $: EngineInterface,
+  office: Payload,
+  prefs: Prefs,
+  view: View,
+  roomDone: Readonly<Record<string, boolean>>,
+  now: number,
+): Record<string, number> {
+  try {
+    const key = `${office.demo ? 'demo' : 'scan'}:${office.scanned_ms}`
+    // a hot reload emptied the module's map: the stored view still has the stars
+    const stars = pruneJustFinished({ ...view.justFinished, ...justFinished }, now)
+    if (key === lastBeatKey) {
+      justFinished = stars
+      return stars
+    }
+    lastBeatKey = key
+    const showDone = view.demo || prefs.showDone
+    const seen = officeView(office.agents, view.search, prefs.lang, showDone, roomDone, prefs.pins)
+    const shown = new Set(seen.visible.map(a => a.id))
+    const finished = detectFinishes(prevStatus, office.agents, shown)
+    for (const a of finished) stars[a.id] = now
+    justFinished = stars
+    if (finished.length > 0) {
+      const L = I18N[prefs.lang]
+      for (const a of finished) $.ui.toast(`${cardName(a, prefs.lang)} — ${L.finishedToast}`)
+      void ding($, prefs.muted, now)
+    }
+    const liveIds = new Set(office.agents.map(a => a.id))
+    const liveRooms = new Set(office.agents.map(a => a.session_full))
+    const selectedGone = view.selected !== null && !liveIds.has(view.selected)
+    const starsChanged =
+      Object.keys(stars).length !== Object.keys(view.justFinished).length ||
+      Object.keys(stars).some(id => view.justFinished[id] !== stars[id])
+    // PAGE: prune per-room overrides + pins for conversations no longer present
+    // (only against a real, non-empty office: an empty scan must not wipe them).
+    const pruneRooms = office.agents.length > 0 && !office.demo
+    const staleRoomDone = pruneRooms && Object.keys(roomDone).some(s => !liveRooms.has(s))
+    const stalePins = pruneRooms && prefs.pins.some(s => !liveRooms.has(s))
+    if (selectedGone || starsChanged || staleRoomDone || stalePins) {
+      const committed = { ...stars }
+      $.clock.after(0, async () => {
+        try {
+          if (selectedGone || starsChanged) {
+            await update($, viewAtom, v => ({ ...v, justFinished: committed, selected: selectedGone ? null : v.selected }))
+          }
+          if (staleRoomDone) {
+            const kept: Record<string, boolean> = {}
+            for (const [s, v] of Object.entries(roomDone)) if (liveRooms.has(s)) kept[s] = v
+            await saveRoomDone($, kept)
+          }
+          if (stalePins) await savePrefs($, p => ({ ...p, pins: p.pins.filter(s => liveRooms.has(s)) }))
+        } catch {
+          // decoration only
+        }
+      })
+    }
+    return stars
+  } catch {
+    return justFinished
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Hooks.
 // ---------------------------------------------------------------------------
 
-/** Adds the pane's render hook and the finish-beat hook. Called once from register(). */
+/** Adds the pane's render hook (the beat runs inside it). Called once from register(). */
 export function registerUi(on: On): void {
-  // The finish beat: after the poll stored a new payload, compare with what we
-  // remember and celebrate the agents that just finished on a visible card.
-  on('state.set', { plugin: 'agent-theater', key: 'payload' }, async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      const now = await $.clock.now()
-      const stored = await read($, payloadAtom)
-      const prefs = await read($, prefsAtom)
-      const view = await read($, viewAtom)
-      const roomDone = await loadRoomDone($)
-      const office = effectivePayload(stored, view, now)
-      const showDone = view.demo || prefs.showDone
-      const seen = officeView(office.agents, view.search, prefs.lang, showDone, roomDone, prefs.pins)
-      const shown = new Set(seen.visible.map(a => a.id))
-      const finished = detectFinishes(prevStatus, office.agents, shown)
-      const liveIds = new Set(office.agents.map(a => a.id))
-      const liveRooms = new Set(office.agents.map(a => a.session_full))
-      const justFinished = pruneJustFinished(view.justFinished, now)
-      for (const a of finished) justFinished[a.id] = now
-      const selectedGone = view.selected !== null && !liveIds.has(view.selected)
-      const changed =
-        finished.length > 0 ||
-        selectedGone ||
-        Object.keys(justFinished).length !== Object.keys(view.justFinished).length
-      if (changed) {
-        await update($, viewAtom, v => ({ ...v, justFinished, selected: selectedGone ? null : v.selected }))
-      }
-      // PAGE: prune per-room overrides + pins for conversations no longer present
-      // (only against a real, non-empty office: an empty scan must not wipe them).
-      if (office.agents.length > 0 && !office.demo) {
-        if (Object.keys(roomDone).some(s => !liveRooms.has(s))) {
-          const kept: Record<string, boolean> = {}
-          for (const [s, v] of Object.entries(roomDone)) if (liveRooms.has(s)) kept[s] = v
-          await saveRoomDone($, kept)
-        }
-        if (prefs.pins.some(s => !liveRooms.has(s))) {
-          await savePrefs($, p => ({ ...p, pins: p.pins.filter(s => liveRooms.has(s)) }))
-        }
-      }
-      if (finished.length > 0) {
-        const L = I18N[prefs.lang]
-        for (const a of finished) $.ui.toast(`${cardName(a, prefs.lang)} — ${L.finishedToast}`)
-        await ding($, prefs.muted, now)
-      }
-    } catch {
-      // the beat is decoration: never fail the write
-    }
-    return ran
-  }).catch(($, e, next) => next(e))
-
   on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const prefs = await read($, prefsAtom)
@@ -512,6 +546,7 @@ export function registerUi(on: On): void {
     const showDone = view.demo || prefs.showDone
     const q = view.search
     const { rooms, stat, order } = officeView(all, q, lang, showDone, roomDone, prefs.pins)
+    const stars = finishBeat($, office, prefs, view, roomDone, now)
     const counts = headerCounts(all)
     const focusIndex = order.length === 0 ? -1 : Math.min(view.focusIndex, order.length - 1)
     const focused = focusIndex >= 0 ? order[focusIndex] : undefined
@@ -624,14 +659,14 @@ export function registerUi(on: On): void {
       const name = cardName(a, lang)
       const liveA = live[a.id]
       const failed = liveA !== undefined && (liveA.engine_status === 'failed' || liveA.engine_status === 'killed')
-      const star = a.status === 'done' && a.id in view.justFinished && now - (view.justFinished[a.id] ?? 0) < JUST_FINISHED_MS
+      const star = a.status === 'done' && a.id in stars && now - (stars[a.id] ?? 0) < JUST_FINISHED_MS
       const badges = [failed ? '❌' : '', star ? '⭐' : '', isLongRunning(a, now) ? '⏰' : ''].filter(Boolean).join('')
       const sub = a.role ? (a.subagent_type || personaName(a.persona_id, lang)) : a.subagent_type
       const isFocused = focused?.id === a.id
       const isSelected = selected?.id === a.id
       const border = isSelected ? 'double' : isFocused ? 'bold' : 'round'
       const color = a.status === 'running' ? 'green' : a.status === 'stale' ? 'yellow' : undefined
-      const bursting = star && now - (view.justFinished[a.id] ?? 0) < 3000
+      const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
       const burst = bursting
         ? (e.surface === 'terminal' || e.surface === 'desktop')
           ? (() => {

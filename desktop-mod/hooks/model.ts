@@ -36,6 +36,12 @@ export type View = TheaterView
 // Constants (claude_theater.py lines 39-58, 266-267, 658) — same values.
 // ---------------------------------------------------------------------------
 
+/**
+ * The plugin's name (plugin.json `name`, the $.state / $.store namespace, the
+ * pane id). The spec says "claude-theater", but `claude plugin validate`
+ * refuses a third-party name starting with "claude-" (reserved for Anthropic's
+ * own), so the mod is `agent-theater` — a change the engine forces.
+ */
 export const PLUGIN = 'agent-theater' as const
 /** The pane's id for $.ui.open / the ui.render matcher. */
 export const PANE_ID = 'agent-theater' as const

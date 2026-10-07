@@ -4,9 +4,9 @@
 import type { AgentInfo } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { liveAged, liveAgentReturned, liveSpawned, liveStatus, liveToolReturned, liveToolStarted, mergeLive } from './live'
+import { liveAged, liveAgedOut, liveAgentReturned, liveSpawned, liveStatus, liveToolReturned, liveToolStarted, mergeLive } from './live'
 import type { LiveMap } from './live'
-import { EMPTY_PAYLOAD, IN_FLIGHT_MAX_SEC, PERSONA_EMOJI, RUNNING_STALE_SEC, personaIndex } from './model'
+import { EMPTY_PAYLOAD, IN_FLIGHT_MAX_SEC, MAX_AGE_MIN, PERSONA_EMOJI, RUNNING_STALE_SEC, personaIndex } from './model'
 import type { Agent, Payload } from './model'
 import { resetScannerCaches } from './scanner'
 
@@ -33,7 +33,7 @@ function payloadOf(...agents: Agent[]): Payload {
   return { ...EMPTY_PAYLOAD, agents, scanned_ms: T0 }
 }
 
-test('spawn → tool → thinking → result keeps start_ms and clears the tool', () => {
+test('spawn → tool → thinking → result keeps start_ms and the last tool', () => {
   let live = spawn('a1')
   expect(live.a1?.start_ms).toBe(T0)
   expect(live.a1?.phase).toBe('thinking')
@@ -47,7 +47,7 @@ test('spawn → tool → thinking → result keeps start_ms and clears the tool'
   live = liveAgentReturned(live, 't-a1', '  all   done ', false, T0 + 3000)
   expect(live.a1?.result).toBe('all done')
   expect(live.a1?.end_ms).toBe(T0 + 3000)
-  expect(live.a1?.tool).toBe('')
+  expect(live.a1?.tool).toBe('Read') // Python keeps last_tool_use_name on a done agent (the drawer's tool chip)
   expect(live.a1?.engine_status).toBe('running')
   // a re-spawn of the same id keeps its first start
   live = liveSpawned(live, { agentId: 'a1', tool_use_id: 't2', description: '', subagentType: '', prompt: '', model: '' }, T0 + 9000)
@@ -94,6 +94,25 @@ test('liveAged adds an agent the engine lists but the map never saw spawning', (
   expect(aged.z9?.start_ms).toBe(T0 + 10)
   expect(aged.z9?.end_ms).toBe(null)
   expect(aged.a1).toBe(live.a1)
+})
+
+test('liveAged evicts a done entry past MAX_AGE_MIN (and mergeLive skips one a stale state still carries); a running one stays', () => {
+  const window = MAX_AGE_MIN * 60_000
+  let live: LiveMap = { ...spawn('old', 't-old'), ...spawn('fresh', 't-fresh'), ...spawn('busy', 't-busy') }
+  live = liveAgentReturned(live, 't-old', 'done long ago', false, T0 + 10)
+  live = liveAgentReturned(live, 't-fresh', 'done just now', false, T0 + window) // last event inside the window
+  expect(liveAgedOut(live.old!, T0 + 10 + window)).toBe(false)
+  expect(liveAgedOut(live.old!, T0 + 11 + window)).toBe(true)
+  const aged = liveAged(live, [], T0 + 11 + window)
+  expect(aged.old).toBeUndefined()
+  expect(aged.fresh?.result).toBe('done just now')
+  expect(aged.busy?.engine_status).toBe('running') // never evicted while running, however old
+  // belt and braces: a reload with the un-aged map cannot resurrect the old one
+  const merged = mergeLive(payloadOf(), live, SESSION, T0 + 11 + window)
+  expect(merged.agents.map(a => a.id).sort()).toEqual(['busy', 'fresh'])
+  // the same map comes back while nothing aged out (listed running: no silence rule either)
+  const all = [listed('old', 'running'), listed('fresh', 'running'), listed('busy', 'running')]
+  expect(liveAged(live, all, T0 + 10 + window)).toBe(live)
 })
 
 test('liveStatus: done wins, mid-tool is rescued up to IN_FLIGHT_MAX_SEC, idle without a tool is stale', () => {

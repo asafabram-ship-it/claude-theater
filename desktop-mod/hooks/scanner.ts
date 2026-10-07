@@ -41,9 +41,14 @@
 // - Throttle: directory listings are cached GLOB_TTL_SEC between scans (Python
 //   _throttled_glob); parsed agents are cached per (path, mtime, size) and only
 //   `status`/`closed`/`role` are recomputed on a cache hit (Python _AGENT_CACHE);
-//   parent files (names, project cwd), session files (topic) and journals are
-//   cached by mtime. Caches are module-level (lost on hot reload, which is
-//   fine: they are rebuilt on the next scan) and evicted like the Python ones:
+//   a file that yields nothing (corrupt first line, unflushed, unreadable) gets
+//   a NEGATIVE entry under the same key (retried after GLOB_TTL_SEC when the
+//   cause may pass), and a growing oversized file re-runs its tail helper at
+//   most every GLOB_TTL_SEC; parent files (names) are cached by mtime, the
+//   project cwd and the topic once known (first lines of an append-only file),
+//   journals by mtime; within one scan a file is read at most once (a per-scan
+//   read memo). Caches are module-level (lost on hot reload, which is fine:
+//   they are rebuilt on the next scan) and evicted like the Python ones:
 //   agent entries whose file aged out, parent/session entries no longer
 //   referenced, persona seats of agents no longer present.
 // - `phase` of a room lead: the Python payload put "" there; the mod's
@@ -456,17 +461,11 @@ export function unknownVersions(versions: readonly string[]): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Python is_workflow_agent: the path says /workflows/wf_ (no I/O), else — the
- * mod's extension — the agent file's directory holds a journal.jsonl.
+ * Python is_workflow_agent, verbatim: a workflow subagent lives under
+ * `subagents/workflows/wf_<id>/` — a path test only, no extra stat, either slash.
  */
-export async function isWorkflowAgent(io: ScanIo, agentPath: string): Promise<boolean> {
-  const p = normPath(agentPath)
-  if (p.includes('/workflows/wf_')) return true
-  try {
-    return await io.exists(joinPath(dirname(p), 'journal.jsonl'))
-  } catch {
-    return false
-  }
+export function isWorkflowAgent(agentPath: string): boolean {
+  return normPath(agentPath).includes('/workflows/wf_')
 }
 
 /** Python _workflow_result_text: a prose field of the structured result, else its compact JSON. */
@@ -634,7 +633,13 @@ export function parseProjectCwd(text: string): string {
   return ''
 }
 
-/** Python project_cwd_for: the conversation's real working directory from the parent file's first records ("" unknown). */
+/**
+ * Python project_cwd_for: the conversation's real working directory from the
+ * parent file's first records ("" unknown). Cached by mtime — and, once known,
+ * for good: the value comes from the first lines of an append-only file, so a
+ * chat that grows every turn (and a > 4 MiB one, whose head is a helper
+ * process) is not re-read for it.
+ */
 export async function projectCwdFor(
   io: ScanIo,
   parentFile: string | null,
@@ -644,7 +649,7 @@ export async function projectCwdFor(
   const st = await statOf(parentFile)
   if (st === null || st.kind !== 'file') return ''
   const cached = PROJECT_CACHE.get(parentFile)
-  if (cached && cached.mtimeMs === st.mtimeMs) return cached.cwd
+  if (cached && (cached.mtimeMs === st.mtimeMs || cached.cwd)) return cached.cwd
   // The first lines of a session file can be metadata (queue-operation) with no
   // cwd; the working dir appears on the first user/assistant record.
   const read = await readHead(io, parentFile, st.size, 51)
@@ -690,7 +695,12 @@ export function parseSessionSummary(text: string): { topic: string; cwd: string 
   return { topic, cwd }
 }
 
-/** Python session_summary: (topic, cwd) of a top-level conversation — the first user text, shortened. mtime-cached. */
+/**
+ * Python session_summary: (topic, cwd) of a top-level conversation — the first
+ * user text (the UI shortens it). Cached by mtime, and for good once both are
+ * known (an oversized file: once either is, its 81-line head cannot change),
+ * for the same reason as projectCwdFor.
+ */
 export async function sessionSummary(
   io: ScanIo,
   sessionFile: string,
@@ -699,7 +709,11 @@ export async function sessionSummary(
   const st = stat === undefined ? await statOrNull(io, sessionFile) : stat
   if (st === null) return { topic: '', cwd: '' }
   const cached = SESSION_CACHE.get(sessionFile)
-  if (cached && cached.mtimeMs === st.mtimeMs) return { topic: cached.topic, cwd: cached.cwd }
+  const settled =
+    cached !== undefined &&
+    (cached.mtimeMs === st.mtimeMs || (cached.topic !== '' && cached.cwd !== '') ||
+      (st.size > FS_READ_LIMIT && (cached.topic !== '' || cached.cwd !== '')))
+  if (cached && settled) return { topic: cached.topic, cwd: cached.cwd }
   const read = await readHead(io, sessionFile, st.size, 81)
   const parsed = read.text === null ? { topic: '', cwd: '' } : parseSessionSummary(read.text)
   SESSION_CACHE.set(sessionFile, { mtimeMs: st.mtimeMs, oversized: read.oversized, ...parsed })
@@ -943,16 +957,32 @@ export async function throttledListing(io: ScanIo, projectsDir: string, nowMs: n
 type AgentCacheEntry = {
   mtimeMs: number
   size: number
-  /** The parsed agent, before the per-scan `status`/`closed`/`role` overwrite. */
-  adict: Agent
+  /** When the entry was parsed (ms): an oversized file's tail is re-read at most every GLOB_TTL_SEC. */
+  at: number
+  /** The parsed agent, before the per-scan `status`/`closed`/`role` overwrite; null = a negative entry (nothing drawn for this (mtime,size)). */
+  adict: Agent | null
   isDone: boolean
   inFlight: boolean
   versions: string[]
   skipped: number
+  oversized: boolean
   parent: string | null
+  /** A negative entry worth another try (a rejected read, an unflushed first line): re-parse once `now >= retryAt`. */
+  retryAt?: number
 }
 
 const AGENT_CACHE = new Map<string, AgentCacheEntry>()
+/** path → the first line of an OVERSIZED agent transcript (immutable: append-only file), so its head helper runs once. */
+const FIRST_LINE_CACHE = new Map<string, string>()
+
+/** A negative cache entry: the file at this (mtime,size) yields no agent; `skipped`/`oversized` are re-counted on every hit. */
+function negativeEntry(mtimeMs: number, size: number, now: number, opts: { skipped?: number; oversized?: boolean; retry?: boolean } = {}): AgentCacheEntry {
+  return {
+    mtimeMs, size, at: now, adict: null, isDone: false, inFlight: false, versions: [], parent: null,
+    skipped: opts.skipped ?? 0, oversized: opts.oversized ?? false,
+    ...(opts.retry ? { retryAt: now + GLOB_TTL_SEC * 1000 } : {}),
+  }
+}
 
 /** Python extract_task: the first event's text. */
 function extractTask(first: TranscriptEvent | null): string {
@@ -983,6 +1013,7 @@ let LAST_GOOD: Payload = { ...EMPTY_PAYLOAD }
 /** Drops every module-level cache (tests; a hot reload does this by itself). */
 export function resetScannerCaches(): void {
   AGENT_CACHE.clear()
+  FIRST_LINE_CACHE.clear()
   NAME_CACHE.clear()
   PROJECT_CACHE.clear()
   SESSION_CACHE.clear()
@@ -1026,9 +1057,25 @@ export async function scanAll(io: ScanIo, now: number): Promise<Payload & { erro
   }
 }
 
-async function scanOffice(io: ScanIo, home: string, now: number): Promise<Payload> {
+async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Payload> {
   const nowSec = now / 1000
   const projectsDir = joinPath(home, '.claude', 'projects')
+  // One read per file per scan: a changed parent is wanted by the name map, the
+  // project cwd and the topic (up to three whole reads through the host
+  // boundary otherwise). The memo lives for this scan only.
+  const reads = new Map<string, Promise<string>>()
+  const io: ScanIo = {
+    ...rawIo,
+    read: path => {
+      let p = reads.get(path)
+      if (!p) {
+        p = rawIo.read(path)
+        p.catch(() => undefined) // observed by every awaiting caller; never unhandled through the memo
+        reads.set(path, p)
+      }
+      return p
+    },
+  }
   const live = await liveSessionIds(io, home, nowSec) // open conversations; null = registry unsupported
   const listing = await throttledListing(io, projectsDir, now)
 
@@ -1068,7 +1115,23 @@ async function scanOffice(io: ScanIo, home: string, now: number): Promise<Payloa
     seen.add(path)
 
     let entry = AGENT_CACHE.get(path)
-    if (entry && entry.mtimeMs === mtimeMs && entry.size === size) {
+    const oversized = size > FS_READ_LIMIT
+    // A hit: same (mtime,size) — except that a growing OVERSIZED file (its key
+    // moves every tick) reuses its entry for GLOB_TTL_SEC, so its tail helper
+    // runs at most that often; and a negative entry marked for retry is
+    // re-parsed once its time comes.
+    const hit =
+      entry !== undefined &&
+      (entry.mtimeMs === mtimeMs && entry.size === size
+        ? entry.retryAt === undefined || now < entry.retryAt
+        : oversized && entry.adict !== null && now - entry.at < GLOB_TTL_SEC * 1000)
+    if (hit && entry) {
+      if (entry.adict === null) {
+        // nothing to draw for this file as it is: count what the parse found
+        skipped += entry.skipped
+        if (entry.oversized) oversizedFiles.add(path)
+        continue
+      }
       // A workflow agent's done-signal lives in the SIBLING journal.jsonl, which
       // is NOT part of the (mtime,size) key: re-read it every scan until done.
       if (!entry.isDone && entry.adict.is_workflow) {
@@ -1083,18 +1146,29 @@ async function scanOffice(io: ScanIo, home: string, now: number): Promise<Payloa
       }
     } else {
       // First line: the agent's identity and task. Tail: its current state.
-      // One read when the file fits; the optional head/tail closures otherwise.
-      const whole = size <= FS_READ_LIMIT ? await readWhole(io, path, size) : null
-      const first = whole ?? (await readHead(io, path, size, 1))
+      // One read when the file fits; the optional head/tail closures otherwise
+      // (an oversized file's first line, immutable, is read through the helper once).
+      const whole = !oversized ? await readWhole(io, path, size) : null
+      const knownFirst = oversized ? FIRST_LINE_CACHE.get(path) : undefined
+      const first: ReadOutcome = whole ?? (knownFirst !== undefined ? { text: knownFirst, oversized: false } : await readHead(io, path, size, 1))
       if (first.text === null) {
         if (first.oversized) oversizedFiles.add(path)
+        // a rejected read (locked, vanished) or no helper: try again after the listing TTL, not every tick
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: first.oversized, retry: true }))
         continue
       }
       const firstLine = first.text.split('\n')[0] ?? ''
-      if (firstLine.trim() === '') continue // exists but not flushed yet — not malformed
+      if (firstLine.trim() === '') {
+        // exists but not flushed yet — not malformed; the flush moves (mtime,size), the retry covers a same-key flush
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { retry: true }))
+        continue
+      }
+      if (oversized) FIRST_LINE_CACHE.set(path, firstLine)
       const firstEv = parseAgentEvent(firstLine)
       if (firstEv === null) {
+        // a corrupt first line stays corrupt until the file changes: counted, never re-parsed meanwhile
         skipped += 1
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { skipped: 1 }))
         continue
       }
       const fileVersions = new Set<string>()
@@ -1117,10 +1191,11 @@ async function scanOffice(io: ScanIo, home: string, now: number): Promise<Payloa
         for (const v of parsed.versions) fileVersions.add(v)
       } else if (tail.oversized) {
         oversizedFiles.add(path)
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: true, retry: true }))
         continue
       }
 
-      const workflow = await isWorkflowAgent(io, path)
+      const workflow = isWorkflowAgent(path)
       const tool = lastToolUseName(events)
       const pid = personaIndex(agentId)
       const parent = parentSessionFile(path, session)
@@ -1169,10 +1244,11 @@ async function scanOffice(io: ScanIo, home: string, now: number): Promise<Payloa
         is_workflow: workflow,
         truncated: done.truncated,
       }
-      entry = { mtimeMs, size, adict, isDone: done.isDone, inFlight, versions: [...fileVersions], skipped: fileSkipped, parent }
+      entry = { mtimeMs, size, at: now, adict, isDone: done.isDone, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent }
       AGENT_CACHE.set(path, entry)
     }
 
+    if (entry.adict === null) continue
     for (const v of entry.versions) versions.add(v)
     skipped += entry.skipped
     const a: Agent = { ...entry.adict }
@@ -1200,6 +1276,7 @@ async function scanOffice(io: ScanIo, home: string, now: number): Promise<Payloa
   // Evict entries for files that aged out / vanished so the caches cannot grow
   // unbounded over a long-lived session.
   for (const p of [...AGENT_CACHE.keys()]) if (!seen.has(p)) AGENT_CACHE.delete(p)
+  for (const p of [...FIRST_LINE_CACHE.keys()]) if (!seen.has(p)) FIRST_LINE_CACHE.delete(p)
   for (const p of [...NAME_CACHE.keys()]) if (!seenParents.has(p)) NAME_CACHE.delete(p)
   for (const p of [...PROJECT_CACHE.keys()]) if (!seenParents.has(p)) PROJECT_CACHE.delete(p)
   for (const p of [...JOURNAL_CACHE.keys()]) if (!seenJournals.has(p)) JOURNAL_CACHE.delete(p)
@@ -1337,13 +1414,12 @@ function demoAgent(
 }
 
 /**
- * Python demo_payload: a synthetic, populated office (rooms, personas, one
- * long-running ⏰ agent, one just-finished ⭐ agent, a stale one, an MCP tool).
- * Pure: builds in memory, never reads files. `phase` cycles the scene so the
- * demo animates (Python: phase=None picks by time): a ~12 s loop where phase 3
- * walks a new agent in and phase 6 finishes the finisher (confetti + chime).
- * (The only cast change from Python: the MCP triager started 11 min ago so the
- * ⏰ badge has a demo subject, as the module contract asks.)
+ * Python demo_payload, the ONE demo cast (ui.tsx draws this too): a synthetic,
+ * populated office — two rooms led by their topics, personas, a just-finished
+ * ⭐ agent, a stale one, an MCP tool. Pure: builds in memory, never reads
+ * files. `phase` cycles the scene so the demo animates (Python: phase=None
+ * picks by time): a ~12 s loop where phase 3 walks a new agent in and phase 6
+ * finishes the finisher (confetti + chime). Same agents and offsets as Python.
  */
 export function demoPayload(now: number, phase?: number): Payload {
   const cwd = '/home/dev/acme-web'
@@ -1364,7 +1440,7 @@ export function demoPayload(now: number, phase?: number): Payload {
       { start_offset: 18 }),
     demoAgent(now, 'demo-mcp-dd', s2, cwd, 'running', 'mcp__github__search_issues',
       "Pull the open issues labeled 'bug' and cluster them by component.",
-      { role: 'triage open bugs', subagent_type: 'general-purpose', start_offset: 660 }),
+      { role: 'triage open bugs', subagent_type: 'general-purpose', start_offset: 63 }),
     demoAgent(now, 'demo-build-ee', s1, cwd, 'stale', 'Bash',
       'Run the full test suite and report any failures.', { start_offset: 320 }),
     demoAgent(now, 'demo-writer-ff', s2, cwd, 'done', 'Write',

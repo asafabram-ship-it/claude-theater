@@ -6,7 +6,8 @@
 // OWNER: builder "ui". Contract (register.tsx calls these):
 //   registerUi(on)         adds the ui.render hook for the pane; the finish beat
 //                          (⭐ + chime + toast) runs inside it, see below
-//   paneTitle(lang)        the pane's title for $.ui.open
+//   paneTitle(lang, run)   the pane's title for $.ui.open
+//   workingCount(payload)  PAGE's `run`: open-chat agents working now
 //
 // What it draws (spec "עובר כמו שהוא"), top to bottom:
 //   header   title · "🟢 N working · ⏳ M idle · ✅ K finished" (PAGE #counts)
@@ -55,10 +56,19 @@
 // open) and only while the pane is drawn — which is why demo mode forces
 // "show finished" on without persisting it.
 //
-// Demo mode (PAGE ?demo=1): `view.demo` → the pane draws demoOffice(now), the
-// port of Python demo_payload: a 12 s scripted loop (phase 3: a newcomer walks
-// in, phases 6-9: the finisher completes → the beat). The poll keeps writing
-// `payload` every POLL_MS, so the office redraws and the clock advances.
+// Demo mode (PAGE ?demo=1): `view.demo` → the pane draws scanner's
+// demoPayload(now), the ONE port of Python demo_payload (the poll publishes the
+// same cast): a 12 s scripted loop (phase 3: a newcomer walks in, phases 6-9:
+// the finisher completes → the beat). The poll keeps writing `payload` every
+// POLL_MS, so the office redraws and the clock advances.
+//
+// Pane title (PAGE document.title): "🟢 N · " + the app title while N agents
+// work — paneTitle(lang, run); the poll retitles when N changes, setLang on a
+// language switch.
+//
+// Reload: register.tsx hooks the same render ahead of this one and kicks its
+// ensurePolling through `$.clock.after(0, …)` (never inside the draw) so a pane
+// that stayed up over a hot reload resumes its poll on the first redraw.
 //
 // Per-room "show finished" overrides (PAGE roomDone, tri-state): kept in
 // $.store under 'roomDone' (the prefs contract has only the global flag) and
@@ -66,15 +76,13 @@
 // its override. Pins live in prefs.pins.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On, UiPressArgument } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
 
 import { I18N, activityLabel, dirOf, type Lang, type Strings } from './i18n'
-import {
-  DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, PERSONA_EMOJI,
-  STATUS_ORDER, STORE_PREFS_KEY, personaIndex, shortTask,
-} from './model'
+import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
 import type { Agent, LiveAgent, Payload, Prefs, View } from './model'
-import { assignDistinctPersonas, personaName } from './personas'
+import { personaName } from './personas'
+import { demoPayload } from './scanner'
 
 // $.state atoms (validate: declared as consts in the file that reads them;
 // the same keys register.tsx writes — see ../types/index.d.ts).
@@ -95,9 +103,15 @@ const DING_ASSET = 'sounds/done.wav'
 /** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
 const BURST_MS = 1050
 
-/** The pane title shown in the tab. */
-export function paneTitle(lang: Lang): string {
-  return lang === 'he' ? '🎭 התיאטרון' : '🎭 Theater'
+/** The pane title shown in the tab: PAGE document.title = (run ? "🟢 N · " : "") + docTitle. */
+export function paneTitle(lang: Lang, run = 0): string {
+  const base = lang === 'he' ? '🎭 התיאטרון' : '🎭 Theater'
+  return (run > 0 ? `🟢 ${run} · ` : '') + base
+}
+
+/** PAGE render()'s `run`: agents of open chats working right now (the live working-count of the title). */
+export function workingCount(payload: Pick<Payload, 'agents'>): number {
+  return payload.agents.filter(a => a.status === 'running' && !a.closed).length
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +141,10 @@ export function roomLabel(a: Pick<Agent, 'project' | 'cwd'>): string {
  * PAGE tickTimers() (cards) and fillDrawer() (drawer): what the clock shows.
  * lead → time since last activity; unknown start → null ("--:--"); done →
  * final duration (the drawer falls back to last activity / now when end_ms is
- * null); stale → frozen at last activity; running → live.
+ * null; the card, as PAGE's `st==="done"&&en` branch, falls through to the
+ * live count when end_ms is null — a closed chat's collapsed subagent keeps
+ * counting, exactly as the extension did); stale → frozen at last activity;
+ * running → live.
  */
 export function agentElapsed(a: Agent, now: number, forDrawer = false): number | null {
   const s = a.start_ms ?? 0
@@ -135,7 +152,7 @@ export function agentElapsed(a: Agent, now: number, forDrawer = false): number |
   const mt = a.mtime_ms ?? 0
   if (a.is_session) return mt ? now - mt : null
   if (!s) return null
-  if (a.status === 'done') return forDrawer ? (en || mt || now) - s : en ? en - s : null
+  if (a.status === 'done') return forDrawer ? (en || mt || now) - s : en ? en - s : now - s
   if (a.status === 'stale') return mt && mt > s ? mt - s : null
   return now - s
 }
@@ -174,7 +191,7 @@ export function roomStats(all: readonly Agent[]): Map<string, RoomStat> {
     else if (a.status === 'stale') v.stale++
     else if (a.status === 'done') v.done++
     v.mtime = Math.max(v.mtime, a.mtime_ms ?? 0)
-    if (a.is_session && (a.topic || a.task_short)) v.topic = a.topic || a.task_short
+    if (a.is_session && a.task_short) v.topic = a.task_short // PAGE: the lead's task_short (first sentence / 90 chars)
     if (!v.label || v.label === '—') v.label = roomLabel(a)
   }
   return stat
@@ -284,108 +301,9 @@ export function cardName(a: Agent, lang: Lang): string {
   return a.role || personaName(a.persona_id, lang)
 }
 
-// ---------------------------------------------------------------------------
-// Demo office: the port of Python demo_payload / _demo_agent.
-// ---------------------------------------------------------------------------
-
-function demoAgent(
-  now: number,
-  aid: string,
-  session: string,
-  cwd: string,
-  status: Agent['status'],
-  tool: string,
-  task: string,
-  opts: { role?: string; subagent_type?: string; start_offset?: number; result?: string; is_session?: boolean; mtime_offset?: number } = {},
-): Agent {
-  const pid = personaIndex(aid)
-  const startOffset = opts.start_offset ?? 60
-  return {
-    id: aid,
-    persona_id: pid,
-    emoji: PERSONA_EMOJI[pid] ?? '🤖',
-    role: opts.role ?? '',
-    subagent_type: opts.subagent_type ?? '',
-    status,
-    tool: tool || '',
-    phase: tool ? 'tool' : 'thinking',
-    task,
-    task_short: shortTask(task),
-    result: status === 'done' ? (opts.result ?? null) : null,
-    start_ms: Math.floor(now - startOffset * 1000),
-    end_ms: status === 'done' ? Math.floor(now - 2000) : null,
-    session: session.slice(0, 8),
-    session_full: session,
-    cwd,
-    project: cwd,
-    mtime_ms: Math.floor(now - (opts.mtime_offset ?? 0) * 1000),
-    is_session: opts.is_session ?? false,
-    closed: false,
-    is_workflow: false,
-    truncated: false,
-  }
-}
-
-/**
- * Python demo_payload(phase): a ~12 s scripted loop — phase 3 a newcomer walks
- * in, phases 6-9 the finisher completes (confetti + chime). `int(now) % 12`
- * drives both unless `phase` is given.
- */
-export function demoOffice(now: number, phase?: number): Payload {
-  const cwd = '/home/dev/acme-web'
-  const s1 = 'demo-session-frontend-1111'
-  const s2 = 'demo-session-research-2222'
-  const ph = typeof phase === 'number' ? ((phase % 12) + 12) % 12 : Math.floor(now / 1000) % 12
-  const finishing = ph >= 6 && ph < 10
-  const walkedIn = ph >= 3
-  const agents: Agent[] = [
-    demoAgent(now, 'demo-research-aa', s2, cwd, 'running', 'WebSearch',
-      'Research incremental static regeneration approaches and summarize the trade-offs.',
-      { role: 'research the ISR landscape', subagent_type: 'general-purpose', start_offset: 95 }),
-    demoAgent(now, 'demo-reader-bb', s1, cwd, 'running', 'Read',
-      'Read the auth middleware and map every place the session token is validated.',
-      { role: 'map session-token validation', subagent_type: 'Explore', start_offset: 42 }),
-    demoAgent(now, 'demo-grep-cc', s1, cwd, 'running', 'Grep',
-      'Find all TODO and FIXME comments across the repo and group them by file.', { start_offset: 18 }),
-    demoAgent(now, 'demo-mcp-dd', s2, cwd, 'running', 'mcp__github__search_issues',
-      "Pull the open issues labeled 'bug' and cluster them by component.",
-      { role: 'triage open bugs', subagent_type: 'general-purpose', start_offset: 63 }),
-    demoAgent(now, 'demo-build-ee', s1, cwd, 'stale', 'Bash',
-      'Run the full test suite and report any failures.', { start_offset: 320 }),
-    demoAgent(now, 'demo-writer-ff', s2, cwd, 'done', 'Write',
-      'Draft the migration guide for the v2 config format.',
-      { role: 'draft the v2 migration guide', subagent_type: 'general-purpose', start_offset: 150,
-        result: 'Done. Wrote migration-v2.md: a step-by-step guide covering the renamed keys, the deprecation timeline, and a codemod snippet. Flagged two breaking changes for manual review.' }),
-    demoAgent(now, 'demo-finisher-gg', s1, cwd, finishing ? 'done' : 'running', 'StructuredOutput',
-      'Summarize the security review findings into a prioritized list.',
-      { role: 'summarize the security review', subagent_type: 'code-reviewer', start_offset: 51,
-        result: 'Summary: 3 high, 5 medium, 11 low. Top item: the password-reset token is not compared in constant time.' }),
-    // the long-running ⏰ agent of the plan's demo (the extension's office had none this old)
-    demoAgent(now, 'demo-longrun-ii', s2, cwd, 'running', 'Bash',
-      'Run the nightly benchmark matrix across all targets and collect the numbers.',
-      { role: 'run the benchmark matrix', subagent_type: 'general-purpose', start_offset: 11 * 60 }),
-  ]
-  if (walkedIn) {
-    agents.push(demoAgent(now, 'demo-newcomer-hh', s2, cwd, 'running', 'Edit',
-      'Apply the review fixes to the config loader and re-run the type checker.',
-      { role: 'apply the review fixes', subagent_type: 'general-purpose', start_offset: 3 }))
-  }
-  // the two conversations themselves → each leads its room with the topic as the title
-  agents.push(demoAgent(now, 'demo-conv-frontend', s1, cwd, 'running', '',
-    'Ship the v2 config migration and clean up the auth middleware.', { start_offset: 380, is_session: true, mtime_offset: 7 }))
-  agents.push(demoAgent(now, 'demo-conv-research', s2, cwd, 'running', '',
-    'Plan the static-regeneration rollout and triage the bug backlog.', { start_offset: 300, is_session: true, mtime_offset: 14 }))
-  assignDistinctPersonas(agents)
-  agents.sort((x, y) =>
-    (STATUS_ORDER[x.status] ?? 3) - (STATUS_ORDER[y.status] ?? 3) ||
-    (y.is_session ? 1 : 0) - (x.is_session ? 1 : 0) ||
-    (y.start_ms ?? 0) - (x.start_ms ?? 0))
-  return { agents, versions: ['2.1.0'], skipped: 0, oversized: 0, scanned_ms: now, demo: true }
-}
-
 /** The office the pane draws: the demo while `view.demo`, else the scanned payload. */
 export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number): Payload {
-  return view.demo ? demoOffice(now) : payload
+  return view.demo ? demoPayload(now) : payload
 }
 
 // ---------------------------------------------------------------------------
@@ -430,10 +348,11 @@ async function savePrefs($: EngineInterface, fn: (p: Prefs) => Prefs): Promise<P
   return saved
 }
 
-/** PAGE setLang(): prefs + the pane's title. */
+/** PAGE setLang(): prefs + the pane's title (with the working count, as the poll keeps it). */
 async function setLang($: EngineInterface, lang: Lang): Promise<void> {
   await savePrefs($, p => ({ ...p, lang }))
-  await $.ui.open({ id: PANE_ID, title: paneTitle(lang) }).catch(() => undefined)
+  const payload = await read($, payloadAtom)
+  await $.ui.open({ id: PANE_ID, title: paneTitle(lang, workingCount(payload)) }).catch(() => undefined)
 }
 
 /** PAGE setDemo(): toggles the demo; "show finished" is forced on by effect, never persisted. */
@@ -552,7 +471,7 @@ export function registerUi(on: On): void {
     const focused = focusIndex >= 0 ? order[focusIndex] : undefined
     const selected = view.selected !== null ? all.find(a => a.id === view.selected) : undefined
     const perRow = Math.max(1, Math.floor((width + 1) / (CARD_W + 1)))
-    const innerW = CARD_W - 2
+    const innerW = CARD_W - 4 // border 2 + paddingX 1 each side
 
     // --- handlers (closures over $, declared here so `$` never crosses an import) ---
     const toggleShowDone = () => void savePrefs($, p => ({ ...p, showDone: !p.showDone }))
@@ -586,7 +505,7 @@ export function registerUi(on: On): void {
     )
     const toolbar = (
       <Box flexDirection={row} flexWrap="wrap" gap={1}>
-        <Button key="showDone" hotkey="f" plain label={`${prefs.showDone ? '☑' : '☐'} ${L.showDone}`} onPress={toggleShowDone} />
+        <Button key="showDone" hotkey="f" plain label={`${showDone ? '☑' : '☐'} ${L.showDone}`} onPress={toggleShowDone} />
         <Button key="mute" hotkey="m" plain label={prefs.muted ? '🔕' : '🔔'} onPress={toggleMute} />
         <Button key="lang" hotkey="l" plain label={L.switchTo} onPress={toggleLang} />
         <Button key="help" hotkey="h" plain label="?" onPress={toggleHelp} />
@@ -632,7 +551,10 @@ export function registerUi(on: On): void {
     const drawer = selected && (() => {
       const a = selected
       const dur = agentElapsed(a, now, true)
-      const stx = a.status === 'running' ? L.dWorking : a.status === 'done' ? L.dDone : L.dStale
+      // ❌ failed/killed comes from the live map (engine_status is not in the payload), as the card draws it
+      const liveS = live[a.id]?.engine_status
+      const failed = liveS === 'failed' || liveS === 'killed'
+      const stx = failed ? `❌ ${L.dFailed}` : a.status === 'running' ? L.dWorking : a.status === 'done' ? L.dDone : L.dStale
       const chips = [stx, a.subagent_type, (a.status === 'done' ? L.dDuration : L.dElapsed) + fmt(dur), a.tool].filter(Boolean)
       return (
         <Box key="drawer" flexDirection="column" borderStyle="double" paddingX={1}>

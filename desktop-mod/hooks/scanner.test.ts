@@ -16,6 +16,7 @@ import {
   computeStatus,
   demoPayload,
   detectDone,
+  isWorkflowAgent,
   lastToolUseName,
   liveSessionIds,
   nameMapFor,
@@ -305,6 +306,60 @@ test('computeStatus: the ordered decision (seconds)', async () => {
   // 4. at rest
   expect(computeStatus(now, now - 91, false, false, false)).toBe('stale')
   expect(computeStatus(now, now - 90, false, false, false)).toBe('running')
+})
+
+test('isWorkflowAgent: the path alone, either slash (Python verbatim: no stat)', async () => {
+  expect(isWorkflowAgent('/h/.claude/projects/p/S1/subagents/workflows/wf_1/agent-x.jsonl')).toBe(true)
+  expect(isWorkflowAgent('C:\\u\\.claude\\projects\\p\\S1\\subagents\\workflows\\wf_1\\agent-x.jsonl')).toBe(true)
+  expect(isWorkflowAgent('/h/.claude/projects/p/S1/subagents/agent-x.jsonl')).toBe(false)
+  // a regular subagent beside a journal.jsonl is NOT a workflow agent (its role comes from the parent's Agent call)
+  resetScannerCaches()
+  const fs = office()
+  fs.put(`${PROJ}/sess-aaaa-1111/subagents/journal.jsonl`, '{"type":"result","agentId":"fixture-run-0001","result":"nope"}\n', NOW)
+  const run = byId((await scanAll(fs.io(), NOW)).agents, 'fixture-run-0001')
+  expect(run.is_workflow).toBe(false)
+  expect(run.role).toBe('todo hunter')
+  expect(run.status).toBe('running')
+})
+
+test('scanAll: negative entries — a corrupt or unflushed transcript is not re-read every tick; an oversized head runs once', async () => {
+  resetScannerCaches()
+  const fs = office()
+  fs.put(`${PROJ}/sess-aaaa-1111/subagents/agent-corrupt-0010.jsonl`, 'not json\n{"type":"assistant"}\n', NOW - 5000)
+  fs.put(`${PROJ}/sess-aaaa-1111/subagents/agent-blank-0011.jsonl`, '\n', NOW - 5000)
+  const io = fs.io()
+  const p1 = await scanAll(io, NOW)
+  expect(p1.skipped).toBe(3) // the malformed fixture's 2 + the corrupt first line
+  expect(p1.agents.map(a => a.id)).not.toContain('corrupt-0010')
+  const reads = fs.reads.length
+  const p2 = await scanAll(io, NOW + 1500)
+  expect(p2.skipped).toBe(3) // still counted, from the negative entry
+  expect(fs.reads.slice(reads).filter(r => r.includes('corrupt'))).toEqual([]) // never re-parsed until the file changes
+  expect(fs.reads.slice(reads).filter(r => r.includes('blank'))).toEqual([]) // the unflushed one waits for the listing TTL
+  // after GLOB_TTL_SEC the unflushed file is tried again (its flush may not move the key); the corrupt one is not
+  await scanAll(io, NOW + 7000)
+  expect(fs.reads.slice(reads).filter(r => r.includes('blank')).length).toBe(1)
+  expect(fs.reads.slice(reads).filter(r => r.includes('corrupt'))).toEqual([])
+  // a growing OVERSIZED transcript: its first line is read through `head` once, its tail at most every GLOB_TTL_SEC
+  resetScannerCaches()
+  const fs2 = office()
+  let heads = 0
+  let tails = 0
+  const io2 = fs2.io({
+    head: async (path, n) => { heads += 1; return fs2.files.get(path)!.text.split('\n').slice(0, n).join('\n') },
+    tail: async (path, bytes) => { tails += 1; return fs2.files.get(path)!.text.slice(-bytes) },
+  })
+  const hugePath = `${PROJ}/sess-dddd-4444/subagents/agent-huge-0007.jsonl`
+  await scanAll(io2, NOW)
+  expect(heads).toBe(1)
+  expect(tails).toBe(1)
+  fs2.put(hugePath, fs2.files.get(hugePath)!.text, NOW + 1000, FS_READ_LIMIT + 2) // grew: new (mtime,size)
+  await scanAll(io2, NOW + 1500)
+  expect(tails).toBe(1) // reused within GLOB_TTL_SEC
+  fs2.put(hugePath, fs2.files.get(hugePath)!.text, NOW + 6500, FS_READ_LIMIT + 3)
+  await scanAll(io2, NOW + 7000)
+  expect(tails).toBe(2)
+  expect(heads).toBe(1) // the first line never changes
 })
 
 test('normPrompt / parentSessionFile / tailLines', async () => {
@@ -599,7 +654,8 @@ test('demoPayload: the synthetic office, phased', async () => {
   expect(fin.result).toMatch(/3 high/)
   expect(byId(late.agents, 'demo-build-ee').status).toBe('stale')
   expect(byId(late.agents, 'demo-mcp-dd').tool).toBe('mcp__github__search_issues')
-  expect(NOW - (byId(late.agents, 'demo-mcp-dd').start_ms ?? NOW)).toBeGreaterThanOrEqual(10 * MIN)
+  expect(NOW - (byId(late.agents, 'demo-mcp-dd').start_ms ?? NOW)).toBe(63_000) // Python's offset, verbatim
+  expect(late.agents).toHaveLength(10) // 7 + the newcomer + 2 leads: Python's cast, nothing added
   const leads = late.agents.filter(a => a.is_session)
   expect(leads).toHaveLength(2)
   expect(leads[0]?.topic).toBeDefined()

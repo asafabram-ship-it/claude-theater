@@ -11,9 +11,10 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
+import { demoPayload } from './scanner'
 import {
-  agentElapsed, cardName, demoOffice, detectFinishes, emptyKind, fmt, headerCounts, isLongRunning, matchesSearch,
-  officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone,
+  agentElapsed, cardName, detectFinishes, emptyKind, fmt, headerCounts, isLongRunning, matchesSearch,
+  officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
 } from './ui'
 
 const T0 = 1_700_000_000_000
@@ -51,7 +52,8 @@ test('fmt and the clocks: lead since activity, done final, stale frozen, running
   const now = T0
   expect(agentElapsed(agent({ id: 'r', start_ms: now - 90_000 }), now)).toBe(90_000)
   expect(agentElapsed(agent({ id: 'd', status: 'done', start_ms: now - 90_000, end_ms: now - 30_000 }), now)).toBe(60_000)
-  expect(agentElapsed(agent({ id: 'd2', status: 'done', start_ms: now - 90_000, end_ms: null, mtime_ms: now - 40_000 }), now)).toBe(null)
+  // PAGE tickTimers: done without end_ms falls through to the live count on the card (the drawer uses last activity)
+  expect(agentElapsed(agent({ id: 'd2', status: 'done', start_ms: now - 90_000, end_ms: null, mtime_ms: now - 40_000 }), now)).toBe(90_000)
   expect(agentElapsed(agent({ id: 'd2', status: 'done', start_ms: now - 90_000, end_ms: null, mtime_ms: now - 40_000 }), now, true)).toBe(50_000)
   expect(agentElapsed(agent({ id: 's', status: 'stale', start_ms: now - 90_000, mtime_ms: now - 70_000 }), now)).toBe(20_000)
   expect(agentElapsed(agent({ id: 's2', status: 'stale', start_ms: now - 90_000, mtime_ms: now - 95_000 }), now)).toBe(null)
@@ -128,22 +130,25 @@ test('detectFinishes fires once, only for a shown card, never on first sight, an
   expect(pruneJustFinished({ a: T0, b: T0 - JUST_FINISHED_MS - 1 }, T0 + 1)).toEqual({ a: T0 })
 })
 
-test('demoOffice: the 12 s loop, two rooms led by their topics, distinct personas, sorted running/stale/done', () => {
-  const p0 = demoOffice(T0, 0)
+test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop, two rooms led by their topics, distinct personas, sorted running/stale/done', () => {
+  const p0 = demoPayload(T0, 0)
   expect(p0.demo).toBe(true)
   expect(p0.agents.some(a => a.id === 'demo-newcomer-hh')).toBe(false)
   expect(p0.agents.find(a => a.id === 'demo-finisher-gg')?.status).toBe('running')
-  const p6 = demoOffice(T0, 6)
+  const p6 = demoPayload(T0, 6)
   expect(p6.agents.some(a => a.id === 'demo-newcomer-hh')).toBe(true)
   const fin = p6.agents.find(a => a.id === 'demo-finisher-gg')
   expect(fin?.status).toBe('done')
   expect(fin?.result).toMatch(/3 high/)
   expect(p6.agents.find(a => a.id === 'demo-mcp-dd')?.tool).toBe('mcp__github__search_issues')
   expect(activityLabel(p6.agents.find(a => a.id === 'demo-mcp-dd')!, 'he')).toBe('🔌 github')
-  expect(isLongRunning(p6.agents.find(a => a.id === 'demo-longrun-ii')!, T0)).toBe(true)
+  // Python's cast verbatim: 7 agents + the newcomer + 2 leads, the MCP triager 63 s in, no ⏰ subject
+  expect(p6.agents).toHaveLength(10)
+  expect(T0 - (p6.agents.find(a => a.id === 'demo-mcp-dd')?.start_ms ?? 0)).toBe(63_000)
+  expect(p6.agents.some(a => isLongRunning(a, T0))).toBe(false)
   // by time: phase = floor(now/1000) % 12
-  expect(demoOffice(7000).agents.find(a => a.id === 'demo-finisher-gg')?.status).toBe('done')
-  expect(demoOffice(2000).agents.find(a => a.id === 'demo-finisher-gg')?.status).toBe('running')
+  expect(demoPayload(7000).agents.find(a => a.id === 'demo-finisher-gg')?.status).toBe('done')
+  expect(demoPayload(2000).agents.find(a => a.id === 'demo-finisher-gg')?.status).toBe('running')
   // the leads first within running, newest first after
   expect(p6.agents[0]?.is_session).toBe(true)
   expect(p6.agents[1]?.is_session).toBe(true)
@@ -160,6 +165,12 @@ test('demoOffice: the 12 s loop, two rooms led by their topics, distinct persona
   expect(seated.map(a => a.persona_id).sort()).toEqual([5, 6])
   expect(cardName(agent({ id: 'n', role: '', persona_id: 0 }), 'he')).toBe(personaName(0, 'he'))
   expect(paneTitle('he')).toBe('🎭 התיאטרון')
+  // PAGE document.title: the live working-count of open chats
+  const all = fixture()
+  expect(workingCount({ agents: all })).toBe(3)
+  expect(workingCount({ agents: [...all, agent({ id: 'closed', closed: true })] })).toBe(3)
+  expect(paneTitle('en', 3)).toBe('🟢 3 · 🎭 Theater')
+  expect(paneTitle('he', 0)).toBe('🎭 התיאטרון')
 })
 
 type On = Parameters<typeof mock.store>[0]
@@ -186,6 +197,8 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
   on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); return { value: { isPlaced: true as const } } })
+  // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible)
+  on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
   on('ui.focus', () => ({}))
   // the poll's payload write becomes the fixture of the moment
   on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) =>
@@ -251,7 +264,7 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
     expect(await ui.find({ type: 'Text', text: /Claude Theater/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /🔌 github/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /📖 Reading/ })).toBeDefined()
-    expect(captured.opens).toContain('🎭 Theater')
+    expect(captured.opens).toContain('🟢 3 · 🎭 Theater') // retitled with the working count (3 running)
     expect((captured.store.prefs as { lang: string }).lang).toBe('en')
     await ui.press({ key: 'lang' })
     expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
@@ -342,7 +355,6 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   expect(await ui.find({ type: 'Text', text: /💬 Ship the v2 config migration/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /💬 Plan the static-regeneration rollout/ })).toBeDefined()
   expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /⏰/ })).toBeDefined()
   expect((await ui.find({ key: 'demo' }))?.text).toMatch(/Exit/)
   // phase 6 of the loop: the finisher completes on a visible card (demo forces "show finished");
   // the office redraws on the poll (POLL_MS), so walk one poll past the phase edge

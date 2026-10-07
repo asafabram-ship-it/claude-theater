@@ -8,8 +8,8 @@
 //
 // ENGINE RULE (claude plugin validate): `$` is never passed to a function
 // imported from another file. Helpers that take `$` are declared HERE
-// (openPane, poll, loadPrefs, scanIo); imported modules get closures
-// (scanIo) or register their own hooks (registerLive / registerUi).
+// (openPane, poll, loadPrefs, scanIo, ensurePolling); imported modules get
+// closures (scanIo) or register their own hooks (registerUi).
 //
 // Lifecycle:
 //   session.start   load prefs from $.store, remember the session id, register
@@ -17,12 +17,29 @@
 //                   Each step is its own try: a failing $.command.register
 //                   (nothing answers it in a test harness, or a name clash)
 //                   never stops the office from scanning.
-//   poll            scanAll(scanIo($)) → liveAged($.agent.list()) → mergeLive →
-//                   $.state payload; the ⭐/chime "finish beat" runs in ui.tsx's
+//   poll            while the pane is up: scanAll(scanIo($)) → liveAged
+//                   ($.agent.list()) → mergeLive → $.state payload (+ the
+//                   "🟢 N · " working count in the pane title, PAGE's
+//                   document.title); the ⭐/chime "finish beat" runs in ui.tsx's
 //                   render hook (a plugin never sees its own state.set).
-//                   In demo mode the payload is scanner's demoPayload; ui.tsx
-//                   draws its own demoOffice over it (effectivePayload) so the
-//                   demo clock advances on every redraw, not only on the poll.
+//                   While the pane is closed (never opened, or closed by the
+//                   person) the files are NOT scanned — PAGE polled only while
+//                   the panel was visible — only the live map is aged so the
+//                   engine's statuses keep landing; openPane polls at once.
+//                   In demo mode the payload is scanner's demoPayload — the one
+//                   demo cast (ui.tsx draws demoPayload(now) on every redraw so
+//                   the demo clock advances between polls).
+//   reload safety   a hot reload runs `register` again in a fresh environment and
+//                   drops the old one's timers, while session.start fires once
+//                   per session. So the timer lives in module scope and
+//                   ensurePolling($) (re)starts it lazily from every hook that
+//                   has a `$` — session.start, /theater, agent.spawn, tool.call
+//                   — and from the pane's next redraw (a render hook of this
+//                   file ahead of ui.tsx's, through $.clock.after(0): a render
+//                   may not write state).
+//   poll guards     one poll at a time (a helper process may take seconds; an
+//                   overlapping tick would race the caches) and a publish never
+//                   rolls the office back to an older scan.
 //
 // Files over 4 MiB ($.fs.read's limit): scanIo hands the scanner three optional
 // closures built over $.process.run — head(path, lines), tail(path, bytes) and
@@ -31,24 +48,26 @@
 // executable) rejects and the scanner degrades exactly as without the closure:
 // the oversized transcript is skipped and counted in payload.oversized, an
 // oversized parent yields role ""/project ""/topic "", and every registered
-// session is trusted as open. pidAlive answers are memoised PID_TTL_MS so a
-// scan every 1.5 s does not spawn one process per open chat.
+// session is trusted as open. pidAlive reads ONE process listing (tasklist /
+// ps) cached PID_TTL_MS at module level, so a scan every 1.5 s spawns one
+// process per 30 s however many chats are open.
 //   agent.spawn     after next: liveSpawned; first subagent of the session →
 //                   $.ui.open once (auto-open).
 //   tool.call       in a live agent's loop: liveToolStarted / liveToolReturned;
-//                   the main loop's Agent call: liveAgentReturned (its result).
+//                   the main loop's Agent (or Task, the older alias) call:
+//                   liveAgentReturned (its result).
 //   command.run     /theater → $.ui.open (always, asked by the person).
 // Every hook: wrapped in try/catch AND `.catch` so the office never blocks Claude.
 // An event is hooked at most ONCE without a matcher per module (validate rule),
 // which is why the agent.spawn and tool.call hooks are here and live.ts is pure.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive } from './live'
-import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Prefs } from './model'
+import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { paneTitle, registerUi } from './ui'
+import { paneTitle, registerUi, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -59,26 +78,45 @@ const viewAtom = atom({ plugin: 'agent-theater', key: 'view' } as const, DEFAULT
 const paneOpenedAtom = atom({ plugin: 'agent-theater', key: 'paneOpened' } as const, false)
 const scanErrorAtom = atom({ plugin: 'agent-theater', key: 'scanError' } as const, null)
 
-/** Opens (or raises) the pane with the current language's title. */
-export async function openPane($: EngineInterface): Promise<void> {
-  const prefs = await read($, prefsAtom)
-  await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang) })
-  await update($, paneOpenedAtom, () => true)
-}
-
-/** How long one helper process (head/tail/pidAlive) may run before the scanner degrades instead. */
-const PROCESS_TIMEOUT_MS = 10_000
-/** A pidAlive answer is reused this long (Python re-checked every scan with a free os.kill(pid, 0)). */
-const PID_TTL_MS = 30_000
-
-/** True on Windows (%OS% = Windows_NT); decides PowerShell vs head/tail/ps for the oversized-file closures. */
-async function isWindows($: EngineInterface): Promise<boolean> {
+/** Is the office pane open (and the one shown) on some surface? One cheap round trip; false when unanswerable. */
+async function paneIsUp($: EngineInterface): Promise<boolean> {
   try {
-    // $.env.get takes a literal name (validate lists the variables a module reads).
-    return (await $.env.get('OS')) === 'Windows_NT'
+    return (await $.ui.panes()).some(p => p.id === PANE_ID && p.isShown !== false)
   } catch {
     return false
   }
+}
+
+/** Opens (or raises) the pane with the current language's title, then fills it at once. Never rejects. */
+export async function openPane($: EngineInterface): Promise<void> {
+  try {
+    const prefs = await read($, prefsAtom)
+    const payload = await read($, payloadAtom)
+    await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, workingCount(payload)) })
+    await update($, paneOpenedAtom, () => true)
+  } catch {
+    // no surface draws yet (an SDK / -p run), or a hook refused: the next spawn / /theater tries again
+  }
+  void poll($)
+}
+
+/** How long one helper process (head/tail/the pid listing) may run before the scanner degrades instead. */
+const PROCESS_TIMEOUT_MS = 10_000
+/** The process listing is reused this long (Python re-checked every scan with a free os.kill(pid, 0)). */
+const PID_TTL_MS = 30_000
+
+/** Asked once per environment: %OS% = Windows_NT decides PowerShell/tasklist vs head/tail/ps. */
+let WIN: Promise<boolean> | undefined
+/** The one process listing, cached PID_TTL_MS (a failed listing is cached too, so a broken helper is not retried every tick). */
+let PID_LIST: { at: number; pids: Promise<Set<number>> } | undefined
+
+/** True on Windows (%OS% = Windows_NT); memoised per environment. */
+function isWindows($: EngineInterface): Promise<boolean> {
+  if (!WIN) {
+    // $.env.get takes a literal name (validate lists the variables a module reads).
+    WIN = $.env.get('OS').then(v => v === 'Windows_NT', () => false)
+  }
+  return WIN
 }
 
 /** A PowerShell single-quoted literal (the only escape is a doubled quote). */
@@ -98,16 +136,35 @@ function psArgv(script: string): string[] {
   return ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', wrapped]
 }
 
+/** `tasklist /NH /FO CSV` ("name","pid",...) or `ps -axo pid=` (one pid per line) → the live pids. */
+export function parsePidListing(stdout: string): Set<number> {
+  const out = new Set<number>()
+  for (const line of stdout.split('\n')) {
+    const m = /^"[^"]*","(\d+)"/.exec(line.trim()) ?? /^(\d+)$/.exec(line.trim())
+    if (m) out.add(Number(m[1]))
+  }
+  return out
+}
+
+/** Runs argv through `$.process.run`, resolves stdout, rejects on a non-zero exit (the scanner then degrades). */
+async function runProcess($: EngineInterface, argv: readonly string[]): Promise<string> {
+  const r = await $.process.run(argv, { timeoutMs: PROCESS_TIMEOUT_MS })
+  if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${r.exitCode}`)
+  return r.stdout
+}
+
+/** The pids alive now: ONE listing per PID_TTL_MS for the whole office (every registered chat shares it). */
+function livePids($: EngineInterface, now: number): Promise<Set<number>> {
+  if (PID_LIST && now - PID_LIST.at < PID_TTL_MS) return PID_LIST.pids
+  const pids = isWindows($).then(win =>
+    runProcess($, win ? ['tasklist', '/NH', '/FO', 'CSV'] : ['ps', '-axo', 'pid=']).then(parsePidListing))
+  pids.catch(() => undefined) // each pidAlive caller observes the rejection itself (→ "alive"); never unhandled here
+  PID_LIST = { at: now, pids }
+  return pids
+}
+
 /** The scanner's file-system closures over `$` (declared here: `$` never crosses an import). */
 function scanIo($: EngineInterface): ScanIo {
-  const win = isWindows($)
-  const pidSeen = new Map<number, { alive: boolean; t: number }>()
-  /** Runs argv, resolves stdout, rejects on a non-zero exit (the scanner then degrades). */
-  const run = async (argv: readonly string[]): Promise<string> => {
-    const r = await $.process.run(argv, { timeoutMs: PROCESS_TIMEOUT_MS })
-    if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${r.exitCode}`)
-    return r.stdout
-  }
   return {
     read: path => $.fs.read(path),
     list: path => $.fs.list(path),
@@ -117,61 +174,93 @@ function scanIo($: EngineInterface): ScanIo {
     // Files over FS_READ_LIMIT: the first `lines` lines ...
     head: async (path, lines) => {
       const n = Math.max(1, Math.floor(lines))
-      return (await win)
-        ? run(psArgv(`Get-Content -LiteralPath ${psQuote(path)} -TotalCount ${n} -Encoding UTF8 | ForEach-Object { [Console]::Out.WriteLine($_) }`))
-        : run(['head', '-n', String(n), path])
+      return (await isWindows($))
+        ? runProcess($, psArgv(`Get-Content -LiteralPath ${psQuote(path)} -TotalCount ${n} -Encoding UTF8 | ForEach-Object { [Console]::Out.WriteLine($_) }`))
+        : runProcess($, ['head', '-n', String(n), path])
     },
     // ... and the last `bytes` bytes (the scanner drops the partial first line itself).
     tail: async (path, bytes) => {
       const n = Math.max(1, Math.floor(bytes))
-      if (!(await win)) return run(['tail', '-c', String(n), path])
+      if (!(await isWindows($))) return runProcess($, ['tail', '-c', String(n), path])
       const script =
         `$s=[System.IO.File]::OpenRead(${psQuote(path)}); try { ` +
         `$n=[int][Math]::Min($s.Length, ${n}); [void]$s.Seek(-$n, [System.IO.SeekOrigin]::End); ` +
         `$b=New-Object byte[] $n; $r=$s.Read($b, 0, $n); ` +
         `[Console]::Out.Write([Text.Encoding]::UTF8.GetString($b, 0, $r)) } finally { if ($s) { $s.Dispose() } }`
-      return run(psArgv(script))
+      return runProcess($, psArgv(script))
     },
-    // Is the process that registered a ~/.claude/sessions record still alive?
-    pidAlive: async pid => {
-      const now = await $.clock.now()
-      const seen = pidSeen.get(pid)
-      if (seen && now - seen.t < PID_TTL_MS) return seen.alive
-      let alive: boolean
-      if (await win) {
-        const r = await $.process.run(['tasklist', '/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV'], { timeoutMs: PROCESS_TIMEOUT_MS })
-        if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${r.exitCode}`)
-        alive = r.stdout.includes(`"${pid}"`)
-      } else {
-        const r = await $.process.run(['ps', '-p', String(pid)], { timeoutMs: PROCESS_TIMEOUT_MS })
-        alive = r.exitCode === 0
-      }
-      pidSeen.set(pid, { alive, t: now })
-      return alive
-    },
+    // Is the process that registered a ~/.claude/sessions record still alive? (rejects → the scanner trusts the record)
+    pidAlive: async pid => (await livePids($, await $.clock.now())).has(pid),
   }
 }
 
-/** One poll: scan the files, merge this session's live agents, publish. Never throws. */
+/** The poll in progress, if any (a tick that finds one running is skipped). */
+let polling = false
+/** The working count last written into the pane title (PAGE's document.title); undefined until the first poll. */
+let lastRun: number | undefined
+
+/**
+ * One poll. Pane up: scan the files (or the demo cast), age + merge this
+ * session's live agents, publish, retitle. Pane down: only age the live map
+ * (the engine's statuses must keep landing; no file is touched). Never
+ * throws; never runs twice at once.
+ */
 export async function poll($: EngineInterface): Promise<void> {
+  if (polling) return
+  polling = true
   try {
     const now = await $.clock.now()
+    const up = await paneIsUp($)
     const view = await read($, viewAtom)
-    const live = await read($, liveAtom)
     const sessionId = await read($, sessionIdAtom)
-    const scanned = view.demo ? demoPayload(now) : await scanAll(scanIo($), now)
-    const { error, ...payload } = scanned as typeof scanned & { error?: string }
-    let aged = live
-    if (Object.keys(live).length > 0) {
+    let scanned: (Payload & { error?: string }) | undefined
+    if (up) scanned = view.demo ? demoPayload(now) : await scanAll(scanIo($), now)
+    // Age the live map AGAINST ITS CURRENT VALUE: the reducer re-runs on the
+    // value in $.state, so a tool.call that landed during the scan is kept.
+    let aged = await read($, liveAtom)
+    if (Object.keys(aged).length > 0) {
       const listed = await $.agent.list().catch(() => [])
-      aged = liveAged(live, listed, now)
-      if (aged !== live) await update($, liveAtom, () => aged)
+      if (liveAged(aged, listed, now) !== aged) {
+        aged = await update($, liveAtom, live => liveAged(live, listed, now))
+      }
     }
+    if (!scanned) return
+    const { error, ...payload } = scanned
     const merged = mergeLive(payload, aged, sessionId, now)
-    await update($, payloadAtom, () => merged)
+    // Never roll the office back: a slower, older scan loses to a newer publish.
+    const published = await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
     await update($, scanErrorAtom, () => error ?? null)
+    const run = workingCount(published)
+    if (run !== lastRun) {
+      // PAGE: document.title = (run ? "🟢 N · " : "") + docTitle, on every poll.
+      // An open id is retitled in place (never a second instance); no `focus`.
+      lastRun = run
+      const prefs = await read($, prefsAtom)
+      await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, run) }).catch(() => undefined)
+    }
   } catch (err) {
     await update($, scanErrorAtom, () => (err instanceof Error ? err.message : String(err))).catch(() => undefined)
+  } finally {
+    polling = false
+  }
+}
+
+/** The poll timer of this environment (a hot reload drops it with the environment; ensurePolling restarts it). */
+let ticker: Timer | undefined
+
+/**
+ * Starts the poll timer unless this environment already runs one; `restart`
+ * (session.start) replaces whatever runs, so a new session never polls on a
+ * stale `$`. Never throws.
+ */
+function ensurePolling($: EngineInterface, restart = false): void {
+  try {
+    if (ticker && !restart) return
+    ticker?.cancel()
+    ticker = $.clock.every(POLL_MS, () => void poll($))
+    void poll($)
+  } catch {
+    // never block the caller
   }
 }
 
@@ -217,30 +306,27 @@ export const register: Register = on => {
     } catch {
       // the pane still auto-opens on the first subagent
     }
-    try {
-      void poll($)
-      $.clock.every(POLL_MS, () => void poll($))
-    } catch {
-      // never block the session
-    }
+    ensurePolling($, true)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'theater' }, async $ => {
     try {
+      ensurePolling($)
       await openPane($)
       const prefs = await read($, prefsAtom)
       return { text: prefs.lang === 'he' ? 'התיאטרון נפתח.' : 'Theater pane opened.' }
     } catch (err) {
       return { text: `agent-theater: ${err instanceof Error ? err.message : String(err)}` }
     }
-  })
+  }).catch(($, e, next) => next(e))
 
   // A subagent started: record it (after next, when agentId/model are known)
   // and auto-open the pane on the FIRST subagent of the session (spec "פתיחה").
   on('agent.spawn', async ($, e, next) => {
     const ran = await next(e)
     try {
+      ensurePolling($)
       const agentId = ran.agentId
       if (agentId !== undefined) {
         const now = await $.clock.now()
@@ -263,8 +349,10 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // Tool calls: inside a live agent's loop they drive its phase/tool; the main
-  // loop's Agent call carries the subagent's result when it returns.
+  // loop's Agent call (Task: the older alias, as Python name_map_for joins on
+  // both) carries the subagent's result when it returns.
   on('tool.call', async ($, e, next) => {
+    ensurePolling($)
     const agentId = e.agentId
     if (agentId !== undefined) {
       try {
@@ -282,7 +370,8 @@ export const register: Register = on => {
       }
       return ran
     }
-    if (String(e.tool) === 'Agent') {
+    const tool = String(e.tool)
+    if (tool === 'Agent' || tool === 'Task') {
       const ran = await next(e)
       try {
         const now = await $.clock.now()
@@ -292,6 +381,21 @@ export const register: Register = on => {
         // ignore
       }
       return ran
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The render kick: a pane that is already up after a hot reload ($.ui.panes()
+  // lists it; the engine's record outlives the module) resumes polling on its
+  // first redraw. A hook of our own on the pane's render, ahead of ui.tsx's in
+  // the chain, schedules ensurePolling through $.clock.after(0) — outside the
+  // render, so poll's state writes are allowed — and passes the draw on with
+  // next(e). (`$` may not be handed to a callback across files: validate rule.)
+  on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, ($, e, next) => {
+    try {
+      $.clock.after(0, () => ensurePolling($))
+    } catch {
+      // the hooks with a `$` kick the poll too
     }
     return next(e)
   }).catch(($, e, next) => next(e))

@@ -36,7 +36,7 @@ export type Strings = {
   srResults: (n: number) => string; srNoMatch: string; srCleared: string; pin: string; unpin: string
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
-  dWorking: string; dDone: string; dStale: string; dDuration: string; dElapsed: string
+  dWorking: string; dDone: string; dStale: string; dFailed: string; dDuration: string; dElapsed: string
   dAction: string; dTask: string; dResult: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
@@ -64,7 +64,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoActive: 'No active agents. Tick "Show finished" to see history.',
     emptyNoneInWindow: 'No agents in the time window.',
     working: 'working', idleN: 'idle', finished: 'finished',
-    dWorking: 'Working', dDone: 'Done', dStale: 'Idle',
+    dWorking: 'Working', dDone: 'Done', dStale: 'Idle', dFailed: 'Failed',
     dDuration: 'Duration ', dElapsed: 'Elapsed ',
     dAction: 'Activity', dTask: 'Task', dResult: 'Result',
     taskUnavailable: 'working — details unavailable',
@@ -92,7 +92,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoActive: 'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',
     emptyNoneInWindow: 'אין סוכנים בחלון הזמן.',
     working: 'עובדים', idleN: 'ממתינים', finished: 'סיימו',
-    dWorking: 'עובד', dDone: 'סיים', dStale: 'ממתין',
+    dWorking: 'עובד', dDone: 'סיים', dStale: 'ממתין', dFailed: 'נכשל',
     dDuration: 'משך ', dElapsed: 'זמן ',
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה',
     taskUnavailable: 'עובד — פרטים לא זמינים',

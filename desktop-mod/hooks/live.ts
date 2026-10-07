@@ -40,7 +40,7 @@
 
 import type { AgentInfo } from 'claude-code'
 
-import { IN_FLIGHT_MAX_SEC, PERSONA_EMOJI, RUNNING_STALE_SEC, STATUS_ORDER, clipResult, personaIndex, shortTask } from './model'
+import { IN_FLIGHT_MAX_SEC, MAX_AGE_MIN, PERSONA_EMOJI, RUNNING_STALE_SEC, STATUS_ORDER, clipResult, personaIndex, shortTask } from './model'
 import type { Agent, LiveAgent, Payload, TheaterStatus } from './model'
 import { resolvePersonas } from './scanner'
 
@@ -98,7 +98,9 @@ export function liveToolReturned(live: LiveMap, agentId: string, now: number): L
 /**
  * The main loop's `Agent` tool call returned: the subagent whose spawn carried
  * this tool_use_id is done with this result (clipped to RESULT_CHAR_LIMIT).
- * `text` undefined (denied, or no text) → done with an empty result.
+ * `text` undefined (denied, or no text) → done with an empty result. The last
+ * tool is KEPT (Python keeps last_tool_use_name on a done agent; the drawer
+ * draws it as a chip).
  */
 export function liveAgentReturned(live: LiveMap, toolUseId: string, text: string | undefined, isError: boolean, now: number): LiveMap {
   const entry = Object.values(live).find(a => a.tool_use_id === toolUseId)
@@ -114,7 +116,6 @@ export function liveAgentReturned(live: LiveMap, toolUseId: string, text: string
       last_ms: now,
       engine_status: isError && entry.engine_status === 'running' ? 'failed' : entry.engine_status,
       phase: 'thinking',
-      tool: '',
     },
   }
 }
@@ -124,9 +125,11 @@ export function liveAgentReturned(live: LiveMap, toolUseId: string, text: string
  * counts as activity; a terminal status stamps end_ms); an agent not listed
  * whose Agent call already returned and that is silent for RUNNING_STALE_SEC
  * is marked completed; a listed agent the map has never seen (the mod loaded
- * after it spawned) is added from the listing. Never drops an entry (the
- * scanner's MAX_AGE_MIN window is the eviction; mergeLive hides what the
- * scanner hides). Returns the SAME map when nothing changed.
+ * after it spawned) is added from the listing. A DONE entry silent for longer
+ * than MAX_AGE_MIN is evicted (Python's window: an agent whose file is that
+ * old leaves the office), so the map — serialized across the host on every
+ * tool.call — is bounded by the window, not by the session's length.
+ * Returns the SAME map when nothing changed.
  */
 export function liveAged(live: LiveMap, listed: readonly AgentInfo[], now: number): LiveMap {
   let out: LiveMap = live
@@ -174,7 +177,17 @@ export function liveAged(live: LiveMap, listed: readonly AgentInfo[], now: numbe
     if (!changed) { out = { ...live }; changed = true }
     out[a.id] = { ...a, engine_status: 'completed' }
   }
+  for (const a of Object.values(out)) {
+    if (!liveAgedOut(a, now)) continue
+    if (!changed) { out = { ...live }; changed = true }
+    delete out[a.id]
+  }
   return out
+}
+
+/** A finished live entry past the office's MAX_AGE_MIN window (measured from its last event / finish). */
+export function liveAgedOut(a: LiveAgent, now: number): boolean {
+  return liveIsDone(a) && now - Math.max(a.last_ms, a.end_ms ?? 0) > MAX_AGE_MIN * 60_000
 }
 
 /** True once the engine (or the Agent call's return) says the loop is over. */
@@ -254,11 +267,13 @@ function liveToAgent(a: LiveAgent, now: number, sessionId: string, scan: Agent |
  * persona_id/emoji, and its task/role when the events carry none); a live
  * agent the scanner has not seen yet is added to this session's room
  * (session_full = sessionId, session = its first 8 chars, project/cwd from the
- * room's lead). Then re-sort as scanAll does (STATUS_ORDER, lead first, newest
- * first) and re-run resolvePersonas. The scanner's objects are never mutated.
+ * room's lead). A done entry past MAX_AGE_MIN is skipped (belt and braces over
+ * liveAged's eviction: stale state after a reload cannot resurrect it). Then
+ * re-sort as scanAll does (STATUS_ORDER, lead first, newest first) and re-run
+ * resolvePersonas. The scanner's objects are never mutated.
  */
 export function mergeLive(payload: Payload, live: LiveMap, sessionId: string, now: number): Payload {
-  const entries = Object.values(live)
+  const entries = Object.values(live).filter(a => !liveAgedOut(a, now))
   if (entries.length === 0) return payload
   const lead = payload.agents.find(a => a.is_session && a.session_full === sessionId)
   const byId = new Map<string, Agent>()

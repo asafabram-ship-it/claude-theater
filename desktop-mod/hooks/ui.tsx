@@ -567,6 +567,7 @@ async function saveRoomDone($: EngineInterface, value: Record<string, boolean>):
 /** Writes prefs through the atom and mirrors them to $.store (they outlive the session). */
 async function savePrefs($: EngineInterface, fn: (p: Prefs) => Prefs): Promise<Prefs> {
   const saved = await update($, prefsAtom, fn)
+  diagLine(Date.now(), `write prefs showDone=${saved.showDone} lang=${saved.lang} pins=${saved.pins.length}`)
   await $.store.set(STORE_PREFS_KEY, saved).catch(() => undefined)
   return saved
 }
@@ -643,6 +644,7 @@ function finishBeat(
       $.clock.after(0, async () => {
         try {
           if (selectedGone || starsChanged) {
+            diagLine(now, `write view (stars=${Object.keys(committed).length} selectedGone=${selectedGone})`)
             await update($, viewAtom, v => ({ ...v, justFinished: committed, selected: selectedGone ? null : v.selected }))
           }
           if (staleRoomDone) {
@@ -683,7 +685,6 @@ export function registerUi(on: On): void {
     // the clock is the engine's; a host without one (a bare test) falls back to the module's
     const now = await $.clock.now().catch(() => Date.now())
     if (!desktop) textSurfaceDrawnAt = now
-    diagLine(now, `render pane surface=${e.surface} cols=${e.props.bodyColumns} scroll=${e.props.scroll?.offset ?? '-'} payload=${payload.scanned_ms} demo=${view.demo} sel=${view.selected ?? '-'}`)
     const lang = prefs.lang
     const L: Strings = I18N[lang]
     const rtl = dirOf(lang) === 'rtl'
@@ -700,6 +701,7 @@ export function registerUi(on: On): void {
     const showDone = view.demo || prefs.showDone
     const q = view.search
     const { rooms, stat, order } = officeView(all, q, lang, showDone, roomDone, prefs.pins)
+    diagLine(now, `render pane surface=${e.surface} cols=${e.props.bodyColumns} scroll=${e.props.scroll?.offset ?? '-'} payload=${payload.scanned_ms} demo=${view.demo} sel=${view.selected ?? '-'} showDone=${prefs.showDone} roomOverrides=${Object.keys(roomDone).length} shown=${order.length}/${all.length}`)
     const stars = finishBeat($, office, prefs, view, roomDone, now)
     const entering = desktop ? walkIns(firstSeen, all, now) : new Set<string>()
     const counts = headerCounts(all)

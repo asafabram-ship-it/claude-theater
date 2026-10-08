@@ -718,6 +718,7 @@ export function registerUi(on: On): void {
       void savePrefs($, p => ({ ...p, showDone: !p.showDone }))
     }
     const toggleMute = () => void savePrefs($, p => ({ ...p, muted: !p.muted }))
+    const toggleStill = () => void savePrefs($, p => ({ ...p, still: !p.still }))
     const toggleLang = () => void setLang($, lang === 'he' ? 'en' : 'he')
     const toggleHelp = () => void update($, viewAtom, v => ({ ...v, helpOpen: !v.helpOpen }))
     const toggleDemo = () => void setDemo($, !view.demo)
@@ -751,6 +752,7 @@ export function registerUi(on: On): void {
       <Box flexDirection={row} flexWrap={compact ? 'nowrap' : 'wrap'} gap={1}>
         <Button key="showDone" hotkey={hk('f')} plain label={compact ? (showDone ? '☑' : '☐') : `${showDone ? '☑' : '☐'} ${L.showDone}`} onPress={toggleShowDone} />
         <Button key="mute" hotkey={hk('m')} plain label={prefs.muted ? '🔕' : '🔔'} onPress={toggleMute} />
+        {desktop ? <Button key="still" hotkey={hk('s')} plain label={prefs.still ? '🖼' : '🎞'} onPress={toggleStill} /> : null}
         <Button key="lang" hotkey={hk('l')} plain label={compact ? (lang === 'he' ? 'EN' : 'עב') : L.switchTo} onPress={toggleLang} />
         <Button key="help" hotkey={hk('h')} plain label="?" onPress={toggleHelp} />
         {view.demo
@@ -911,7 +913,7 @@ export function registerUi(on: On): void {
       // no width/height props: the box takes the slot's width and the markup's own height at it (the
       // markup carries its intrinsic size), so the rows scale with the pane and hug their tiles
       return [
-        ...rowsSvg.map((r, i) => <Svg key={`roomsvg:${s}:${i}`} source={r.source} alt={r.alt} isInteractive />),
+        ...rowsSvg.map((r, i) => <Svg key={`roomsvg:${s}:${i}`} source={r.source} alt={r.alt} isInteractive={prefs.still ? undefined : true} />),
         <Box key={`opens:${s}`} flexDirection={row} flexWrap="wrap" gap={0}>
           {members.map((a, i) => {
             const lit = selected?.id === a.id || focused?.id === a.id

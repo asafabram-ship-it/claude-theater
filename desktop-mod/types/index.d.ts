@@ -139,6 +139,8 @@ export type TheaterPrefs = {
   showDone: boolean
   /** Pinned rooms (session_full ids), drawn first. */
   pins: string[]
+  /** DESKTOP: draw the rooms as still images instead of animated frames (a redraw — a scroll — then does not blink). */
+  still?: boolean
 }
 
 /** Transient UI state (not persisted). */

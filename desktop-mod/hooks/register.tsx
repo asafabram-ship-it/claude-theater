@@ -364,6 +364,7 @@ async function loadPrefs($: EngineInterface): Promise<Prefs> {
       lang: stored?.lang === 'en' ? 'en' : DEFAULT_PREFS.lang,
       muted: stored?.muted === true,
       showDone: stored?.showDone === true,
+      still: stored?.still === true,
       pins: Array.isArray(stored?.pins) ? stored.pins.filter(p => typeof p === 'string') : [],
     }
   } catch {

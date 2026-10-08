@@ -69,14 +69,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive } from './live'
+import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { paneTitle, registerUi, renderKey, textSurfaceActive, workingCount } from './ui'
+import { diagLine, paneTitle, registerUi, renderKey, takeDiag, textSurfaceActive, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
-const liveAtom = atom({ plugin: 'agent-theater', key: 'live' } as const, {})
 const sessionIdAtom = atom({ plugin: 'agent-theater', key: 'sessionId' } as const, '')
 const prefsAtom = atom({ plugin: 'agent-theater', key: 'prefs' } as const, DEFAULT_PREFS)
 const viewAtom = atom({ plugin: 'agent-theater', key: 'view' } as const, DEFAULT_VIEW)
@@ -200,6 +199,42 @@ function scanIo($: EngineInterface): ScanIo {
   }
 }
 
+/**
+ * THIS SESSION'S LIVE AGENTS, in module memory - NOT $.state. Every subagent
+ * tool call starts and returns here (several a second with a few agents), and
+ * on the desktop ANY $.state write of the plugin redraws its pane, which
+ * blinks and swallows presses. A hot reload loses the map; the file scan still
+ * shows those agents (only their sub-second phase is the live map's).
+ */
+let LIVE: LiveMap = {}
+/** The band's working count last drawn (the band redraws only when it moves). */
+let lastBandCount = 0
+/** Running agents of the live map (the band's count). */
+function liveWorking(): number {
+  return Object.values(LIVE).filter(a => a.engine_status === 'running').length
+}
+
+/** When the diagnostics file was last written. */
+let diagFlushedAt = -Infinity
+/**
+ * DIAGNOSTICS: what redrew the pane and what the poll wrote, written to
+ * ~/.claude/agent-theater-diag.log every few seconds (a file, never $.state:
+ * logging must not cause the redraws it measures). Never throws.
+ */
+async function flushDiag($: EngineInterface, now: number): Promise<void> {
+  if (now - diagFlushedAt < 4000) return
+  diagFlushedAt = now
+  const text = takeDiag()
+  if (!text) return
+  try {
+    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+    if (!home) return
+    await $.fs.write(`${home.replace(/[\\/]+$/, '')}/.claude/agent-theater-diag.log`, text)
+  } catch {
+    // diagnostics only
+  }
+}
+
 /** The poll in progress, if any (a tick that finds one running is skipped). */
 let polling = false
 /** The working count last written into the pane title (PAGE's document.title); undefined until the first poll. */
@@ -228,15 +263,23 @@ export async function poll($: EngineInterface): Promise<void> {
     const sessionId = await read($, sessionIdAtom)
     let scanned: (Payload & { error?: string }) | undefined
     if (up) scanned = view.demo ? demoPayload(now) : await scanAll(scanIo($), now)
-    // Age the live map AGAINST ITS CURRENT VALUE: the reducer re-runs on the
-    // value in $.state, so a tool.call that landed during the scan is kept.
-    let aged = await read($, liveAtom)
-    if (Object.keys(aged).length > 0) {
+    // Age the live map (after the scan's awaits: a tool.call that landed meanwhile is kept)
+    if (Object.keys(LIVE).length > 0) {
       const listed = await $.agent.list().catch(() => [])
-      if (liveAged(aged, listed, now) !== aged) {
-        aged = await update($, liveAtom, live => liveAged(live, listed, now))
+      LIVE = liveAged(LIVE, listed, now)
+    }
+    const aged = LIVE
+    // the band above the prompt shows the working count while the pane is closed: redraw it only when that count moves
+    const band = up ? 0 : liveWorking()
+    if (band !== lastBandCount) {
+      lastBandCount = band
+      try {
+        $.ui.invalidate('ui.render')
+      } catch {
+        // the band catches up on its next draw
       }
     }
+    await flushDiag($, now)
     if (!scanned) return
     const { error, ...payload } = scanned
     const merged = mergeLive(payload, aged, sessionId, now)
@@ -258,21 +301,29 @@ export async function poll($: EngineInterface): Promise<void> {
     if ((key !== lastKey && due) || renderKey(await read($, payloadAtom), now, view.justFinished, true) !== coarse) {
       // Never roll the office back: a slower, older scan loses to a newer publish.
       await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
+      diagLine(now, `write payload (${coarse !== lastCoarse ? 'structure' : 'activity'}) agents=${merged.agents.length}`)
       lastKey = key
       lastCoarse = coarse
       lastPublishAt = now
     }
     const curError = await read($, scanErrorAtom)
-    if ((error ?? null) !== curError) await update($, scanErrorAtom, () => error ?? null)
+    if ((error ?? null) !== curError) {
+      diagLine(now, `write scanError: ${error ?? 'null'}`)
+      await update($, scanErrorAtom, () => error ?? null)
+    }
     // the tick only while a text surface draws the pane (the TICK GUARD, ui.tsx): on the desktop
     // any write of ours redraws the pane, so an idle desktop office must see no write at all
-    if (textSurfaceActive(now)) await update($, tickAtom, () => now)
+    if (textSurfaceActive(now)) {
+      diagLine(now, 'write tick')
+      await update($, tickAtom, () => now)
+    }
     const run = workingCount(merged)
     if (run !== lastRun) {
       // PAGE: document.title = (run ? "🟢 N · " : "") + docTitle, on every poll.
       // An open id is retitled in place (never a second instance); no `focus`.
       lastRun = run
       const prefs = await read($, prefsAtom)
+      diagLine(now, `retitle run=${run}`)
       await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, run) }).catch(() => undefined)
     }
   } catch (err) {
@@ -375,7 +426,7 @@ export const register: Register = on => {
           prompt: e.prompt,
           model: ran.model ?? e.model ?? '',
         }
-        await update($, liveAtom, live => liveSpawned(live, spawn, now))
+        LIVE = liveSpawned(LIVE, spawn, now)
         const opened = await read($, paneOpenedAtom)
         if (!opened) void openPane($)
       }
@@ -394,14 +445,14 @@ export const register: Register = on => {
     if (agentId !== undefined) {
       try {
         const now = await $.clock.now()
-        await update($, liveAtom, live => liveToolStarted(live, agentId, String(e.tool), now))
+        LIVE = liveToolStarted(LIVE, agentId, String(e.tool), now)
       } catch {
         // ignore
       }
       const ran = await next(e)
       try {
         const now = await $.clock.now()
-        await update($, liveAtom, live => liveToolReturned(live, agentId, now))
+        LIVE = liveToolReturned(LIVE, agentId, now)
       } catch {
         // ignore
       }
@@ -413,7 +464,7 @@ export const register: Register = on => {
       try {
         const now = await $.clock.now()
         const text = ran.deny !== undefined ? ran.deny : ran.text
-        await update($, liveAtom, live => liveAgentReturned(live, e.tool_use_id, text, ran.deny !== undefined || ran.isError === true, now))
+        LIVE = liveAgentReturned(LIVE, e.tool_use_id, text, ran.deny !== undefined || ran.isError === true, now)
       } catch {
         // ignore
       }
@@ -445,8 +496,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     try {
       if (e.props.hasSurvey) return next(e)
-      const live = await read($, liveAtom)
-      const working = Object.values(live).filter(a => a.engine_status === 'running').length
+      const working = liveWorking()
       if (working === 0 || (await paneIsUp($))) return next(e)
       const prefs = await read($, prefsAtom)
       const label = prefs.lang === 'he'

@@ -174,6 +174,25 @@ export function textSurfaceActive(now: number): boolean {
   return now - textSurfaceDrawnAt < TEXT_SURFACE_TTL_MS
 }
 
+/** DIAGNOSTICS (register.tsx flushDiag): the last lines, oldest first. */
+const DIAG: string[] = []
+const DIAG_MAX = 400
+let diagDirty = false
+/** Records one diagnostic line, stamped mm:ss.mmm. */
+export function diagLine(now: number, line: string): void {
+  const d = new Date(now)
+  const ts = `${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`
+  DIAG.push(`${ts} ${line}`)
+  if (DIAG.length > DIAG_MAX) DIAG.splice(0, DIAG.length - DIAG_MAX)
+  diagDirty = true
+}
+/** The whole log when a line was added since the last call, else "". */
+export function takeDiag(): string {
+  if (!diagDirty) return ''
+  diagDirty = false
+  return DIAG.join('\n') + '\n'
+}
+
 /** The pane title shown in the tab: PAGE document.title = (run ? "🟢 N · " : "") + docTitle. */
 export function paneTitle(lang: Lang, run = 0): string {
   const base = lang === 'he' ? '🎭 התיאטרון' : '🎭 Theater'
@@ -664,6 +683,7 @@ export function registerUi(on: On): void {
     // the clock is the engine's; a host without one (a bare test) falls back to the module's
     const now = await $.clock.now().catch(() => Date.now())
     if (!desktop) textSurfaceDrawnAt = now
+    diagLine(now, `render pane surface=${e.surface} cols=${e.props.bodyColumns} scroll=${e.props.scroll?.offset ?? '-'} payload=${payload.scanned_ms} demo=${view.demo} sel=${view.selected ?? '-'}`)
     const lang = prefs.lang
     const L: Strings = I18N[lang]
     const rtl = dirOf(lang) === 'rtl'
@@ -691,12 +711,15 @@ export function registerUi(on: On): void {
     const hk = (k: string) => (compact ? undefined : k)
 
     // --- handlers (closures over $, declared here so `$` never crosses an import) ---
-    const toggleShowDone = () => void savePrefs($, p => ({ ...p, showDone: !p.showDone }))
+    const toggleShowDone = () => {
+      diagLine(now, 'press showDone')
+      void savePrefs($, p => ({ ...p, showDone: !p.showDone }))
+    }
     const toggleMute = () => void savePrefs($, p => ({ ...p, muted: !p.muted }))
     const toggleLang = () => void setLang($, lang === 'he' ? 'en' : 'he')
     const toggleHelp = () => void update($, viewAtom, v => ({ ...v, helpOpen: !v.helpOpen }))
     const toggleDemo = () => void setDemo($, !view.demo)
-    const openAgent = (id: string) => void update($, viewAtom, v => ({ ...v, selected: id, helpOpen: false, focusIndex: order.findIndex(a => a.id === id) }))
+    const openAgent = (id: string) => diagLine(now, `press open ${id}`) ?? void update($, viewAtom, v => ({ ...v, selected: id, helpOpen: false, focusIndex: order.findIndex(a => a.id === id) }))
     const closeDrawer = () => void update($, viewAtom, v => ({ ...v, selected: null, helpOpen: false }))
     const moveFocus = (d: number) => void update($, viewAtom, v => {
       if (order.length === 0) return { ...v, focusIndex: -1 }

@@ -1,25 +1,16 @@
 // The band above the prompt: a way into the office without a slash command.
 
 import type { RenderElement } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const BAND = {
   plugin: 'agent-theater', component: 'AbovePrompt',
   props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 80, scroll: { offset: 0, bodyRows: 3 }, view: {} },
 } as const
 
-function liveAgent(id: string, engine_status: string) {
-  return {
-    id, description: `desc ${id}`, subagent_type: 'Explore', model: 'haiku', task: 'Read it.',
-    engine_status, phase: 'thinking', tool: '', start_ms: 0, last_ms: 0, end_ms: null,
-    result: null, truncated: false, tool_use_id: `t-${id}`,
-  }
-}
-
 test('the band shows only while this conversation has working subagents and the pane is closed', async ($, on) => {
-  let live: Record<string, unknown> = {}
   let paneShown = false
-  let version = 0
+  mock.clock(on, { now: 1_000_000 })
   const opened: string[] = []
   on('ui.open', ($, e) => { opened.push(e.id); return { value: { isPlaced: true as const } } })
   // the engine's own band beneath: nothing of its own to show
@@ -28,17 +19,21 @@ test('the band shows only while this conversation has working subagents and the 
     return h(Box, { key: 'engine-band' }) as RenderElement
   })
   on('ui.panes', () => ({ value: paneShown ? [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] : [] }))
-  on('state.get', { plugin: 'agent-theater', key: 'live' }, () => ({ value: { value: live, version: ++version } }))
+  // the engine starts each subagent beneath: its id is the tool_use_id here
+  on('agent.spawn', ($, e) => ({ model: 'haiku', agentId: `ag-${e.tool_use_id}` }))
 
+  // nothing spawned yet: no band
+  const empty = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await empty.find({ key: 'open-theater' })).toBeUndefined()
+  await empty.unmount()
+
+  // two subagents start (the live map is the module's memory, filled by agent.spawn: no $.state write)
+  for (const id of ['t1', 't2']) {
+    await $.agent.spawn({ tool_use_id: id, prompt: 'Read it.', description: `desc ${id}`, subagentType: 'Explore', parentModel: 'opus' } as Parameters<typeof $.agent.spawn>[0])
+  }
   for (const surface of ['terminal', 'desktop'] as const) {
-    live = {}
     paneShown = false
     let ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ key: 'open-theater' })).toBeUndefined()
-    await ui.unmount()
-
-    live = { a1: liveAgent('a1', 'running'), a2: liveAgent('a2', 'running'), a3: liveAgent('a3', 'completed') }
-    ui = await $.ui.mount({ ...BAND, surface })
     expect((await ui.find({ key: 'open-theater' }))?.text).toMatch(/🎭 התיאטרון · 2 עובדים/)
     await ui.press({ key: 'open-theater' })
     expect(opened.at(-1)).toBe('agent-theater')

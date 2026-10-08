@@ -246,6 +246,8 @@ let lastCoarse: string | undefined
 let lastPublishAt = -Infinity
 /** Activity-only changes (tool / phase / the minute) reach the pane at most this often. */
 export const CALM_MS = 8_000
+/** Even an arrival or a finish waits this long after the previous publish, so a burst of them is ONE redraw. */
+export const SETTLE_MS = 5_000
 
 /**
  * One poll. Pane up: scan the files (or the demo cast), age + merge this
@@ -294,11 +296,12 @@ export async function poll($: EngineInterface): Promise<void> {
     // THE CALM GUARD: on the desktop EVERY redraw of the pane blinks (even a pane of plain Text), so
     // the moment-to-moment activity (tool / phase, the minute) is batched: published at most once
     // per CALM_MS. What matters at once (an agent arriving, finishing, failing, a ⭐) is in the
-    // coarse key and publishes on the next poll.
+    // coarse key and publishes once SETTLE_MS has passed since the previous publish (a burst = one redraw).
     const coarse = renderKey(merged, now, view.justFinished, true)
-    const due = coarse !== lastCoarse || now - lastPublishAt >= CALM_MS
-    // (the second test: what is IN state draws differently in substance — a hook beneath rewrote the value, or a reload)
-    if ((key !== lastKey && due) || renderKey(await read($, payloadAtom), now, view.justFinished, true) !== coarse) {
+    const since = now - lastPublishAt
+    const due = (coarse !== lastCoarse && since >= SETTLE_MS) || since >= CALM_MS
+    // (the second test, held to the same SETTLE_MS: what is IN state differs in substance — a reload, a hook beneath)
+    if ((key !== lastKey && due) || ((lastCoarse === undefined || since >= SETTLE_MS) && renderKey(await read($, payloadAtom), now, view.justFinished, true) !== coarse)) {
       // Never roll the office back: a slower, older scan loses to a newer publish.
       await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
       diagLine(now, `write payload (${coarse !== lastCoarse ? 'structure' : 'activity'}) agents=${merged.agents.length}`)

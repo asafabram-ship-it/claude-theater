@@ -9,6 +9,8 @@ import type { Agent } from './model'
 import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
+import { SETTLE_MS } from './register'
+
 import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
 import { demoPayload } from './scanner'
@@ -584,7 +586,8 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
   // a1 finishes
   agents = fixture().map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
-  await clock.advance(1500)
+  // a finish settles: it is published once SETTLE_MS passed since the previous publish (a burst = one redraw)
+  await clock.advance(SETTLE_MS)
   expect(captured.toasts).toEqual(['map session-token validation — סיים'])
   expect(captured.plays).toBe(1)
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
@@ -602,7 +605,7 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   // muted: toast but no chime
   await ui.press({ key: 'mute' })
   agents = agents.map(a => (a.id === 'b1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'triaged' } : a))
-  await clock.advance(1500)
+  await clock.advance(SETTLE_MS)
   expect(captured.toasts.length).toBe(2)
   expect(captured.plays).toBe(1)
   // a hidden finish (room hides its finished) is remembered, never celebrated later
@@ -680,16 +683,16 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   // STABLE: the next poll (1.5 s later, same wall-clock minute) redraws the very same sources — no frame reload, no flicker
   const before = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(before.some(src => src.includes(' entering'))).toBe(true) // first sight: the whole cast walked in
-  await clock.advance(1500)
+  await clock.advance(SETTLE_MS + 1500)
   const settled = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-  expect(settled.some(src => src.includes(' entering'))).toBe(false) // one-shot: gone on the next poll
+  expect(settled.some(src => src.includes(' entering'))).toBe(false) // one-shot: gone on the next redraw
   await clock.advance(1500)
   const again = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(again).toEqual(settled)
-  expect(minuteClock(clock.now())).toBe(minuteClock(clock.now() - 3000))
+  expect(minuteClock(clock.now())).toBe(minuteClock(clock.now() - SETTLE_MS - 3000))
   // a phase change (a1 moves from Read to Write) changes room A's source and leaves room B's alone
   agents = fixture().map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
-  await clock.advance(1500)
+  await clock.advance(SETTLE_MS + 1500)
   const changed = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(changed[0]).not.toBe(again[0])
   expect(changed[1]).toBe(again[1])
@@ -703,24 +706,24 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   expect((await tileOf(ui, 'a1'))?.tile.includes(' selected')).toBe(false)
   // a newcomer walks in on the poll that first shows it (one-shot), and has sat down by the next; it gets the next number
   agents = [...agents, agent({ id: 'newbie', role: 'index the docs', tool: 'Grep', persona_id: 5 })]
-  await clock.advance(1500)
+  await clock.advance(SETTLE_MS + 1500)
   expect((await tileOf(ui, 'newbie'))?.tile).toMatch(/ entering/)
   expect((await tileOf(ui, 'a1'))?.tile.includes(' entering')).toBe(false)
   expect((await ui.find({ key: 'open:newbie' }))?.text).toMatch(/^3 /)
-  await clock.advance(1500)
+  await clock.advance(SETTLE_MS + 1500)
   expect((await tileOf(ui, 'newbie'))?.tile.includes(' entering')).toBe(false)
   // a finish: toast + chime as before, ⭐ + hop (one-shot) in the tile, and NO confetti Client on the desktop
   agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
   await ui.press({ key: 'showDone' })
-  await clock.advance(1500)
+  await clock.advance(SETTLE_MS + 1500)
   expect(captured.toasts).toEqual(['map session-token validation — סיים'])
   expect(captured.plays).toBe(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/ recent justdone/)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws done/)
-  // the next poll keeps the ⭐ (static) and drops the one-shot hop
-  await clock.advance(1500)
+  // the next redraw keeps the ⭐ (static) and drops the one-shot hop
+  await clock.advance(1500) // (SETTLE_MS has passed since the finish was published: the next poll redraws, the ⭐ still inside its window)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
   expect((await tileOf(ui, 'a1'))?.tile.includes('justdone')).toBe(false)
   await clock.advance(JUST_FINISHED_MS + 1500)
@@ -889,7 +892,7 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   // phase 6 of the loop: the finisher completes on a visible card (demo forces "show finished");
   // the office redraws on the poll (POLL_MS), so walk one poll past the phase edge
   const toPhase6 = 6000 - (clock.now() % 12000) + 12000
-  await clock.advance(toPhase6 + 1500)
+  await clock.advance(toPhase6 + SETTLE_MS)
   expect(captured.toasts.some(t => t.startsWith('summarize the security review'))).toBe(true)
   expect(captured.plays).toBeGreaterThanOrEqual(1)
   expect(await ui.find({ key: 'open:demo-newcomer-hh' })).toBeDefined()

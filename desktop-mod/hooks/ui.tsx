@@ -513,10 +513,10 @@ export function renderKey(payload: Payload, now: number, stars: Readonly<Record<
   const parts: string[] = [payload.demo ? 'D' : 'S', String(payload.oversized)]
   for (const a of payload.agents) {
     const el = agentElapsed(a, minuteClock(now))
-    // coarse (the CALM key): who is in the office and in what state, not what each one is doing
+    // coarse (the CALM key): who is in the office and whether live/done/failed (working ⇄ waiting ⏳ flaps), not what each one is doing
     // this second (tool / phase) nor the minute on its clock
     parts.push([
-      a.id, a.persona_id, a.emoji, a.role, a.subagent_type, a.status, coarse ? '' : a.tool, coarse ? '' : a.phase, a.task_short, a.task, a.result ?? '\u0000',
+      a.id, a.persona_id, a.emoji, a.role, a.subagent_type, coarse && a.status === 'stale' ? 'running' : a.status, coarse ? '' : a.tool, coarse ? '' : a.phase, a.task_short, a.task, a.result ?? '\u0000',
       a.session, a.session_full, a.cwd, a.project, a.is_session ? 1 : 0, a.closed ? 1 : 0, a.is_workflow ? 1 : 0, a.truncated ? 1 : 0,
       a.model, a.topic ?? '', a.failed ? 1 : 0,
       coarse ? '' : el === null ? 'x' : Math.max(0, Math.floor(el / 60_000)), isLongRunning(a, now) ? 1 : 0,

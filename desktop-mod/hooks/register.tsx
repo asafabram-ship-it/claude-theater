@@ -317,7 +317,8 @@ export async function poll($: EngineInterface): Promise<void> {
       diagLine(now, 'write tick')
       await update($, tickAtom, () => now)
     }
-    const run = workingCount(merged)
+    // the title follows what the pane SHOWS (the published payload), so it never changes between two calm publishes
+    const run = workingCount(await read($, payloadAtom))
     if (run !== lastRun) {
       // PAGE: document.title = (run ? "🟢 N · " : "") + docTitle, on every poll.
       // An open id is retitled in place (never a second instance); no `focus`.

@@ -12,6 +12,7 @@ import { expect, test } from 'claude-code/testing'
 import { FS_READ_LIMIT, GLOB_TTL_SEC, MAX_AGE_MIN, MAX_EVENTS, POLL_MS, RESULT_CHAR_LIMIT, RUNNING_STALE_SEC } from './model'
 import {
   appendParse,
+  cachedTranscriptBase,
   computeInFlight,
   computePhase,
   computeStatus,
@@ -1080,4 +1081,32 @@ test('scanAll: a transcript that grew is parsed from where the last parse stoppe
   const parent = `${PROJ}/sess-aaaa-1111.jsonl`
   fs.put(parent, fs.files.get(parent)!.text + JSON.stringify({ type: 'user', sessionId: 'sess-aaaa-1111', message: { role: 'user', content: 'go on' } }) + '\n', NOW + 9500)
   expect(byId((await scanAll(io, NOW + 10_000)).agents, 'sess-aaaa-1111').model).toBe('claude-fable-5-1')
+})
+
+test('scanAll: the cached parse base keeps no record payload — `raw` is stripped at the cache boundary (MAX_EVENTS bounds the count, not the bytes)', async () => {
+  resetScannerCaches()
+  const fs = office()
+  const io = fs.io()
+  const run = `${PROJ}/sess-aaaa-1111/subagents/agent-fixture-run-0001.jsonl`
+  await scanAll(io, NOW)
+  const base = cachedTranscriptBase(run)!
+  expect(base.textLen).toBe(fs.files.get(run)!.text.length)
+  expect(base.events).toHaveLength(parseEvents(lines('cc-2.1/running.jsonl')).events.length)
+  for (const ev of base.events) expect(ev.raw).toEqual({})
+  expect(base.events[base.events.length - 1]?.toolUses).toEqual(['Read']) // what the next parse and the status helpers read survives
+  // the file grows by a record carrying a big tool_result: the kept base never holds the payload
+  const payload = 'PAYLOAD-' + 'x'.repeat(50_000)
+  const result = JSON.stringify({ type: 'user', timestamp: '2026-06-01T14:59:58.000Z', version: '2.1.0', message: { content: [{ type: 'tool_result', content: payload }] } })
+  fs.put(run, fs.files.get(run)!.text + result + '\n', NOW + 2000)
+  await scanAll(io, NOW + 3000)
+  const grown = cachedTranscriptBase(run)!
+  expect(grown.events).toHaveLength(base.events.length + 1)
+  expect(grown.events[grown.events.length - 1]?.hasToolResult).toBe(true)
+  for (const ev of grown.events) expect('message' in ev.raw).toBe(false)
+  expect(JSON.stringify(grown.events).includes('PAYLOAD-')).toBe(false)
+  // appendParse's own output (the brief's contract) keeps the record; the stripping is the cache's
+  expect(typeof appendParse({ textLen: 0, events: [], versions: [] }, result + '\n').events[0]?.raw.message).toBe('object')
+  // a negative entry (here: oversized without a tail closure) keeps no base; an unknown path has none
+  expect(cachedTranscriptBase(`${PROJ}/sess-dddd-4444/subagents/agent-huge-0007.jsonl`)).toEqual({ textLen: 0, events: [] })
+  expect(cachedTranscriptBase(`${PROJ}/nowhere.jsonl`)).toBeUndefined()
 })

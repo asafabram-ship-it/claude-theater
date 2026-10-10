@@ -421,7 +421,10 @@ export function parseEvents(lines: string[]): { events: TranscriptEvent[]; skipp
  * file shorter than before — or whose kept length no longer ends on a newline
  * — was rewritten: parse it whole (`reset`). The kept events are the last
  * MAX_EVENTS (what status/phase/done read); `versions` accumulate, `skipped`
- * counts only the lines this call met.
+ * counts only the lines this call met. Limits: a file that is one
+ * unterminated line yields no events until its newline arrives, and a
+ * rewrite is caught only when the file shrank or the byte at `textLen - 1`
+ * is no longer a newline (a rewrite that keeps both goes unnoticed).
  */
 export function appendParse(
   prev: { textLen: number; events: TranscriptEvent[]; versions: string[] },
@@ -1285,7 +1288,7 @@ type AgentCacheEntry = {
   parent: string | null
   /** How much of the file the parse has covered (chars, up to a newline): a changed file is parsed from here on (appendParse). 0 for a tail-only or negative entry. */
   textLen: number
-  /** The last MAX_EVENTS parsed events, the base of the next incremental parse; [] for a tail-only or negative entry. */
+  /** The last MAX_EVENTS parsed events with `raw` stripped (`{}`), the base of the next incremental parse; [] for a tail-only or negative entry. */
   events: TranscriptEvent[]
   /** A negative entry worth another try (a rejected read, an unflushed first line): re-parse once `now >= retryAt`. */
   retryAt?: number
@@ -1343,6 +1346,12 @@ export function resetScannerCaches(): void {
   PERSONA_ASSIGNED.clear()
   SESSIONS_CACHE = { sig: null, recs: [] }
   LAST_GOOD = { ...EMPTY_PAYLOAD }
+}
+
+/** Tests: the incremental-parse base kept for a transcript (covered length, events with `raw` stripped); undefined when not cached. */
+export function cachedTranscriptBase(path: string): { textLen: number; events: readonly TranscriptEvent[] } | undefined {
+  const entry = AGENT_CACHE.get(path)
+  return entry ? { textLen: entry.textLen, events: entry.events } : undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -1586,8 +1595,10 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
       }
       entry = {
         mtimeMs, size, at: now, adict, isDone: done.isDone, idleDone: done.idle, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent,
-        // a whole-file parse leaves its covered length and events as the next scan's base; a tail parse leaves none
-        textLen, events: textLen > 0 ? events : [],
+        // A whole-file parse leaves its covered length and events as the next scan's base; a tail parse leaves
+        // none. The base is kept WITHOUT `raw` (the whole record, tool results included): nothing reads it off
+        // the cache, and MAX_EVENTS bounds the count, not the bytes.
+        textLen, events: textLen > 0 ? events.map(e => ({ ...e, raw: {} })) : [],
       }
       AGENT_CACHE.set(path, entry)
     }

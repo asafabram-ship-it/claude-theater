@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**סטטוס:** תכנון הושלם ואושר 2026-10-10 05:34; הביצוע טרם החל (מתחילים ב-Task 0.1). פרומפט ההמשך: `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
+
 **Goal:** On the Claude Desktop app, draw the Theater office inside ONE `Client` surface module so that data updates and scrolling never blink, characters are clickable, the scan stops slowing the machine, and the prompt footer shows the five-hour rate-limit meter.
 
 **Architecture:** The hooks module (`register.tsx`) keeps feeding a slim `OfficeProps` object into a single keyed `<Client key="office" module="./office-client.tsx">` that the engine keeps alive across the pane's redraws; the module lays the office out as text cells (emoji heads, half-block desks, run-merged rows), windows the rows itself, hit-tests clicks, and posts actions back through `ui.message`. The hooks own the pane's scroll (`ui.scroll` answered without `next`). The 5-hour meter is a label added to the `SessionMode` footer site from `session.measure`.

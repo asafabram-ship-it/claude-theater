@@ -1,0 +1,210 @@
+{
+ "comparisonTable": "| Mod | Desktop? | Element for characters | Animation | Redraw trigger | Flicker handling | Click on agent | Scroll |\n|---|---|---|---|---|---|---|---|\n| ungetLai/pixel-office | yes (anything non-terminal) | one `<Svg isInteractive>` per room + HUD/strip Svgs (desktop.tsx:47-58) | SMIL inside the SVG string (desk.ts:23-123) | 1 s tick, but `$.state` written only when a structural/detail signature changed; details at most every 15 s (sync.ts:242-252) | none: author admits \"every redraw swaps the whole SVG image and resets the hover card\" (sync.ts:197-199); mitigates by redrawing rarely, stable seating, seenAt windows for one-shot effects, ghost desks 8 s | no; CSS `:hover` cards inside the SVG only (room.ts:64-82) | none; capacity caps (MAX_ROOMS=8, fold quiet rooms, \"N more\" note) |\n| ririversoza/agent-office | yes | ONE `<Svg isInteractive>` for the whole pane (register.tsx:579) | SMIL with deterministic negative `begin` per desk (scene.ts:179) | `$.state` writes only; drawn-fields equality before every write, tool-call labels batched on a 2 s flush (register.tsx:136-152, 516-522) | README:87 \"Each change redraws the pane, which on the desktop reloads its frame, so they are batched\"; tests count writes (redraw.test.ts:96-127) | no; a real `Button` as a sibling outside the Svg (register.tsx:580-589) | none; fits width only, caps 4096 px / 131072 chars (boards.ts:19-21) |\n| leolimaferreira/savvy-progress-office | yes | ONE non-interactive `<Svg>` (register.tsx:807) | CSS `@keyframes` inside the SVG `<style>`, class `on` while working (office.ts:107-112) | `$.state` writes incl. a 1 Hz `now` tick while anything runs (register.tsx:537-546) | nothing explicit; non-interactive image, motion in CSS, tick gated to activity | no; Collapse/Finished Buttons beside | none; MAX_DESKS=40, compact mode |\n| dimivelev/pixel-agents | no (terminal only, register.tsx:69) | one keyed `<Raster>` under PromptHint | text-frame cycling, `frame = floor(now/200)` (register.tsx:70) | `$.clock.every(200)` -> `$.ui.invalidate` only while agents exist | single keyed leaf, poses derived from wall clock, no `$.state` at all | no | none |\n| Blind3y3Design/agents-panel | yes | one non-interactive `<Svg key={a.id}>` per agent row (register.tsx:236) | CSS keyframes whose periods divide the 1 s tick (drawing.ts:96-113) | `$.state` `now` 1 Hz only while something runs (register.tsx:60-68) | \"the once-a-second redraw restarts them in phase\" (drawing.ts:96-98); stable keys; finished rows byte-identical | no; Buttons beside | none; collapse Finished, cap 200 |\n| NovusEdge/glowup | yes (terminal + desktop) | `<Client key=\"glowup-pet\">` drawing half-block `Text` rows (pet.tsx; pets.ts:119-148) | `surface.every(83)` + `setState` only when the look signature changed (pet.tsx:47-62) | per-reader `$.state` keys written only when JSON changed (register.tsx:311-326); invalidate only on theme change | engine keeps the Client instance/state/timers across redraws (d.ts); content-signature props; keyed rows | yes: `surface.onPointer` -> local hop + `surface.post` -> `ui.message` (pet.tsx:91-99; register.tsx:1352-1372) | hooks `ui.scroll`, no `next()`, scrolls own rows, pet strip pinned (register.tsx:1221-1231) |\n| xuanji86/claude-agentpane | yes (all 4 surfaces) | no characters; `<Client key=\"live-${id}\">` text lines (live.tsx) | `surface.every(120)`; new `now` re-anchors time without resetting the step (live.tsx:19-34) | `$.state` only after JSON-compare (register.tsx:470) | keyed Clients; \"the pane no longer redraws five times a second\" (CHANGELOG:33) | yes via plain `Button key=\"agent-${id}\"` (register.tsx:1017-1021) | no `ui.scroll`; fits to `bodyRows` with its own `scrollTop` atom + buttons |\n| TheoGegout/claude-agent-watch | yes | none (Text glyphs) | none on purpose: static spinner (view.tsx:134) | `$.state` board only on deep-compare change or every 10 s / 30 s (register.tsx:426-431) | \"Each redraw replaces the pane's buttons, and a click that spans one is lost\" (register.tsx:15-16); `$.ui.focus` after nav (register.tsx:921-925) | yes via keyed Buttons | none; truncation |\n| anthropics/claude-code diff mod | yes (all but mobile) | none (Code/Text/Button) | none | closure state + one `$.ui.invalidate` funnel latched 100 ms (register.ts:200-214) | coalesce, fitDialog re-open only when rows changed, data-derived keys | n/a; keyed Buttons | owns `ui.scroll` (no `next`, moves own window, invalidates) + virtualized `drawWindow` (register.ts:878-897) |\n| claude-code-playground (3 mods) | no (terminal only) | none | none | `$.ui.invalidate` right after each mutation | keyed children; click handlers closed over the drawn record | Buttons only | none; content sized to the pane |\n| abelgonzalezr/agent-crew (read online) | yes | `<Svg isInteractive>` per agent | SMIL with deterministic `begin` stagger | NOW atom read by the pane -> redraw every second | assumes a redraw re-instantiates the frame, makes the phase deterministic | no | n/a |\n| OURS agent-theater | yes | one `<Svg isInteractive>` per ROW of each room (ui.tsx:916) | CSS keyframes in the SVG (office-svg.ts:263-334) | `$.state` payload write gated CALM 8 s / SETTLE 5 s, plus retitle `$.ui.open` and finishBeat `view` write (register.tsx:300-332; ui.tsx:644-648) | every redraw rebuilds all frames (HANDOFF.md:73); 1 blink per publish, x2 on retitle/view writes (diag lines 23-37) | no (Svg leaf); numbered Buttons under each row (ui.tsx:917-922) | engine scroll = redraw per wheel tick (HANDOFF.md:74), no `ui.scroll` hook |",
+ "rankedTechniques": [
+  {
+   "technique": "Keyed Client region with its own frame clock (one per pane or per room), props diffed in, animation via surface.every + setState-on-change",
+   "evidence": "Engine contract: \"The engine keeps the instance (its local state, its timers) across the plugin's redraws while a Client under this key stays in the tree\" (claude-code.d.ts 2.1.293:1494-1495); props \"a new value on a redraw reaches the running instance, its state kept\" (:1509-1510). Working on the desktop in glowup (hooks/client/pet.tsx:47-62, key \"glowup-pet\" register.tsx:1181; test/petclient.test.ts:143-155 five ticks -> 0 redraws) and claude-agentpane (live.tsx:19-34 re-anchors time without resetting the animation step). Our confetti.tsx:49-66 already follows the pattern on the terminal.",
+   "appliesToOurCase": "The only persistence the API promises across our $.state-triggered redraws. Catch: ClientElements = terminal table minus Client/Raster/Image (d.ts:1391-1399) so NO Svg inside; the office becomes text cells (emoji or half-block pixel art as glowup does: pets.ts:119-148). Desktop Client is hedged in the typings (\"desktop once it has them\", :13913) and nothing on this machine has yet proven a Client mounts on the desktop (HANDOFF: no ui.fault hook, no fault line)."
+  },
+  {
+   "technique": "Write $.state only when something drawn changed; keep timestamps/'now'/'tick' out of the atoms the pane reads; one atom per reader",
+   "evidence": "agent-office register.tsx:136-142 change() + state.ts:225-231 sameWorkers (ignores changedAt), README:87; agent-watch register.tsx:426-438 (deep compare, updater returns the same object); agentpane register.tsx:470 JSON compare; glowup publishPet register.tsx:311-318 \"a 1 s tick costs the pane nothing\"; pixel-office sync.ts:242-252 structural vs detail signatures.",
+   "appliesToOurCase": "We already have renderKey + CALM/SETTLE (register.tsx:295-306) but still pay extra full redraws for the retitle $.ui.open (register.tsx:324-332, diag lines 23-26) and finishBeat's deferred view write (ui.tsx:644-648, diag 29-32). Also HANDOFF.md:50/73 claim the desktop redraws on EVERY write of the mod, contradicting the documented readers-only rule (d.ts:3353-3355) \u05d2\u20ac\u201d must be re-measured, it decides whether per-reader atoms help at all."
+  },
+  {
+   "technique": "Single redraw funnel with a latch/debounce (100-150 ms) and no invalidate from write sites; batch high-frequency events into a Map flushed on a timer",
+   "evidence": "anthropics diff mod register.ts:200-214 + limits/timing/redraw-coalesce-ms.ts (=100) \"keeping the pane under the engine's ten redraws a second\", refresh-debounce-ms.ts (=150); agent-office pendingActivity/flushActivity 2 s (register.tsx:144-152, 382-384); pixel-office busy reentrancy guard (register.tsx:20,33-47).",
+   "appliesToOurCase": "Fold retitle, view write and payload write into one publish per poll; keep LIVE in module memory (already done, register.tsx:203-209). Halves the blink count immediately regardless of the element choice."
+  },
+  {
+   "technique": "Own the scroll window: hook ui.scroll for the pane's requestId, move your own offset, return {} without next(), draw only the rows in view",
+   "evidence": "anthropics diff mod register.ts:878-897 + views/body/draw-window.tsx:27-104 (windowed with SCROLL_MARGIN_ROWS=8), README diff:7-9 \"keeps the engine's window still\"; glowup register.tsx:1221-1231 \"No next(): the pane draws its own window, and the engine moving the whole body would carry the pet and status box off\"; engine d.ts:4017-4018.",
+   "appliesToOurCase": "A wheel tick then never changes e.props.scroll.offset (an input that re-keys the evaluation) and only the visible rooms are rebuilt; but the hook still invalidates, so with interactive Svg the blink is reduced, not removed. Pairs best with a Client (nothing to rebuild) or still images."
+  },
+  {
+   "technique": "Derive animation phase from the wall clock / deterministic offsets so a rebuilt frame resumes mid-cycle instead of restarting",
+   "evidence": "pixel-agents register.tsx:70 frame=floor(now/200) \"extra redraws cannot restart animations\"; agents-panel drawing.ts:96-113 periods that divide the 1 s tick (but 1.6 s and 2 s slip); agent-office scene.ts:179 negative begin=(index*0.23)%1; agent-crew phase(id) stagger; glowup motion.ts:219-226 frame-seeded randomness.",
+   "appliesToOurCase": "If any interactive Svg stays, compute `animation-delay: -((now % period))` per keyframe at render time so the reload is invisible except for the one-frame blank; this does not fix the blank itself (frame teardown) or swallowed presses."
+  },
+  {
+   "technique": "Non-interactive Svg (still image) for the picture, every clickable control as a keyed Button beside/under it",
+   "evidence": "agents-panel register.tsx:236 (no isInteractive) + Buttons 214-227; savvy-progress register.tsx:807; agent-office register.tsx:580-589 \"the reply action stays a real button\" (panel.test.ts:238-241); agent-watch register.tsx:921-925 restores focus after a page change so one click suffices.",
+   "appliesToOurCase": "Our \u05e0\udc9f\udc8e\udc9e/\u05e0\udc9f\u2013\u00bc still toggle (ui.tsx:755, :916) already does this but was never checked by eye (HANDOFF.md:76). Costs all motion and <title> tooltips; an image swap on status change may still flash (unknown)."
+  },
+  {
+   "technique": "One Svg for the whole pane (or per room) instead of one per row, sized explicitly from bodyColumns and kept under 131072 chars / 4096 px",
+   "evidence": "agent-office boards.ts:199-222 renderPanel + register.tsx:579; savvy office.ts:290-325; limits d.ts:12205, boards.ts:19-21; our office-svg.ts:66,83 already enforces SVG_SOURCE_LIMIT.",
+   "appliesToOurCase": "Fewer sandboxed frames to reload per redraw (we have ~5-6 at 31 columns, more with 100 agents) and less duplicated <style>; the earlier one-SVG-per-room attempt had uneven heights (HANDOFF.md:61, :79) so pair with explicit height."
+  },
+  {
+   "technique": "Clicks inside a Client: surface.onPointer with capture + surface.post -> ui.message hook, which may answer { props } to update the instance with no ui.render",
+   "evidence": "glowup pet.tsx:91-99, register.tsx:1352-1372; engine d.ts:1432-1479 (capture from down to up, \"the transcript neither selects nor scrolls\"), :1585-1593 post, :13943-13956 \"{ props } hands the posting instance its next props directly ... with no ui.render run\"; Buttons drawn inside a Client are pressed by key (:15470-15473).",
+   "appliesToOurCase": "Gives the click-on-character the user wants and a push channel that bypasses the pane redraw entirely (module posts every N s, hook answers with the latest room props). Desktop pointer delivery for Clients is documented (\"terminal and desktop today\", d.ts:14217-14218) but unverified here."
+  },
+  {
+   "technique": "Keep the Client's props slim and content-signed; never ship the payload",
+   "evidence": "glowup spinner.ts:9-16 (slim look because props are JSON under 100,000 chars), pet.tsx:11,23-30 (JSON signature because props are cloned per redraw); agentpane register.tsx:20-28 budgets; engine d.ts:1511 (100,000 chars) and reference.md:127 (a Client past the text cut draws nothing).",
+   "appliesToOurCase": "Our ~750 KB payload (HANDOFF.md:77) would unmount any Client; per-room props must carry only id/name/emoji/status/fam/startMs/badges (ui.tsx:900-911 TileDecor), never task/result."
+  },
+  {
+   "technique": "Scan hygiene: mtime-keyed caches with a minimum re-read interval, tail reads instead of whole-file reads, reentrancy guard, polling gated to 'pane open and something running'",
+   "evidence": "agent-watch tailCache REREAD_MS=5000 + metaCache (register.tsx:177-181, 303-313), READ_LIMIT and PowerShell tail for >4 MiB; pixel-office peerCache by mtime (sync.ts:174-182) and busy flag; agents-panel/savvy tick returns early unless something runs; agent-office followPlan drops a stale read.",
+   "appliesToOurCase": "Prime suspect for 'slows the machine': readWhole/readTail return the entire file when <=4 MiB (scanner.ts:194-200, 213-220) for every changed transcript every 1.5 s, the projects tree is re-walked every 6 s with Promise.all fan-out (scanner.ts:1143-1207), renderKey is built three times per poll over the whole payload (register.tsx:295-304) and the diag file is rewritten every 4 s. Independent of the element choice; do first."
+  },
+  {
+   "technique": "Stable identity and once-only effects gated by time windows, not per-render flags",
+   "evidence": "pixel-office seenAt + fresh<3 s for fade-in, since<4 s for confetti, ghost desks GHOST_MS=8 s, stable seating (desktop.tsx:10-20; desk.ts:74-75; status.ts:24-26; sync.ts:191-240); agent-office DONE_LINGER 3 min.",
+   "appliesToOurCase": "We already quantize clocks to the minute and use justFinished windows (ui.tsx:470-473, office-svg.ts:44-50); add a short 'ghost' for vanished agents so rooms do not reflow and keep ordering by session/id."
+  },
+  {
+   "technique": "Embed an HTML page that reconciles its DOM in place (createWS once, updateWS mutates class/text) in the app's browser pane",
+   "evidence": "Our claude_theater.py render() :1638-1722 (els map by id, sections re-appended only when the order key changed) was observed blink-free in the app's browser pane (HANDOFF.md:78); none of the studied mods has an equivalent on the desktop.",
+   "appliesToOurCase": "100% reuse, real CSS animation, drawer, RTL, click on character. Needs the Python server and a person-typed command to open the pane ($.mcp.call('Claude_Browser','preview_start') was refused by auto-mode from session.start, HANDOFF.md:78)."
+  },
+  {
+   "technique": "Regression tests that count renders/state writes and drive the Client frame clock",
+   "evidence": "agent-office tests/redraw.test.ts:46-49, 96-127 (on('state.set') tap, '0 writes when nothing changed'); glowup test/petclient.test.ts:143-155; our FLICKER GUARD ui.test.ts:734-830; engine kit ui.advance/ui.post/ui.pointer (d.ts:15504-15552).",
+   "appliesToOurCase": "Keep the render-count guard and add 'N polls with unchanged data -> 0 writes', '1 publish -> exactly 1 render', and Client tests via ui.advance. The kit never exercises the desktop's paint (d.ts:44), so visual persistence still needs the live probe."
+  }
+ ],
+ "approaches": [
+  {
+   "name": "A. Client office: one Client surface module per room (text-cell characters, own frame clock, clicks inside)",
+   "summary": "Desktop branch of ui.tsx replaces each room's `<Svg isInteractive>` rows with `<Client key={`room:${sessionId}`} module=\"./office-client.tsx\" props={slimRoomProps} width=\"100%\">`. The module draws a grid of tiles from Box/Text/Button only: emoji head or glowup-style half-block (\u05d2\u2013\u20ac\u05d2\u2013\u201e) pixel sprite with color/backgroundColor, name, model pill, activity, mm:ss timer, badges; starts `surface.every(150-250)` once while state is undefined and calls setState only when a look signature changes; a plain Button per tile (or surface.onPointer) posts `{open:id}` / `{pin:sid}` and a new `on('ui.message', {module:'./office-client.tsx'})` hook in register.tsx writes view/prefs; optionally the hook answers `{ props }` so tiles update without any pane redraw. Hooks keep scanning, LIVE merge, renderKey (minus the per-minute terms), prefs/view, toast+audio, terminal cards, vscode/mobile Svg path, messageSvg.",
+   "pros": [
+    "The only path with a documented persistence guarantee across the plugin's redraws (instance, state, timers kept while the key stays; d.ts:1494-1495) and a documented no-redraw push channel ({ props } on ui.message, d.ts:13946-13948)",
+    "Click on the character itself (surface.onPointer with capture, or a Button inside the region) with no dependency on the pane's redraw cycle",
+    "Animation and second-level timers cost zero $.state writes and zero engine publishes; a 750 KB payload change no longer touches the picture",
+    "One region per room instead of 5-100 sandboxed iframes each running CSS filters: likely far cheaper on CPU",
+    "Same tree works on the terminal (half-block sprites are the terminal's idiom too), so one module can replace both the text cards and the SVG office if wanted",
+    "Proven pattern in two community mods (glowup pet on terminal+desktop, agentpane live lines on all surfaces) and in our own confetti.tsx"
+   ],
+   "cons": [
+    "No Svg inside a Client (ClientElements = Box/Text/Button/Input/Select/Link/Code/Markdown, d.ts:1391-1399): the vector character, <title> tooltips and CSS keyframes are lost; the office becomes emoji/half-block cell art at the app's fixed code-font size (HANDOFF.md:39)",
+    "Desktop Text is LTR-only and bidi marks are refused (HANDOFF.md:52): Hebrew labels inside tiles only via row-reverse layout",
+    "vscode and mobile tables lack Client (d.ts:3824-3828) so office-svg.ts must stay for them or they fall back to text cards",
+    "Props must be rebuilt as slim JSON per room (<100,000 chars) and content-signed; the module runs under a 1 s per-call budget with tree bounds 20,000 nodes / 32 deep / 100,000 chars or it unmounts",
+    "Largest rewrite of the desktop tests (ui.test.ts Svg assertions :353-495, :621-733, :836-934 -> ui.find Client + ui.advance/ui.post)"
+   ],
+   "risks": [
+    "Client on the desktop is hedged in the typings (\"desktop once it has them\", d.ts:13913; \"the desktop's alone today\" vs the editor) and nothing on this machine has shown one mounting: if the app re-mounts the region on every pane redraw (HANDOFF.md:57 saw even a Text-only pane blink) the approach buys nothing",
+    "Unknown desktop cell metrics and styling: emoji width, whether backgroundColor/bold/dimColor and Box borders paint inside the region, whether width/height are honoured (d.ts:1513-1528)",
+    "Frame-clock cadence on the remote surface unknown; a 150 ms tick with 100 tiles could trip the 1 s per-call budget or the 3-consecutive-setState render-loop unmount (d.ts:1554-1556)",
+    "A throw in the module unmounts it to a blank region (interface.md); must pre-validate props in the hook (glowup spinner.ts:54-63) and hook ui.fault",
+    "Visual regression versus the current look; user may reject cell art"
+   ],
+   "mustVerifyLive": [
+    "Probe 1 (half day, before any code): a 20-line Client (surface.every counter + one Button) drawn under e.surface === 'desktop' with an on('ui.fault') hook writing phase/reason to the diag file: does it mount and tick at all in build 2.1.293?",
+    "Probe 2: with the counter ticking, press a toolbar Button, write a $.state key the pane reads, invalidate once a second, and scroll the pane: the counter must neither flash nor reset while the Svg rooms beside it do",
+    "Probe 3: surface.onPointer delivers down/up with region-relative cells on the desktop; a Button drawn inside the module raises ui.press; onKey arrives after a click (Escape returns focus)",
+    "Probe 4: ui.message answered with { props } reaches the desktop instance and changes the drawing with no 'render pane' diag line",
+    "Probe 5: cell metrics and styling inside the region (surface.columns/rows for the pane width, emoji width, Text color/backgroundColor/bold, Box border/backgroundColor, explicit width/height); half-block sprite legibility at the app's font size",
+    "Probe 6: CPU in Task Manager of one Client region with ~100 tiles at 150 ms vs the current iframes; confirm no render-loop unmount and no 1 s overruns"
+   ],
+   "effort": "Half-day probe + 3-4 days: office-client.tsx 300-450 lines (tile layout, sprite table, signature, pointer/post), ui.tsx -60/+50, register.tsx +40 (ui.message, ui.fault, slim props), tests ~350 lines rewritten + new office-client.test.ts"
+  },
+  {
+   "name": "B. Keep Svg, make it still: one non-interactive Svg image per room + keyed Buttons, with strict redraw discipline (text-only cards as the fallback variant)",
+   "summary": "Drop isInteractive permanently (the current \u05e0\udc9f\udc8e\udc9e/\u05e0\udc9f\u2013\u00bc still path, ui.tsx:916) so each room is a static image that a redraw does not reload as a frame; one Svg per room with explicit height rather than per row; keep motion only as state-change pictures (different pose per status, walk-in/hop drawn once as a different frame) or none; Buttons under/next to each room with stable keys and $.ui.focus after navigation. In the hooks: fold retitle and view writes into the single payload publish, split atoms per reader, debounce the publish 100-150 ms, optionally own ui.scroll with virtualized rooms. Variant B2: skip Svg on the desktop entirely and draw the same Box/Text/Button cards as the terminal (what agent-watch and agentpane do).",
+   "pros": [
+    "Smallest change; everything exists already (still toggle, CALM/SETTLE, renderKey, numbered Buttons)",
+    "Keeps the vector look, dark/light theming and RTL text inside the SVG; vscode/mobile share the path",
+    "No sandboxed iframes at all: removes continuous CSS-filter compositing, the biggest unmeasured CPU cost on the desktop",
+    "Community precedent on the desktop: agents-panel, savvy-progress, agent-office all ship non-interactive or single Svgs plus sibling Buttons"
+   ],
+   "cons": [
+    "No continuous animation and no <title> tooltips; 'animated office' becomes 'status pictures'",
+    "An image swap on a redraw may still flash (unknown); HANDOFF.md:57 says even a Text-only pane blinked, so B2 is not guaranteed flicker-free either",
+    "Click still lands on a numbered Button beside the picture, not on the character",
+    "Residual one-blink-per-publish remains if the desktop rebuilds images on redraw; scrolling still redraws unless ui.scroll is owned"
+   ],
+   "risks": [
+    "The still toggle was never checked by eye (HANDOFF.md:76): if the desktop replaces <img>-style nodes on each redraw the blink persists and the whole approach only trims frequency",
+    "The readers-only rule may not hold on the desktop (HANDOFF.md:50 vs d.ts:3353-3355), in which case per-reader atoms are pointless and only fewer writes help",
+    "User may consider a static office a regression from the Python page"
+   ],
+   "mustVerifyLive": [
+    "Turn the still toggle on with ~10 running agents and watch by eye across 10 publishes and 20 wheel ticks: does a non-interactive Svg flash on redraw?",
+    "Draw the terminal text cards on the desktop for one session (B2) and watch: does a pure Box/Text/Button pane blink on a $.state write? (re-tests HANDOFF.md:57 under the current build)",
+    "Write a $.state key the pane does NOT read and check the diag for a 'render pane' line (readers-only rule)",
+    "Does the desktop pane raise ui.scroll for a wheel over the body with origin.kind === 'person' and placement === 'dock', and does returning {} without next keep the window still?",
+    "Measure presses on the numbered Buttons during continuous publishes: are any swallowed?"
+   ],
+   "effort": "1-1.5 days: ui.tsx (one Svg per room, fixed height, focus restore), register.tsx (fold retitle/view into one publish, 100 ms latch, optional ui.scroll), tests adjusted; plus the shared perf work"
+  },
+  {
+   "name": "C. Hybrid: still Svg room background (non-interactive) + one Client strip per room for the moving and clickable parts",
+   "summary": "Per room: a non-interactive Svg draws the static scene (floor, desks, room title in Hebrew with direction=rtl, walls, posters) once and changes only when the roster changes; below or over it a `<Client key={`room:${sid}`}>` strip draws the live row of characters (emoji/half-block heads, typing hands, timers, badges) on its own clock and takes the clicks (Button per tile / onPointer). The hooks publish only roster/structure changes to the Svg and slim live props to the Client, with { props } answers for activity updates. Layout: Svg height = cols/rows computed from bodyColumns; Client height = rows * tileRows.",
+   "pros": [
+    "Keeps the vector look for everything that does not move, including RTL titles that a Client cannot draw",
+    "Motion, timers and clicks live where the engine keeps state (the Client), so the per-publish redraw rebuilds nothing animated",
+    "Svg source for the background is byte-identical for long stretches, so even a desktop that reloads images on redraw reloads a static picture rarely",
+    "Degrades gracefully: on vscode/mobile only the Svg part draws; if the Client faults (ui.fault) the room still shows its picture"
+   ],
+   "cons": [
+    "Two layouts must agree in cells vs pixels (Svg is CSS px, Client is code-font cells; RenderViewport d.ts:10318-10324): alignment of a character 'on' a desk drawn in the Svg is fragile across widths and fonts",
+    "Most complex of the four: both pipelines, both test suites, two prop shapes",
+    "Still no Svg character; the figures are cell art on top of a vector room, which may look inconsistent",
+    "Inherits every unknown of A plus the Svg image-swap unknown of B"
+   ],
+   "risks": [
+    "Visual seams: row heights, uneven spacing already seen between Svg rows on the desktop (HANDOFF.md:61) will be worse with a cell-based strip under each",
+    "If the desktop re-mounts Clients on redraw (A's risk) the approach collapses to B with extra code",
+    "Tooltips are gone from the Svg part unless isInteractive is kept for the background, which brings the frame reload back"
+   ],
+   "mustVerifyLive": [
+    "All of A's probes 1-6",
+    "B's still-Svg probe (does a non-interactive image flash on redraw)",
+    "Pixel/cell alignment: measure the desktop's cell advance and line height at the default font vs the Svg's drawn width for 3, 4, 6 columns; check a tile strip lines up under its desks at two pane widths",
+    "Height stability: does a room Box holding Svg + Client keep a constant height across redraws (no reflow jump)"
+   ],
+   "effort": "Half-day probe + 4-5 days: office-client.tsx (as A, ~350 lines), office-svg.ts refactor to a background-only roomSvg (~150 lines changed), ui.tsx layout glue, register.tsx ui.message/ui.fault, tests for both parts"
+  },
+  {
+   "name": "D. Embed the Python web page in the app's browser pane (mod becomes launcher + optional data source)",
+   "summary": "Run `python -m claude_theater` (port 7333) and open http://localhost:7333 in the desktop's browser pane via $.mcp.call('Claude_Browser','preview_start',{url}) from a person-typed /theater command (not from session.start, which auto-mode refused), with a permission rule for mcp__Claude_Browser__preview_start. The page's in-place DOM reconciliation was already observed blink-free in that pane (HANDOFF.md:78). The mod shrinks to: command registration, spawning/health-checking the server ($.process.run or a user-started process), the AbovePrompt band, toast/ding, and the terminal text cards; the scanner can move out of the engine entirely (the Python server already scans) or the mod can read /api/agents via $.http.fetch for the band.",
+   "pros": [
+    "Only route with proven flicker-free continuous animation on this machine, with the full feature set already built: CSS keyframes, drawer with task/result, RTL/i18n, search, keyboard, click on character, confetti, ding",
+    "Lifts the heavy scan out of the Claude Code engine process (the suspected slowdown) into a separate process that can be profiled and throttled independently",
+    "1-2 days instead of a rewrite; the 2032-line Python page needs no changes",
+    "Works regardless of how the desktop treats Svg or Client redraws"
+   ],
+   "cons": [
+    "Not a 'mod pane': a separate browser pane, separate process, port, and a permission prompt; survives neither a reboot nor the app restart without the server running",
+    "Depends on an MCP tool (Claude_Browser) whose availability and auto-mode behaviour are outside the mods API; $.mcp.call from a person-typed command is untested (HANDOFF.md:78)",
+    "The engine's $.http.fetch exists but $.process.run is documented for CLI use; spawning a long-lived server from the mod may be refused or killed with the session",
+    "Two codebases to keep in parity (Python page + mod band/terminal cards) unless the mod's scanner is dropped",
+    "Terminal users still get text cards only; vscode gets nothing new"
+   ],
+   "risks": [
+    "Permission/auto-mode refusal makes the open flow clumsy (user runs the server and opens the URL by hand)",
+    "A browser pane tab may be closed/replaced by other Claude browsing; no engine-managed lifecycle (focus, placement, close hooks)",
+    "The Python scanner has the same whole-file-read cost unless it is also fixed; the slowdown may simply move to another process",
+    "The earlier $.mcp.call refusal may be a policy, not a timing issue"
+   ],
+   "mustVerifyLive": [
+    "From a person-typed /theater command, does $.mcp.call('Claude_Browser','preview_start',{url:'http://localhost:7333'}) open the pane without a refusal, and does a settings permission rule for mcp__Claude_Browser__preview_start remove the prompt?",
+    "Can the mod start and keep the Python server alive with $.process.run (or must the user start it)? What happens at session.end?",
+    "Does the browser pane stay open and keep animating while Claude works, scrolls the transcript, and when the Code tab switches sessions?",
+    "CPU of the page at ~100 cards (will-change hints, 1.5 s polls) and of the Python scanner, measured in Task Manager",
+    "Band/toast parity: can the band read /api/agents via $.http.fetch cheaply enough to drop the in-engine scanner?"
+   ],
+   "effort": "1-2 days: /theater command + $.mcp.call open + health check + permission rule, band via $.http.fetch, scanner removal or gating behind 'pane open', docs; Python page unchanged (plus the shared tail-read fix in claude_theater.py if the slowdown moves there)"
+  }
+ ],
+ "recommendation": "Do not pick an architecture yet; the research shows the decision hinges on two facts the documentation does not settle and nothing on this machine has measured: (1) whether the desktop keeps a Client region alive across the plugin's redraws (the typings promise it, d.ts:1494-1495, but hedge desktop support, :13913, and HANDOFF.md:57 saw even a Text-only pane blink), and (2) whether the desktop really redraws on every $.state write of the mod or only for readers (HANDOFF.md:50 vs d.ts:3353-3355). Plan, in order:\n\nPhase 0 \u05d2\u20ac\u201d half-day live probe (one throwaway branch, mod re-enabled with the pane in demo mode so the scanner is off): (a) a 20-line Client (surface.every counter + one Button + onPointer logging) under e.surface === 'desktop', with an on('ui.fault') hook writing phase/reason to the diag file; (b) with it ticking, trigger redraws four ways \u05d2\u20ac\u201d toolbar press, $.state write of a read key, $.state write of an UNREAD key, 20 wheel ticks \u05d2\u20ac\u201d and record by eye and by diag: counter continuity, Svg rooms flashing, 'render pane' lines; (c) flip the \u05e0\udc9f\udc8e\udc9e/\u05e0\udc9f\u2013\u00bc still toggle and repeat (does a non-interactive Svg flash?); (d) answer one post with { props } and check the drawing changes with no render line; (e) note cell metrics (surface.columns at 31 columns, emoji width, backgroundColor painting). Remove the diag 'now' stamping bug first (register.tsx:262) so the log is readable.\n\nPhase 1 \u05d2\u20ac\u201d perf, independent of the element choice (1 day, do it anyway): read transcript tails by byte range or last-offset instead of whole-file reads every 1.5 s (scanner.ts:194-200, 213-220); build renderKey once per poll (register.tsx:295-304); fold the retitle $.ui.open and the finishBeat view write into the single payload publish behind a 100 ms latch (diff-mod pattern); gate polling to 'pane open AND something running' and reduce the projects-tree walk to the ~/.claude/sessions registry plus per-dir mtime; drop the 4 s diag rewrite. Measure CPU before/after in Task Manager with the pane open and closed. Evidence that this is the real slowdown: diag lines 1-2 show a >=0.86 s scan and write\u05d2\u2020\u2019render latencies of 0.3-6.5 s.\n\nPhase 2 \u05d2\u20ac\u201d branch on Phase 0:\n- Client persists and takes clicks \u05d2\u2020\u2019 build Approach A (Client office) on the desktop, keeping office-svg.ts for vscode/mobile and messageSvg for the empty state; consider C only if the user insists on the vector room look after seeing a half-block/emoji mock-up. A is the only architecture that matches all four goals (no flicker, animation, click on character, cheap) inside a real mod pane, and it mirrors the two mods that already animate blink-free on the desktop (glowup, agentpane).\n- Client re-mounts or does not mount on the desktop \u05d2\u2020\u2019 the mods API has no flicker-free animated path today; ship Approach D (Python page in the browser pane) for the animated office and keep the mod as band + terminal cards + launcher, with Approach B (still Svg per room, one publish per poll, owned scroll) as the in-pane fallback view. Report the Client finding upstream, since it contradicts the documented contract.\n\nIn both branches keep the write-count and render-count tests (FLICKER GUARD plus 'N unchanged polls \u05d2\u2020\u2019 0 writes'), add ui.fault handling, and remove the 'live' key from PluginState. Housekeeping from the research: temporary clones live at C:/tmp/pixel-office-clone, C:/tmp/agent-office-ro, C:/tmp/pa-clone, C:/tmp/ap-clone-69e31b17, C:/tmp/cc-gitdir-69e31b17, C:/tmp/ccp-playground-gitdir and a `subst H:` alias; delete them when done. The YouTube link resolved to '9 NEW Claude Mods that can truly change how you work' (RoboNuggets) but its description could not be fetched, so the mods it shows were inferred by search; none of the studied mods animates on the desktop through a Client.",
+ "openQuestionsForUser": [
+  "Scope: must the office show ALL live conversations on the machine (requires the ~/.claude/projects file scanner, which is the main CPU suspect), or is this session plus its subagents enough (engine events only, like glowup/agents-panel, no scanner at all)? A middle option: this session live via events, other sessions refreshed every 10-30 s from the registry.",
+  "How important is continuous idle animation (typing hands, head bob, screen shimmer) versus motion only on state changes (walk-in, hop, star, status pose)? A still office (Approach B) is the cheapest fix if idle motion is not essential.",
+  "Must the character itself be clickable, or is a clearly labelled Button beside/under each figure acceptable? This alone rules Approach B in or out.",
+  "Acceptable update latency for activity labels/timers: near-live (1-2 s), the current 8-12 s batching, or 15-30 s like pixel-office/agent-watch? Lower latency means more redraws unless a Client takes over.",
+  "Visual fidelity: is a text-cell office (emoji heads or half-block pixel-art sprites at the app's fixed code-font size, like glowup's pet) acceptable on the desktop instead of the current vector SVG figures? Approaches A and C depend on a yes.",
+  "Hebrew/RTL on the desktop: is RTL required inside the tiles (names, activity) or only for titles, drawer and labels? Inside a Client Text is LTR-only (bidi marks are refused), so RTL would be limited to layout mirroring.",
+  "Is running the Python server plus a browser pane inside the desktop app (Approach D: extra process, port 7333, a permission rule for the Claude_Browser MCP) an acceptable product shape, or must it be a native mod pane?",
+  "Do vscode and mobile matter? They have Svg but no Client, so under A/C they keep the still-Svg or text cards.",
+  "Which mod(s) did the video (RoboNuggets, '9 NEW Claude Mods...') show that you want as inspiration? The description could not be fetched; the candidates studied were pixel-office, agent-office, savvy-progress-office, pixel-agents, agents-panel, glowup, agentpane, agent-watch, agent-crew. Should agent-crew be cloned too?",
+  "What exactly was 'slows the machine': CPU of the Claude Code process, of the desktop app, or the whole machine; with the pane open only, or also closed? Any numbers from Task Manager would let Phase 1 be measured against a baseline.",
+  "Which Claude Code build does the desktop app run right now (the typings used here are 2.1.288 and 2.1.293; Client on the desktop is marked early-access)? Are you willing to run the half-day live probe (Phase 0) with the mod re-enabled before any rewrite?",
+  "Time budget: is a 3-5 day rewrite (A or C) acceptable if the probe succeeds, or should we prefer the 1-2 day options (B or D) even at the cost of animation or of a non-mod pane?"
+ ]
+}

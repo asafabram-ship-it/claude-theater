@@ -523,12 +523,31 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 - [ ] **Step 4: Run** validate + test + tsc. Fix the tests that read `view.justFinished` (now `payload.stars`).
 - [ ] **Step 5: Commit** `fix(mod): one publish per poll — stars ride the payload, no deferred view write`.
 
+### Task 1.4b: Restore the finish beat's housekeeping in the publish branch
+
+Added 2026-10-10 after Task 1.4's review (user decision, spec §2 item 9). Task 1.4 removed the deferred `$.clock.after` beat block, which also (a) reset `view.selected` to `null` when the selected agent left the office and (b) pruned `prefs.pins` and the `$.store` `roomDone` entries of rooms no longer present (both gated on a real, non-empty office). Restore both inside the publish branch of `poll` in `register.tsx`, in the same tick as the payload write, as rare extra writes only when something actually vanished — never on a quiet poll, never in the demo or on an empty/failed scan.
+
+**Files:**
+- Modify: `desktop-mod/hooks/register.tsx` (publish branch of `poll`)
+- Modify: `desktop-mod/hooks/ui.test.ts`
+
+- [ ] **Step 1: Failing tests first** (real scan path, like THE FLICKER GUARD extension): (1) select an agent (drawer open), make its transcript age out of the office → after the next structure publish `view.selected === null`, exactly one extra `view` write, the drawer closed; (2) pin a room and set a roomDone override for it, make the room vanish → `prefs.pins` no longer lists it and the store's roomDone no longer lists it, one `prefs` write and one store write; (3) quiet polls afterwards → 0 writes (the existing invariant stays green); (4) demo mode and an empty office never prune.
+- [ ] **Step 2: Implement** in the publish branch: from the published office compute the live agent ids and room ids; `if (view.selected !== null && !liveIds.has(view.selected))` write `view` with `selected: null`; if the office is real and non-empty: prune `prefs.pins` (write `prefs` only if it changed) and the store's roomDone (write only if it changed). Same tick as the payload write; `$.clock.now()` only.
+- [ ] **Step 3: Checks** — `$E plugin validate`, `$E plugin test` (0 fail), `tsc` (clean).
+- [ ] **Step 4: Commit** `fix(mod): restore selection reset and pin/roomDone pruning in the publish branch` and push.
+
 ### Task 1.5: Measure
 
 - [ ] **Step 1:** Temporarily re-enable the mod for ONE measurement session: add `"CLAUDE_CODE_PLUGIN_DIRS": "C:\\Users\\asafa\\agent-theater\\desktop-mod"` under `env` in `~/.claude/settings.json` (keep the backup), open a new conversation, `/theater`, start a task with 5 subagents.
 - [ ] **Step 2:** Task Manager → Details, 60 s: average CPU of `claude.exe` (the session) and of `Claude.exe` (the app), pane open; then pane closed. Also the baseline from before this phase is unknown (the mod was disabled): record the numbers as the new baseline.
 - [ ] **Step 3:** Remove the env line again (the mod stays disabled until Task 2.8). Write the numbers in `HANDOFF.md` ("שלב 1 — מדידה"). Targets (spec §8.7): < 3% quiet, < 10% with five working agents. If above target: the remaining suspect is `tasklist` (30 s) and the per-scan `Promise.all` stats; raise `POLL_MS` to 8000 and re-measure before Phase 2.
 - [ ] **Step 4: Commit** `docs(mod): phase 1 CPU measurement`.
+
+---
+
+### Task 1.2b (conditional): new-bytes-only tail read for transcripts above TAIL_SWITCH
+
+User decision (spec §2 item 7, 2026-10-10): run ONLY if Task 1.5 still measures above the §8.7 targets after `POLL_MS` = 8000 was tried. Spec §8 item 2: `TAIL_SWITCH` = 256 KB; above it, read through `$.process.run` (PowerShell) only the bytes after the kept `textLen` (`Seek`), at most once per poll per changed file, and feed them to `appendParse` (Task 1.2) instead of re-reading a 200 KB tail. Write the steps when the task is activated — tests first: a 300 KB file that grows by one line is parsed from the new bytes only; a file that shrank restarts from zero; a tail that cuts a line in half is held back until the newline arrives.
 
 ---
 
@@ -917,6 +936,8 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
 
 ### Task 2.3: `office-client.tsx` — the surface module
 
+> Note (2026-10-10, after Task 1.4): `finishBeat` no longer exists — the render reads `office.stars` (`ui.tsx`), and `OfficeAgent.star` is the detection stamp (the poll's clock when the finish was seen), not a transcript `end_ms`. Also from Phase 0: `wrap: 'truncate'` is not enforced on the desktop, so `office-layout` must fit rows to `columns` itself; a narrow docked pane measured 31 columns.
+
 **Files:**
 - Create: `desktop-mod/hooks/office-client.tsx`
 - Test: `desktop-mod/hooks/office-client.test.ts` (mounts the pane on the desktop through the hooks, Task 2.4 wires that; until then the test mounts a minimal pane via a test-only hook — see Step 1)
@@ -1194,6 +1215,8 @@ Notes for the implementer: the walk-in/hop are drawn as a status line in this fi
 - [ ] **Step 4: Commit** (with Task 2.4) `feat(mod): office-client — the desktop office as one Client surface module`.
 
 ### Task 2.4: `ui.tsx` — the desktop branch returns the Client; `finishBeat` is read-only
+
+> Note (2026-10-10, after Task 1.4): there is no `finishBeat` any more; the stars come from `office.stars` in the payload (Task 1.4). Read the ledger's Task 1.4 carry-forward before implementing; where this task says "finishBeat", read "the stars already in the payload".
 
 **Files:**
 - Modify: `desktop-mod/hooks/ui.tsx:673-690` (the render hook head), the `desktop` branches (`desktopRoom`, `desktopMessage`, the `Svg` imports), `finishBeat`

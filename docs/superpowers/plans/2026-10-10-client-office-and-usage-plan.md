@@ -940,6 +940,12 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
 
 ### Task 2.3: `office-client.tsx` — the surface module
 
+> **Amendment (2026-10-10, Phase 0 results; spec §2 items 11-12) — overrides the steps below where they differ:**
+> (a) **Scroll is the engine's.** The hooks do not answer `ui.scroll`; the engine scrolls the pane natively. `OfficeProps.offset` is the ENGINE's window offset, which `ui.tsx` reads from `e.props.scroll?.offset ?? 0` (Task 2.4). The Client's declared `height` is the FULL content height (`layout.rows.length` + the chrome rows above the rooms), NOT `bodyRows`, so the pane overflows and the engine shows a scrollbar; the module still windows: it draws blank rows for everything above `offset`, then `windowRows(layout, offset, rows)` in place, then nothing below (the Client's height covers it). Pointer `y` is relative to the Client's top, so a hit is `hitAt(layout, x, y)` on the full layout — no offset arithmetic, no `windowStart`. No `{ t: 'content' }` message, no `{ t: 'pull' }` channel (test 1 passed).
+> (b) **Never tick continuously:** `surface.every` runs only while an fx is active (the probe's 4 Hz counter cost ≈ 4.8% of the machine in the app renderer).
+> (c) Keep every render cheap and memoised by props signature: the probe saw one `ui.fault` "did not answer a render within 2000ms".
+> (d) Phase 0 cell facts: emoji = 2 cells; `▀` draws as a colour bar; `backgroundColor` works; Hebrew single runs are fine; `wrap: 'truncate'` is NOT enforced (rows must fit `columns` — Task 2.1 guarantees it); a VS16/ZWJ sequence drew as one glyph; typing in an `Input` inside the Client "blinked" for the user while the pane redrew every 2 s — the search `Input` must keep focus/caret across props updates (test it: type while a publish lands).
+
 > Note (2026-10-10, after Task 1.4): `finishBeat` no longer exists — the render reads `office.stars` (`ui.tsx`), and `OfficeAgent.star` is the detection stamp (the poll's clock when the finish was seen), not a transcript `end_ms`. Also from Phase 0: `wrap: 'truncate'` is not enforced on the desktop, so `office-layout` must fit rows to `columns` itself; a narrow docked pane measured 31 columns.
 
 **Files:**
@@ -1220,6 +1226,8 @@ Notes for the implementer: the walk-in/hop are drawn as a status line in this fi
 
 ### Task 2.4: `ui.tsx` — the desktop branch returns the Client; `finishBeat` is read-only
 
+> **Amendment (2026-10-10, Phase 0):** `offset` in the props = `e.props.scroll?.offset ?? 0` (the engine's window), `rows` = `e.props.scroll?.bodyRows`, and the `Client`'s `height` = the full content height from `office-layout` (rows + chrome), so the engine scrolls natively. No module-level scroll offset in the hooks.
+
 > Note (2026-10-10, after Task 1.4): there is no `finishBeat` any more; the stars come from `office.stars` in the payload (Task 1.4). Read the ledger's Task 1.4 carry-forward before implementing; where this task says "finishBeat", read "the stars already in the payload".
 
 **Files:**
@@ -1252,6 +1260,8 @@ The old desktop code (`desktopRoom`, `desktopMessage`, `roomRowSvgs`, `messageSv
 - [ ] **Step 5: Commit** (with 2.3).
 
 ### Task 2.5: `register.tsx` — messages, scroll, fault, latch, pull channel
+
+> **Amendment (2026-10-10, Phase 0; spec §2 item 11):** DROP every step below about `ui.scroll` answered without `next`, the module-level scroll `offset`, `requestRedraw` on scroll, and the `content` message — the engine scrolls natively (no `ui.scroll` hook at all, or `next(e)` if a hook is needed for logging). DROP Step 7 (the pull channel): test 1 passed. KEEP `ui.message` (all other `t` kinds), `ui.fault` → text fallback + toast, and the redraw latch for non-scroll uses.
 
 **Files:**
 - Modify: `desktop-mod/hooks/register.tsx`
@@ -1464,6 +1474,8 @@ export function usageLabel(u: FiveHour, _lang: 'he' | 'en', _now: number): strin
 
 ### Task 3.2: Hooks — `session.measure`, first reading, `SessionMode` label
 
+> **Amendment (2026-10-10, Phase 0; spec §2 item 12):** on the desktop the label is shown with **`$.ui.status(label)`** — drawn on the footer between "Auto" and "Fable 5.1", dim, prefixed by the plugin name; `$.ui.status(undefined)` clears it. The `SessionMode` hook stays for the terminal (the desktop raises the site but does not draw plugin modes). Add `$.ui.toast` once per window at ≥ 80% and ≥ 95% (Hebrew/English per prefs). Tests: `session.measure` → status text contains the label; toast fired once per threshold per `resetsAt`.
+
 **Files:**
 - Modify: `desktop-mod/hooks/register.tsx` (two hooks + session.start read)
 - Modify: `desktop-mod/hooks/model.ts` (`USAGE` object from Task 2.4)
@@ -1524,6 +1536,8 @@ and in `session.start`, after the prefs load: `try { USAGE.fiveHour = pickFiveHo
 - [ ] **Step 2: Commit** `feat(mod): five-hour meter in the office header`.
 
 ### Task 3.4: Live placement check
+
+> **Done in Phase 0 (2026-10-10 19:45):** `$.ui.status` lands between "Auto" and "Fable 5.1" on the desktop footer; `SessionMode` is raised but not drawn; `PromptHint` is not raised. Nothing left to check here.
 
 - [ ] **Step 1:** In the verification session (Task 2.8 or a new one): where does the label land on the footer line? Record in `HANDOFF.md`. If it is not between "Auto" and "Fable 5.1": try `PromptHint` (`on('ui.render', { component: 'PromptHint' }, ($, e, next) => USAGE.fiveHour ? next({ ...e, props: { ...e.props, hint: `${usageLabel(...)}  ${e.props.hint}` } }) : next(e))`) and look again; keep whichever the user prefers, delete the other. The pane header keeps it regardless.
 - [ ] **Step 2: Commit** `docs(mod): usage label placement verified` (plus the hook change if any).

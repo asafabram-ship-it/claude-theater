@@ -84,8 +84,8 @@ export function tileX(i: number, perRow: number, columns: number, rtl: boolean):
   return rtl ? columns - TILE_W - col * (TILE_W + TILE_GAP) : col * (TILE_W + TILE_GAP)
 }
 
-/** `s` cut to at most `max` cells, whole glyphs only, with an ellipsis when something was dropped. */
-function cut(s: string, max: number): string {
+/** `s` cut to at most `max` cells, whole glyphs only, with an ellipsis when something was dropped. (Exported for office-props.ts's caps.) */
+export function cut(s: string, max: number): string {
   if (max < 1) return ''
   const gs = glyphs(s)
   let w = 0

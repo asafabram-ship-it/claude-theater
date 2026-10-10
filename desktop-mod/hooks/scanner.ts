@@ -41,7 +41,11 @@
 // - Throttle: directory listings are cached GLOB_TTL_SEC between scans (Python
 //   _throttled_glob); parsed agents are cached per (path, mtime, size) and only
 //   `status`/`closed`/`role` are recomputed on a cache hit (Python _AGENT_CACHE);
-//   a file that yields nothing (corrupt first line, unflushed, unreadable) gets
+//   a transcript that changed is parsed from where its last parse stopped
+//   (append-only files: appendParse keeps the covered length and the last
+//   MAX_EVENTS events on the entry; the whole file is parsed only on first
+//   sight or after a rewrite), and a session file's model is searched the same
+//   way; a file that yields nothing (corrupt first line, unflushed, unreadable) gets
 //   a NEGATIVE entry under the same key (retried after GLOB_TTL_SEC when the
 //   cause may pass), and a growing oversized file re-runs its tail helper at
 //   most every GLOB_TTL_SEC; parent files (names) are cached by mtime, the
@@ -65,6 +69,7 @@ import {
   IN_FLIGHT_MAX_SEC,
   KNOWN_CC_VERSIONS,
   MAX_AGE_MIN,
+  MAX_EVENTS,
   PERSONA_EMOJI,
   RESULT_CHAR_LIMIT,
   RUNNING_STALE_SEC,
@@ -409,6 +414,30 @@ export function parseEvents(lines: string[]): { events: TranscriptEvent[]; skipp
   return { events, skipped, versions: [...versions] }
 }
 
+/**
+ * Incremental parse: transcripts are append-only, so a file that grew is
+ * parsed from `prev.textLen` on, never from the start again. A trailing line
+ * without its newline waits for the next scan (`textLen` stays before it). A
+ * file shorter than before — or whose kept length no longer ends on a newline
+ * — was rewritten: parse it whole (`reset`). The kept events are the last
+ * MAX_EVENTS (what status/phase/done read); `versions` accumulate, `skipped`
+ * counts only the lines this call met.
+ */
+export function appendParse(
+  prev: { textLen: number; events: TranscriptEvent[]; versions: string[] },
+  whole: string,
+): { textLen: number; events: TranscriptEvent[]; versions: string[]; skipped: number; reset: boolean } {
+  const reset = whole.length < prev.textLen || (prev.textLen > 0 && whole[prev.textLen - 1] !== '\n')
+  const from = reset ? 0 : prev.textLen
+  const cut = whole.lastIndexOf('\n')
+  if (cut < from) return { textLen: from, events: reset ? [] : prev.events, versions: reset ? [] : prev.versions, skipped: 0, reset }
+  const fresh = whole.slice(from, cut + 1)
+  const parsed = parseEvents(fresh.split('\n').filter(ln => ln.trim() !== ''))
+  const events = (reset ? parsed.events : [...prev.events, ...parsed.events]).slice(-MAX_EVENTS)
+  const versions = [...new Set([...(reset ? [] : prev.versions), ...parsed.versions])]
+  return { textLen: cut + 1, events, versions, skipped: parsed.skipped, reset }
+}
+
 /** Python last_tool_use_name: name of the last tool_use in the last assistant event that has one, else "". */
 export function lastToolUseName(events: TranscriptEvent[]): string {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -674,7 +703,14 @@ export function parentSessionFile(agentPath: string, sessionId: string): string 
 type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo>; notices: Map<string, number | null> }
 type ProjectCacheEntry = { mtimeMs: number; oversized: boolean; cwd: string }
 type SessionCacheEntry = { mtimeMs: number; oversized: boolean; topic: string; cwd: string }
-type ModelCacheEntry = { mtimeMs: number; model: string; /** when the tail was last read for it (ms; 0 = noted from a read made anyway) */ at: number }
+type ModelCacheEntry = {
+  mtimeMs: number
+  model: string
+  /** When the tail was last read for it (ms; 0 = noted from a read made anyway). */
+  at: number
+  /** How much of the WHOLE file the model search has covered (chars, up to a newline); 0 when it saw only a tail. */
+  textLen: number
+}
 
 const NAME_CACHE = new Map<string, NameCacheEntry>() // parent file → Agent/Task prompt → {description, subagent_type}
 const PROJECT_CACHE = new Map<string, ProjectCacheEntry>() // parent file → the conversation's real working dir
@@ -689,13 +725,28 @@ const SESSION_CACHE = new Map<string, SessionCacheEntry>() // session file → (
  */
 const SESSION_MODEL_CACHE = new Map<string, ModelCacheEntry>()
 
-/** Records the lead's model from a whole-file text a scan fetched anyway (by mtime; a model the text does not name leaves the last known one). */
+/**
+ * `parseLastModel` over only what a whole-file text gained since the last
+ * look (`prev.textLen`; the file is append-only): the model the new lines
+ * name, "" when none (the caller keeps the cached one then). A rewritten file
+ * (shorter, or its kept length no longer on a newline) is searched whole; a
+ * trailing half-line waits for its newline.
+ */
+function appendLastModel(prev: ModelCacheEntry | undefined, whole: string): { model: string; textLen: number } {
+  const known = prev?.textLen ?? 0
+  const from = whole.length < known || (known > 0 && whole[known - 1] !== '\n') ? 0 : known
+  const cut = whole.lastIndexOf('\n')
+  if (cut < from) return { model: '', textLen: from }
+  return { model: parseLastModel(whole.slice(from, cut + 1)), textLen: cut + 1 }
+}
+
+/** Records the lead's model from a whole-file text a scan fetched anyway (by mtime; a model the new lines do not name leaves the last known one). */
 function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | undefined): void {
   if (whole === undefined) return
   const cached = SESSION_MODEL_CACHE.get(sessionFile)
   if (cached && cached.mtimeMs === mtimeMs) return
-  const model = parseLastModel(whole)
-  SESSION_MODEL_CACHE.set(sessionFile, { mtimeMs, model: model || cached?.model || '', at: 0 })
+  const { model, textLen } = appendLastModel(cached, whole)
+  SESSION_MODEL_CACHE.set(sessionFile, { mtimeMs, model: model || cached?.model || '', at: 0, textLen })
 }
 
 /**
@@ -706,16 +757,22 @@ function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | 
  * closure (an oversized conversation degrades to "" without it, as the other
  * oversized reads do). Cached by mtime; a conversation that keeps growing is
  * re-read at most every GLOB_TTL_SEC (as an oversized transcript's tail is),
- * so a 1.5 s poll never re-reads a chatty lead every tick; a tail that names
- * no model keeps the last known one. A read made anyway (noteSessionModel:
- * the name map, the summary's head) is reused when its mtime is current.
+ * so the 5 s poll never re-reads a chatty lead every tick, and a whole file
+ * is searched only from where the last look stopped (appendLastModel); a
+ * text that names no model keeps the last known one. A read made anyway
+ * (noteSessionModel: the name map, the summary's head) is reused when its
+ * mtime is current.
  */
 export async function sessionModelFor(io: ScanIo, sessionFile: string, st: FsStat, now: number): Promise<string> {
   const cached = SESSION_MODEL_CACHE.get(sessionFile)
   if (cached && (cached.mtimeMs === st.mtimeMs || now - cached.at < GLOB_TTL_SEC * 1000)) return cached.model
   const read = await readTail(io, sessionFile, st.size)
-  const model = read.text === null ? '' : parseLastModel(read.text)
-  const entry: ModelCacheEntry = { mtimeMs: st.mtimeMs, model: model || cached?.model || '', at: now }
+  // the whole file when it fits (searched from the last look on); a tail text has no offset to resume from
+  const found =
+    read.text === null ? { model: '', textLen: cached?.textLen ?? 0 }
+    : st.size <= FS_READ_LIMIT ? appendLastModel(cached, read.text)
+    : { model: parseLastModel(read.text), textLen: 0 }
+  const entry: ModelCacheEntry = { mtimeMs: st.mtimeMs, model: found.model || cached?.model || '', at: now, textLen: found.textLen }
   SESSION_MODEL_CACHE.set(sessionFile, entry)
   return entry.model
 }
@@ -1222,9 +1279,14 @@ type AgentCacheEntry = {
   idleDone: boolean
   inFlight: boolean
   versions: string[]
+  /** Malformed lines met so far in this file (a running total across incremental parses; re-counted on every hit). */
   skipped: number
   oversized: boolean
   parent: string | null
+  /** How much of the file the parse has covered (chars, up to a newline): a changed file is parsed from here on (appendParse). 0 for a tail-only or negative entry. */
+  textLen: number
+  /** The last MAX_EVENTS parsed events, the base of the next incremental parse; [] for a tail-only or negative entry. */
+  events: TranscriptEvent[]
   /** A negative entry worth another try (a rejected read, an unflushed first line): re-parse once `now >= retryAt`. */
   retryAt?: number
 }
@@ -1237,7 +1299,7 @@ const FIRST_LINE_CACHE = new Map<string, string>()
 function negativeEntry(mtimeMs: number, size: number, now: number, opts: { skipped?: number; oversized?: boolean; retry?: boolean } = {}): AgentCacheEntry {
   return {
     mtimeMs, size, at: now, adict: null, isDone: false, idleDone: false, inFlight: false, versions: [], parent: null,
-    skipped: opts.skipped ?? 0, oversized: opts.oversized ?? false,
+    skipped: opts.skipped ?? 0, oversized: opts.oversized ?? false, textLen: 0, events: [],
     ...(opts.retry ? { retryAt: now + GLOB_TTL_SEC * 1000 } : {}),
   }
 }
@@ -1416,7 +1478,8 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
         AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: first.oversized, retry: true }))
         continue
       }
-      const firstLine = first.text.split('\n')[0] ?? ''
+      const nl = first.text.indexOf('\n') // not split(): `first` is the whole file when it fits
+      const firstLine = nl === -1 ? first.text : first.text.slice(0, nl)
       if (firstLine.trim() === '') {
         // exists but not flushed yet — not malformed; the flush moves (mtime,size), the retry covers a same-key flush
         AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { retry: true }))
@@ -1440,18 +1503,35 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
       const startMs = firstEv.tsMs
       const task = extractTask(firstEv)
 
-      const tail = whole ?? (await readTail(io, path, size))
+      // The file's state: a file that fits is parsed incrementally from its
+      // whole text (appendParse: only what was appended since the entry's
+      // textLen; the whole file on first sight or after a rewrite); an
+      // oversized one through its tail closure, every time, as before.
       let events: TranscriptEvent[] = []
       let fileSkipped = 0
-      if (tail.text !== null) {
-        const parsed = parseEvents(tailLines(tail.text))
-        events = parsed.events
-        fileSkipped = parsed.skipped
-        for (const v of parsed.versions) fileVersions.add(v)
-      } else if (tail.oversized) {
-        oversizedFiles.add(path)
-        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: true, retry: true }))
-        continue
+      let textLen = 0
+      if (whole && whole.text !== null) {
+        // the previous parse is the base when it covered the whole file (a tail parse has no offset to resume from)
+        const prev = entry && entry.adict !== null && entry.textLen > 0
+          ? { textLen: entry.textLen, events: entry.events, versions: entry.versions, skipped: entry.skipped }
+          : { textLen: 0, events: [] as TranscriptEvent[], versions: [] as string[], skipped: 0 }
+        const inc = appendParse(prev, whole.text)
+        events = inc.events
+        fileSkipped = (inc.reset ? 0 : prev.skipped) + inc.skipped // malformed lines are counted once, when met
+        textLen = inc.textLen
+        for (const v of inc.versions) fileVersions.add(v)
+      } else {
+        const tail = await readTail(io, path, size)
+        if (tail.text !== null) {
+          const parsed = parseEvents(tailLines(tail.text))
+          events = parsed.events
+          fileSkipped = parsed.skipped
+          for (const v of parsed.versions) fileVersions.add(v)
+        } else if (tail.oversized) {
+          oversizedFiles.add(path)
+          AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: true, retry: true }))
+          continue
+        }
       }
 
       const workflow = isWorkflowAgent(path)
@@ -1504,7 +1584,11 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
         truncated: done.truncated,
         model: lastModel(events),
       }
-      entry = { mtimeMs, size, at: now, adict, isDone: done.isDone, idleDone: done.idle, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent }
+      entry = {
+        mtimeMs, size, at: now, adict, isDone: done.isDone, idleDone: done.idle, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent,
+        // a whole-file parse leaves its covered length and events as the next scan's base; a tail parse leaves none
+        textLen, events: textLen > 0 ? events : [],
+      }
       AGENT_CACHE.set(path, entry)
     }
 

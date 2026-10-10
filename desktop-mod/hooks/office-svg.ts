@@ -38,8 +38,8 @@
 // STABILITY (the flicker fix)
 // ---------------------------------------------------------------------------
 // The interactive frame RELOADS whenever `source` changes, restarting every
-// animation — so a source that changed on each 1.5 s poll (a mm:ss timer)
-// flickered. Rule: a room's source is byte-identical between polls unless
+// animation — so a source that changed on each poll (POLL_MS, 5 s; a mm:ss
+// timer) flickered. Rule: a room's source is byte-identical between polls unless
 // something VISIBLE changed. Hence:
 // - no seconds anywhere: elapsed time is drawn at MINUTE resolution
 //   (fmtMinutes: "<1m" / "3m" / "1h 5m", Hebrew "3 דק׳"); ui.tsx quantizes the

@@ -54,8 +54,8 @@
 // the oversized transcript is skipped and counted in payload.oversized, an
 // oversized parent yields role ""/project ""/topic "", and every registered
 // session is trusted as open. pidAlive reads ONE process listing (tasklist /
-// ps) cached PID_TTL_MS at module level, so a scan every 1.5 s spawns one
-// process per 30 s however many chats are open.
+// ps) cached PID_TTL_MS at module level, so a scan every 5 s (POLL_MS) spawns
+// one process per 30 s however many chats are open.
 //   agent.spawn     after next: liveSpawned; first subagent of the session →
 //                   $.ui.open once (auto-open).
 //   tool.call       in a live agent's loop: liveToolStarted / liveToolReturned;

@@ -9,8 +9,9 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { FS_READ_LIMIT, GLOB_TTL_SEC, MAX_AGE_MIN, POLL_MS, RESULT_CHAR_LIMIT, RUNNING_STALE_SEC } from './model'
+import { FS_READ_LIMIT, GLOB_TTL_SEC, MAX_AGE_MIN, MAX_EVENTS, POLL_MS, RESULT_CHAR_LIMIT, RUNNING_STALE_SEC } from './model'
 import {
+  appendParse,
   computeInFlight,
   computePhase,
   computeStatus,
@@ -41,6 +42,7 @@ import {
   unknownVersions,
   workflowJournalResult,
   type ScanIo,
+  type TranscriptEvent,
 } from './scanner'
 import type { Agent } from './model'
 
@@ -985,4 +987,97 @@ test('demoPayload: every demo agent names a plausible model', async () => {
 test('phase 1 cadence: the poll is 5 s and listings are reused for 30 s', () => {
   expect(POLL_MS).toBe(5000)
   expect(GLOB_TTL_SEC).toBe(30)
+})
+
+// ---------------------------------------------------------------------------
+// Phase 1 (economical scan), task 1.2: a transcript is parsed incrementally
+// ---------------------------------------------------------------------------
+
+test('appendParse: a grown transcript parses only the new lines; a shrunk one re-parses', () => {
+  const l1 = JSON.stringify({ type: 'user', uuid: 'u1', timestamp: '2026-10-10T10:00:00Z', message: { role: 'user', content: 'Read it.' }, agentId: 'a1', sessionId: 's1', version: '2.1.293' })
+  const l2 = JSON.stringify({ type: 'assistant', uuid: 'a', timestamp: '2026-10-10T10:00:01Z', message: { role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Read', input: {} }] }, agentId: 'a1', sessionId: 's1' })
+  const first = appendParse({ textLen: 0, events: [], versions: [] }, l1 + '\n')
+  expect(first.events).toHaveLength(1)
+  expect(first.textLen).toBe(l1.length + 1)
+  const second = appendParse(first, l1 + '\n' + l2 + '\n')
+  expect(second.events).toHaveLength(2)
+  expect(second.reset).toBe(false)
+  expect(second.events[1]?.raw.type).toBe('assistant')
+  // a partial trailing line is held back until its newline arrives
+  const partial = appendParse(second, l1 + '\n' + l2 + '\n' + '{"type":"user"')
+  expect(partial.events).toHaveLength(2)
+  expect(partial.textLen).toBe(second.textLen)
+  // shrunk (rewritten) file: start over
+  const shrunk = appendParse(second, l2 + '\n')
+  expect(shrunk.reset).toBe(true)
+  expect(shrunk.events).toHaveLength(1)
+})
+
+test('appendParse: the kept events are bounded by MAX_EVENTS; versions accumulate, skipped is per call; a same-length rewrite resets too', () => {
+  const line = (i: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-10T10:00:00Z', version: i % 2 ? '2.1.293' : '2.1.0', message: { role: 'assistant', content: [{ type: 'tool_use', name: `T${i}`, input: {} }] } })
+  let text = ''
+  let state: { textLen: number; events: TranscriptEvent[]; versions: string[] } = { textLen: 0, events: [], versions: [] }
+  for (let i = 0; i < MAX_EVENTS + 50; i++) {
+    text += line(i) + '\n'
+    state = appendParse(state, text)
+  }
+  expect(state.events).toHaveLength(MAX_EVENTS)
+  expect(state.events[0]?.toolUses).toEqual(['T50'])
+  expect(state.events[MAX_EVENTS - 1]?.toolUses).toEqual([`T${MAX_EVENTS + 49}`])
+  expect(state.textLen).toBe(text.length)
+  expect([...state.versions].sort()).toEqual(['2.1.0', '2.1.293'])
+  // a corrupt line counts once, in the call that met it; a later call counts only its own lines
+  const bad = appendParse(state, text + 'not json\n')
+  expect(bad.skipped).toBe(1)
+  expect(bad.events).toHaveLength(MAX_EVENTS)
+  expect(appendParse(bad, text + 'not json\n' + line(1) + '\n').skipped).toBe(0)
+  // a rewrite that is not shorter: the char before the kept length is no longer a newline, so it starts over
+  const l1 = JSON.stringify({ type: 'user', message: { content: 'short' } })
+  const one = appendParse({ textLen: 0, events: [], versions: [] }, l1 + '\n')
+  const long = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Grep', input: { pattern: 'a much longer line than the first one was' } }] } })
+  const replaced = appendParse(one, long + '\n')
+  expect(replaced.reset).toBe(true)
+  expect(replaced.events.map(e => e.kind)).toEqual(['assistant'])
+  expect(replaced.textLen).toBe(long.length + 1)
+})
+
+test('scanAll: a transcript that grew is parsed from where the last parse stopped; a trailing half-line waits; a rewritten file starts over; the lead keeps its model through a model-less append', async () => {
+  resetScannerCaches()
+  const fs = office()
+  const io = fs.io()
+  const run = `${PROJ}/sess-aaaa-1111/subagents/agent-fixture-run-0001.jsonl`
+  const p1 = await scanAll(io, NOW)
+  expect(p1.skipped).toBe(2) // the malformed fixture
+  expect(byId(p1.agents, 'fixture-run-0001').tool).toBe('Read')
+  expect(byId(p1.agents, 'sess-aaaa-1111').model).toBe('claude-fable-5-1')
+  // the file grows by a corrupt line and a new tool call: the new tool shows, the corrupt line is counted
+  const call = (name: string, ts: string) => JSON.stringify({ type: 'assistant', timestamp: ts, version: '2.1.0', message: { content: [{ type: 'tool_use', name, input: {} }] } })
+  const grown = fs.files.get(run)!.text + 'garbage\n' + call('Bash', '2026-06-01T14:59:58.000Z') + '\n'
+  fs.put(run, grown, NOW + 2000)
+  const p2 = await scanAll(io, NOW + 3000)
+  expect(byId(p2.agents, 'fixture-run-0001').tool).toBe('Bash')
+  expect(byId(p2.agents, 'fixture-run-0001').status).toBe('running')
+  expect(p2.skipped).toBe(3)
+  // an unchanged file is a cache hit: the count comes from the entry, never double-counted
+  const p2b = await scanAll(io, NOW + 3000 + POLL_MS)
+  expect(p2b.skipped).toBe(3)
+  // a trailing line still being written is held back; once its newline lands it counts
+  const half = call('Edit', '2026-06-01T14:59:59.000Z')
+  fs.put(run, grown + half.slice(0, 40), NOW + 4000)
+  expect(byId((await scanAll(io, NOW + 5000)).agents, 'fixture-run-0001').tool).toBe('Bash')
+  fs.put(run, grown + half + '\n', NOW + 6000)
+  const p3 = await scanAll(io, NOW + 7000)
+  expect(byId(p3.agents, 'fixture-run-0001').tool).toBe('Edit')
+  expect(p3.skipped).toBe(3)
+  // the same path rewritten with a different (shorter) transcript: parsed afresh, the old state gone
+  fs.put(run, FIXTURES['cc-2.1/done.jsonl']!.replace('fixture-done-0002', 'fixture-run-0001'), NOW + 8000)
+  const p4 = await scanAll(io, NOW + 9000)
+  expect(byId(p4.agents, 'fixture-run-0001').status).toBe('done')
+  expect(byId(p4.agents, 'fixture-run-0001').tool).toBe('Bash')
+  expect(byId(p4.agents, 'fixture-run-0001').result).toMatch(/^There are 1240 lines/)
+  expect(p4.skipped).toBe(2)
+  // the parent grows by a line that names no model (re-read whole for its name map): the lead keeps its model
+  const parent = `${PROJ}/sess-aaaa-1111.jsonl`
+  fs.put(parent, fs.files.get(parent)!.text + JSON.stringify({ type: 'user', sessionId: 'sess-aaaa-1111', message: { role: 'user', content: 'go on' } }) + '\n', NOW + 9500)
+  expect(byId((await scanAll(io, NOW + 10_000)).agents, 'sess-aaaa-1111').model).toBe('claude-fable-5-1')
 })

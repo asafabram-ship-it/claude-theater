@@ -65,6 +65,8 @@ export const RESULT_CHAR_LIMIT = 4000
 export const KNOWN_CC_VERSIONS: readonly string[] = ['2.1']
 /** Tail window read from a transcript, bytes (Python read_tail_lines max_bytes). */
 export const TAIL_MAX_BYTES = 200_000
+/** Keep at most this many parsed events per transcript (the tail is what status/phase/done read). */
+export const MAX_EVENTS = 400
 /** `$.fs.read` rejects a file over 4 MiB; the scanner degrades instead of crashing. */
 export const FS_READ_LIMIT = 4 * 1024 * 1024
 /** The scan period: 5 s (was the extension's 1.5 s); only while the pane is open. */

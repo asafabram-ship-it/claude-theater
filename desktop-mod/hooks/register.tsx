@@ -361,23 +361,25 @@ export async function poll($: EngineInterface): Promise<void> {
       lastCoarse = coarse
       lastPublishAt = now
       // THE HOUSEKEEPING of the old deferred beat (PAGE updateWS), in the same tick as the write, as rare extra
-      // writes only when something actually vanished — a quiet poll never reaches a write here:
+      // writes only when something actually vanished — a quiet poll never reaches a write here, and a FAILED
+      // scan never touches user state (scanAll republishes LAST_GOOD — empty after a hot reload — and mergeLive
+      // adds this session's live agents even to that: a non-empty office that is NOT the office; `error` gates):
       // - the selection: `view.selected` is "null when closed" (types/index.d.ts), so a selected agent that left
       //   the office resets it (one `view` write; the drawer is already gone, it draws only a present agent);
       // - the pins and the per-room overrides (prefs.pins, $.store 'roomDone') of rooms no longer present —
-      //   only when the published rooms changed (a room vanished, or the first publish: pins kept from an
-      //   earlier session), and only against a REAL, NON-EMPTY office: the demo's cast and an empty or failed
+      //   only when a published room vanished (or on the first publish: pins kept from an earlier session;
+      //   never on a mere arrival), and only against a REAL, NON-EMPTY office: the demo's cast and an empty
       //   scan must not wipe them. Each prunes only what changed (one `prefs` write + its store mirror, one
       //   store write) — PAGE's rule, restored.
       const liveIds = new Set(office.agents.map(a => a.id))
-      if (view.selected !== null && !liveIds.has(view.selected)) {
+      if (error === undefined && view.selected !== null && !liveIds.has(view.selected)) {
         const gone = view.selected
         await update($, viewAtom, v => (v.selected === gone ? { ...v, selected: null } : v))
       }
       const liveRooms = new Set(office.agents.map(a => a.session_full))
       const prevRooms = new Set(published.agents.map(a => a.session_full))
-      const roomsChanged = liveRooms.size !== prevRooms.size || [...prevRooms].some(s => !liveRooms.has(s))
-      if (roomsChanged && office.agents.length > 0 && !office.demo) {
+      const roomsChanged = prevRooms.size === 0 || [...prevRooms].some(s => !liveRooms.has(s))
+      if (roomsChanged && error === undefined && office.agents.length > 0 && !office.demo) {
         prefs ??= await read($, prefsAtom)
         if (prefs.pins.some(s => !liveRooms.has(s))) {
           const saved = await update($, prefsAtom, p => ({ ...p, pins: p.pins.filter(s => liveRooms.has(s)) }))

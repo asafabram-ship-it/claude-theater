@@ -8,7 +8,7 @@
 // (and drawn on mobile/vscode, which lack Input / Client).
 
 import type { Agent, Payload, View } from './model'
-import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
+import { DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SETTLE_MS } from './register'
@@ -245,6 +245,10 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
     view: undefined as View | undefined,
     /** The order of the plugin's calls that redraw: 'open' (a retitle), 'payload' / 'view' / 'prefs' (a $.state write) — and 'store:<key>' (a $.store write, which redraws nothing). */
     seq: [] as string[],
+    /** True → every $.env.get beneath rejects, so the scan FAILS (resolveHome is the one io call inside scanAll's try without a catch of its own). */
+    envDown: false,
+    /** Non-null → every `view` the plugin reads carries this `selected` (what $.state kept over a hot reload, which this harness cannot replay). */
+    selectedBeneath: null as string | null,
   }
   const clock = mock.clock(on, { now: T0 })
   // an in-memory store the test can read back (mock.store would hook store.set
@@ -258,7 +262,12 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   })
   on('store.delete', ($, e) => { delete captured.store[e.key]; return { value: undefined } })
   on('store.keys', () => ({ value: Object.keys(captured.store) }))
-  mock.env(on, { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' })
+  // the environment beneath (what mock.env would hook), with a failure switch for the failed-scan test
+  const env: Record<string, string> = { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' }
+  on('env.get', ($, e) => {
+    if (captured.envDown) throw new Error('env down')
+    return { value: env[e.name] }
+  })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'test-session' }))
   // nothing beneath the plugins answers command.register: without this the plugin's
@@ -329,6 +338,14 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
     return got
   })
   on('state.get', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.prefsReads += 1; return next(e) })
+  on('state.get', { plugin: 'agent-theater', key: 'view' }, async ($, e, next) => {
+    const got = await next(e)
+    const sel = captured.selectedBeneath
+    if (sel === null) return got
+    // (never written yet → `value` is undefined beneath and the plugin applies the atom's default: lay the selection over it)
+    const g = got as { value: { value: View | undefined; version: number } }
+    return { ...g, value: { ...g.value, value: { ...DEFAULT_VIEW, ...g.value.value, selected: sel } } } as typeof got
+  })
   on('state.set', { plugin: 'agent-theater', key: 'scanError' }, ($, e, next) => { captured.writes.scanError += 1; return next(e) })
   on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; captured.view = e.value as View; captured.seq.push('view'); return next(e) })
   on('state.set', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.writes.prefs += 1; captured.seq.push('prefs'); return next(e) })
@@ -978,6 +995,7 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect(captured.view?.selected).toBe('q1')
   const w1 = { ...captured.writes }
   const s1 = { ...captured.storeWrites }
+  const reads1 = captured.prefsReads
   ageOut(files, Q1, clock.now())
   await clock.advance(POLL_MS)
   expect(captured.payload?.agents.some(a => a.id === 'q1')).toBe(false)
@@ -987,6 +1005,9 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect(captured.writes.prefs).toBe(w1.prefs)
   expect(captured.storeWrites).toEqual(s1)
   expect(captured.seq.slice(-3)).toEqual(['open', 'payload', 'view']) // the retitle (3 → 2 working), the publish, then the reset
+  // the redraws, pinned: the retitle's prefs read + ONE draw — the engine coalesces the redraws of one tick,
+  // so the payload write and the view write right after it are drawn once (two writes, one redraw)
+  expect(captured.prefsReads).toBe(reads1 + 2)
   expect(await ui.find({ key: 'close' })).toBeUndefined()
   // a quiet poll after it: nothing is written (the selection is null, nothing else vanished)
   const w2 = { ...captured.writes }
@@ -1048,6 +1069,48 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect(captured.storeWrites).toEqual(s5)
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS])
   expect(captured.store.roomDone).toEqual({ [QSESS]: true })
+  await ui.unmount()
+})
+
+test('a FAILED scan never touches user state: the first scan after a hot reload fails (LAST_GOOD empty) while a subagent of this session is live → the failure publishes the live agent alone, prunes no pin or override, resets no selection', async ($, on) => {
+  const files = quietOffice(T0)
+  secondRoom(files, T0)
+  // what survives a hot reload: the pin and the override of room 2 ($.store), the selection of q1 ($.state,
+  // injected below); what does not: the scanner's LAST_GOOD (module memory — empty until a scan succeeds,
+  // as a fresh plugin environment's is)
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [QSESS2] }, roomDone: { [QSESS2]: true } }, files)
+  // the engine beneath starts each subagent and names it
+  on('agent.spawn', ($, e) => ({ model: 'haiku', agentId: `live-${e.tool_use_id}` }))
+  // the environment is down from the start: every scan FAILS (scanAll → `{ ...LAST_GOOD, error }`, LAST_GOOD empty)
+  captured.envDown = true
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.agents).toEqual([])
+  expect(captured.writes.scanError).toBe(1) // the failure is reported
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  captured.selectedBeneath = 'q1' // the selection $.state kept: q1 of room 1, which no scan has shown since the reload
+  const w = { ...captured.writes }
+  const s = { ...captured.storeWrites }
+  // a subagent of THIS session starts (its spawn auto-opens the pane and polls at once): mergeLive adds it to
+  // the empty failed office — a non-empty, real-looking office that is NOT the office
+  await $.agent.spawn({ tool_use_id: 't1', prompt: 'Read it.', description: 'desc t1', subagentType: 'Explore', parentModel: 'opus' } as Parameters<typeof $.agent.spawn>[0])
+  await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(w.payload + 1) // published: the live agent alone, with the scan error standing
+  expect(captured.payload?.agents.map(a => a.id)).toEqual(['live-t1'])
+  expect(captured.writes.view).toBe(w.view) // the selection (q1, another room) is kept
+  expect(captured.writes.prefs).toBe(w.prefs) // the pin of room 2 is kept ...
+  expect(captured.storeWrites).toEqual(s) // ... and its override
+  expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS2])
+  expect(captured.store.roomDone).toEqual({ [QSESS2]: true })
+  // the environment is back: the real office returns (nothing vanished) → still no housekeeping write, and the
+  // kept selection draws its drawer on q1
+  captured.envDown = false
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.agents.some(a => a.id === 'q1')).toBe(true)
+  expect(captured.writes.view).toBe(w.view)
+  expect(captured.writes.prefs).toBe(w.prefs)
+  expect(captured.storeWrites).toEqual(s)
+  expect(await ui.find({ key: 'close' })).toBeDefined()
   await ui.unmount()
 })
 

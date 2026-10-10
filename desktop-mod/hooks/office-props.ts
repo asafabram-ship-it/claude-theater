@@ -10,8 +10,9 @@
 // Guarantees the Client contract needs (spec §6.2, §10): plain JSON (assertJson
 // throws on the first `undefined`, naming its path); `task`/`result` only in
 // the drawer (one selected agent), never per agent; every text capped (name
-// 24, act 16, title 48, task/result 4000 — whole glyphs, through the layout's
-// `cut`); ~100 agents ≈ 25 KB, far under the 100,000-character props bound.
+// 24, act 16, room title and the drawer's name / subtitle 48, task/result
+// 4000 — whole glyphs, through the layout's `cut`); ~100 agents ≈ 25 KB, far
+// under the 100,000-character props bound.
 
 import { I18N, activityLabel, dirOf, modelFamily, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
@@ -35,7 +36,7 @@ export type OfficeAgent = {
   modelFam: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'other'
   startMin: number | null                                   // elapsed minutes (agentElapsed at the minute clock), null = unknown
   isLead: boolean; failed: boolean; longRunning: boolean
-  star: number                                              // end_ms of a just-finished agent inside the ⭐ window, else 0
+  star: number                                              // detection stamp (the poll's clock) of a just-finished agent inside the ⭐ window, else 0
   enteredAt: number                                         // ms the office first saw it (firstSeen), 0 when unknown
 }
 
@@ -45,7 +46,11 @@ export type OfficeRoom = {
   agents: OfficeAgent[]
 }
 
-export type OfficeDrawer = { id: string; name: string; chips: string[]; model: string; act: string; task: string; result: string; truncated: boolean }
+export type OfficeDrawer = {
+  id: string; name: string; chips: string[]; model: string; act: string; task: string; result: string; truncated: boolean
+  elapsedMin: number | null                                 // whole minutes of agentElapsed(sel, nowMin, true): the duration when done, else the elapsed; null = unknown
+  sub: string                                               // the dim subtitle under the name, as today: role || task_short (≤ 48)
+}
 
 export type OfficeProps = {
   v: 1
@@ -93,6 +98,9 @@ const ACT_MAX = 16
 const TITLE_MAX = 48
 const TEXT_MAX = RESULT_CHAR_LIMIT
 
+/** A clock value in whole minutes (≥ 0); `null` when the clock is unknown. */
+const wholeMinutes = (el: number | null): number | null => el === null ? null : Math.max(0, Math.floor(el / 60_000))
+
 /** The i18n strings the Client draws (toolbar, help rows, drawer headings, the empty office). */
 const LABEL_KEYS = ['appTitle', 'showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'helpTitle', 'keysHint', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scHelp', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo'] as const
 
@@ -124,14 +132,14 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const showDone = view.demo || prefs.showDone
   const { rooms, stat, order } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins)
   const nowMin = minuteClock(now)
-  const stars = office.stars ?? {}
+  const stars = office.stars
   const toAgent = (a: Agent): OfficeAgent => {
     const el = agentElapsed(a, nowMin)
     const starAt = stars[a.id]
     return {
       id: a.id, emoji: a.emoji, name: cut(cardName(a, lang), NAME_MAX), status: a.status, fam: toolFamily(a.tool),
       act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL, modelFam: modelFamily(a.model),
-      startMin: el === null ? null : Math.max(0, Math.floor(el / 60_000)),
+      startMin: wholeMinutes(el),
       isLead: a.is_session, failed: a.failed === true, longRunning: isLongRunning(a, now),
       star: a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS ? starAt : 0,
       enteredAt: input.firstSeen[a.id] ?? 0,
@@ -148,9 +156,10 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   })
   const sel = view.selected !== null ? office.agents.find(a => a.id === view.selected) : undefined
   const drawer: OfficeDrawer | null = sel ? {
-    id: sel.id, name: `${sel.emoji} ${cardName(sel, lang)}`,
+    id: sel.id, name: cut(`${sel.emoji} ${cardName(sel, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
     chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
     model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
+    elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
     task: cut(sel.task || L.taskUnavailable, TEXT_MAX), result: cut(sel.result ?? '', TEXT_MAX), truncated: sel.truncated,
   } : null
   const kind = order.length === 0 ? emptyKind(view.search, office.agents.length, showDone) : null

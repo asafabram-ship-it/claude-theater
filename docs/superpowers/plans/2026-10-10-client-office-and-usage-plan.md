@@ -69,7 +69,7 @@ export type OfficeAgent = {
   modelFam: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'other'
   startMin: number | null                                   // elapsed minutes (agentElapsed at the minute clock), null = unknown
   isLead: boolean; failed: boolean; longRunning: boolean
-  star: number                                              // end_ms of a just-finished agent inside the ⭐ window, else 0
+  star: number                                              // detection stamp (the poll's clock) of a just-finished agent inside the ⭐ window, else 0
   enteredAt: number                                         // ms the office first saw it (firstSeen), 0 when unknown
 }
 export type OfficeRoom = {
@@ -77,7 +77,11 @@ export type OfficeRoom = {
   run: number; stale: number; done: number
   agents: OfficeAgent[]
 }
-export type OfficeDrawer = { id: string; name: string; chips: string[]; model: string; act: string; task: string; result: string; truncated: boolean }
+export type OfficeDrawer = {
+  id: string; name: string; chips: string[]; model: string; act: string; task: string; result: string; truncated: boolean
+  elapsedMin: number | null                                 // whole minutes of agentElapsed(sel, nowMin, true): the duration when done, else the elapsed; null = unknown
+  sub: string                                               // the dim subtitle under the name, as today: role || task_short (≤ 48)
+}
 export type OfficeProps = {
   v: 1
   lang: 'he' | 'en'; rtl: boolean

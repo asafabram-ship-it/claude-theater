@@ -5,6 +5,7 @@
 
 import { expect, test } from 'claude-code/testing'
 
+import { I18N } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, PERSONA_EMOJI } from './model'
 import type { Agent } from './model'
 import { assertJson, buildOfficeProps, modelFamily } from './office-props'
@@ -28,23 +29,42 @@ test('modelFamily', () => {
 })
 
 test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () => {
-  const two = [agent({ id: 'a1' }), agent({ id: 'a2', status: 'done', end_ms: T0 - 1000 })]
-  // the office hides a finished agent until "show finished" (officeView / roomShowsDone, as today)
-  expect(buildOfficeProps(input(two)).rooms[0]?.agents.map(a => a.id)).toEqual(['a1'])
-  const p = buildOfficeProps(input(two, { prefs: { ...DEFAULT_PREFS, showDone: true } }))
+  const two = [agent({ id: 'a1', role: 'Reviewer' }), agent({ id: 'a2', status: 'done', end_ms: T0 - 1000 })]
+  const shown = { ...DEFAULT_PREFS, showDone: true }
+  // the office hides a finished agent until "show finished" (officeView / roomShowsDone, as today); the header counts it either way
+  const hidden = buildOfficeProps(input(two))
+  expect(hidden.rooms[0]?.agents.map(a => a.id)).toEqual(['a1'])
+  expect(hidden.rooms[0]?.showDone).toBe(false)
+  expect(hidden.counts).toEqual({ run: 1, idle: 0, done: 1 })
+  const p = buildOfficeProps(input(two, { prefs: shown }))
   assertJson(p)
+  expect(JSON.parse(JSON.stringify(p))).toEqual(p) // plain JSON: the round trip loses nothing
   expect(p.v).toBe(1)
+  expect(p.nowMin).toBe(T0)
+  expect(p.empty).toBeNull()
+  expect(p.counts).toEqual({ run: 1, idle: 0, done: 1 })
   expect(p.rooms).toHaveLength(1)
+  expect(p.rooms[0]?.showDone).toBe(true)
   expect(p.rooms[0]?.agents.map(a => a.id)).toEqual(['a1', 'a2'])
+  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'Reviewer', status: 'running', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 2, isLead: false, failed: false, longRunning: false, star: 0, enteredAt: 0 })
   expect(JSON.stringify(p)).not.toContain('xxxxxxxxxx')
-  expect(p.rooms[0]?.agents[0]?.startMin).toBe(2)
-  expect(p.rooms[0]?.agents[0]?.modelFam).toBe('opus')
   expect(p.drawer).toBeNull()
-  const withDrawer = buildOfficeProps(input([agent({ id: 'a1' })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
+  const withDrawer = buildOfficeProps(input([agent({ id: 'a1', task_short: 'Read the spec' })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
   expect(withDrawer.drawer?.task.length).toBe(4000)
   expect(withDrawer.drawer?.result.length).toBe(4000)
+  expect(withDrawer.drawer?.elapsedMin).toBe(2) // running: elapsed since start, at the minute clock
+  expect(withDrawer.drawer?.sub).toBe('Read the spec')
+  const finished = buildOfficeProps(input(two, { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'a2' } }))
+  expect(finished.drawer?.elapsedMin).toBe(1) // done: the duration start → end_ms (119 s)
   // a selection the office no longer holds draws no drawer
   expect(buildOfficeProps(input([agent({ id: 'a1' })], { view: { ...DEFAULT_VIEW, selected: 'gone' } })).drawer).toBeNull()
+})
+
+test('buildOfficeProps: the empty office names its kind with the i18n message', () => {
+  const p = buildOfficeProps(input([]))
+  expect(p.rooms).toEqual([])
+  expect(p.counts).toEqual({ run: 0, idle: 0, done: 0 })
+  expect(p.empty).toEqual({ kind: 'office', msg: I18N.he.emptyOffice, sub: I18N.he.emptySub })
 })
 
 test('buildOfficeProps: star while the stamp is alive, enteredAt from firstSeen, offset clamped, name capped', () => {

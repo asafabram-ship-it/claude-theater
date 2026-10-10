@@ -293,8 +293,10 @@ export async function poll($: EngineInterface): Promise<void> {
     // write below: the ⭐ ids ride the payload (`stars`: starsOf stamps the finishes just seen `now` and
     // drops the expired), the toast + chime fire now. Only an agent the office SHOWS is celebrated (its
     // room shows finished, it matches the search, its chat is open — officeView, as the pane draws it);
-    // a hidden finish is remembered (prevStatus) and never celebrated later. `prefs` is read only on a
-    // finish or a retitle (the pane's render reads it once per draw; the tests count redraws by it).
+    // a hidden finish is remembered (prevStatus) and never celebrated later. The toast and the chime fire
+    // at detection, while the drawn ⭐ follows the publish — which SETTLE_MS may hold for up to one poll —
+    // so the sound can precede the star by up to SETTLE_MS. `prefs` is read only on a finish or a retitle
+    // (the pane's render reads it once per draw; the tests count redraws by it).
     const published = await read($, payloadAtom)
     // (a hot reload emptied the module's maps: the published payload still has the stars; a publish held
     // back by SETTLE_MS left them in pendingStars)

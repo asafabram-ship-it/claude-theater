@@ -636,7 +636,7 @@ test('the finish beat (the poll\'s, over the scanned office): a shown agent that
   await clock.advance(SETTLE_MS)
   const q1 = captured.payload?.agents.find(a => a.id === 'q1')
   expect(q1?.status).toBe('done')
-  expect(captured.toasts).toEqual([`${cardName(q1!, 'he')} — סיים`])
+  expect(captured.toasts).toEqual(['הבלש — סיים']) // q1 has no Agent-call description: the card's name is its persona's (הבלש, persona 0)
   expect(captured.plays).toBe(1)
   expect(captured.payload?.stars).toEqual({ q1: clock.now() }) // the ⭐ rides the payload, stamped by the poll's clock
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
@@ -894,23 +894,33 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect((await tileOf(ui, 'q1'))?.tile).toMatch(/ recent justdone/)
   expect((await tileOf(ui, 'q1'))?.tile).toMatch(/class="ws done/)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  // quiet: the ⭐ holds inside its window, nothing is written or redrawn (so the one-shot hop is still drawn:
-  // it goes with the next redraw, the star's expiry below)
+  // quiet: the ⭐ holds inside its window, nothing is written or redrawn (so the one-shot hop is still in the
+  // last drawing: it goes with the next redraw)
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes1.payload + 1)
   expect(renders()).toBe(desktop2 + 1)
   expect((await tileOf(ui, 'q1'))?.tile).toMatch(/⭐/)
+  // a redraw inside the window (the help popover, opened and closed: two view writes, two redraws, no
+  // publish) keeps the ⭐ (static) and drops the hop — `justdone` is a one-shot, like `entering`
+  await ui.press({ key: 'help' })
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/⭐/)
+  expect((await tileOf(ui, 'q1'))?.tile.includes('justdone')).toBe(false)
+  await ui.press({ key: 'help' })
+  expect(captured.writes.payload).toBe(writes1.payload + 1)
+  expect(captured.writes.view).toBe(writes1.view + 2)
+  const views3 = captured.writes.view
+  const desktop3 = renders()
   // the window ends: ONE publish drops the star (the stars are pruned in the payload), then quiet again
   await clock.advance(JUST_FINISHED_MS)
   expect(captured.writes.payload).toBe(writes1.payload + 2)
-  expect(renders()).toBe(desktop2 + 2)
+  expect(renders()).toBe(desktop3 + 1)
   expect(captured.payload?.stars).toEqual({})
   expect((await tileOf(ui, 'q1'))?.tile.includes('⭐')).toBe(false)
-  expect(captured.writes.view).toBe(writes1.view)
+  expect(captured.writes.view).toBe(views3) // the expiry wrote no view either
   expect(captured.toasts).toHaveLength(1)
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes1.payload + 2)
-  expect(renders()).toBe(desktop2 + 2)
+  expect(renders()).toBe(desktop3 + 1)
   await ui.unmount()
 })
 

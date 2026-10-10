@@ -227,6 +227,8 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
     toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown>,
     /** $.state writes seen beneath the plugin, by key (the flicker guard's budget). */
     writes: { payload: 0, scanError: 0, view: 0, tick: 0 },
+    /** $.fs.write calls seen beneath the plugin: none is expected (the diagnostics log is gone). */
+    fsWrites: 0,
     /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle), so it counts the redraws. */
     prefsReads: 0,
   }
@@ -288,6 +290,7 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
     if (!f) throw new Error(`ENOENT: ${e.path}`)
     return { value: f.text }
   })
+  on('fs.write', ($, e, next) => { captured.fsWrites += 1; return next(e) })
   on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
   on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); return { value: { isPlaced: true as const } } })
@@ -755,6 +758,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect(captured.writes.payload).toBe(writes0.payload)
   expect(captured.writes.scanError).toBe(writes0.scanError)
   expect(captured.writes.view).toBe(writes0.view)
+  expect(captured.fsWrites).toBe(0) // no diagnostics file is written any more
   expect(renders()).toBe(desktop0) // the desktop pane was NOT drawn again
   expect((await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))).toEqual(before)
   // THE TICK GUARD: with only the desktop drawing the pane, not even the tick is written (the desktop app

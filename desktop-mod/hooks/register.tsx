@@ -72,7 +72,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { diagLine, paneTitle, registerUi, renderKey, takeDiag, textSurfaceActive, workingCount } from './ui'
+import { paneTitle, registerUi, renderKey, textSurfaceActive, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -214,27 +214,6 @@ function liveWorking(): number {
   return Object.values(LIVE).filter(a => a.engine_status === 'running').length
 }
 
-/** When the diagnostics file was last written. */
-let diagFlushedAt = -Infinity
-/**
- * DIAGNOSTICS: what redrew the pane and what the poll wrote, written to
- * ~/.claude/agent-theater-diag.log every few seconds (a file, never $.state:
- * logging must not cause the redraws it measures). Never throws.
- */
-async function flushDiag($: EngineInterface, now: number): Promise<void> {
-  if (now - diagFlushedAt < 4000) return
-  diagFlushedAt = now
-  const text = takeDiag()
-  if (!text) return
-  try {
-    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-    if (!home) return
-    await $.fs.write(`${home.replace(/[\\/]+$/, '')}/.claude/agent-theater-diag.log`, text)
-  } catch {
-    // diagnostics only
-  }
-}
-
 /** The poll in progress, if any (a tick that finds one running is skipped). */
 let polling = false
 /** The working count last written into the pane title (PAGE's document.title); undefined until the first poll. */
@@ -281,7 +260,6 @@ export async function poll($: EngineInterface): Promise<void> {
         // the band catches up on its next draw
       }
     }
-    await flushDiag($, now)
     if (!scanned) return
     const { error, ...payload } = scanned
     const merged = mergeLive(payload, aged, sessionId, now)
@@ -304,20 +282,17 @@ export async function poll($: EngineInterface): Promise<void> {
     if ((key !== lastKey && due) || ((lastCoarse === undefined || since >= SETTLE_MS) && renderKey(await read($, payloadAtom), now, view.justFinished, true) !== coarse)) {
       // Never roll the office back: a slower, older scan loses to a newer publish.
       await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
-      diagLine(now, `write payload (${coarse !== lastCoarse ? 'structure' : 'activity'}) agents=${merged.agents.length}`)
       lastKey = key
       lastCoarse = coarse
       lastPublishAt = now
     }
     const curError = await read($, scanErrorAtom)
     if ((error ?? null) !== curError) {
-      diagLine(now, `write scanError: ${error ?? 'null'}`)
       await update($, scanErrorAtom, () => error ?? null)
     }
     // the tick only while a text surface draws the pane (the TICK GUARD, ui.tsx): on the desktop
     // any write of ours redraws the pane, so an idle desktop office must see no write at all
     if (textSurfaceActive(now)) {
-      diagLine(now, 'write tick')
       await update($, tickAtom, () => now)
     }
     // the title follows what the pane SHOWS (the published payload), so it never changes between two calm publishes
@@ -327,7 +302,6 @@ export async function poll($: EngineInterface): Promise<void> {
       // An open id is retitled in place (never a second instance); no `focus`.
       lastRun = run
       const prefs = await read($, prefsAtom)
-      diagLine(now, `retitle run=${run}`)
       await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, run) }).catch(() => undefined)
     }
   } catch (err) {

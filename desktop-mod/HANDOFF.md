@@ -1,6 +1,26 @@
 # HANDOFF — תיאטרון הסוכנים כמוד לאפליקציית הדסקטופ
 
-עודכן: 2026-10-10 05:34 · ענף: `feat/desktop-mod` · ריפו: `C:\Users\asafa\agent-theater` (GitHub: asafabram-ship-it/claude-theater)
+עודכן: 2026-10-10 06:12 · ענף: `feat/desktop-mod` · ריפו: `C:\Users\asafa\agent-theater` (GitHub: asafabram-ship-it/claude-theater)
+
+## נקודת שמירה 2026-10-10 06:12 - שלב 0: מוד הבדיקה בנוי ונטען, הבדיקה החיה ממתינה לאסף (גובר על כל מה שמתחתיו)
+
+**סשן:** מבצע (Fable 5.1, המשך של סשן התכנון 69e31b17; SDD לפי התוכנית, סוכן טרי לכל משימה + סקירה). המוד הראשי `agent-theater` עדיין **כבוי** (`CLAUDE_CODE_PLUGIN_DIRS` הוסר).
+
+**מצב (נכון ל-06:12; `git log -1` = `13faed2` לפני הקומיט של נקודת שמירה זו):**
+- נקודת השמירה של 05:34 קומטה ונדחפה (`13faed2`).
+- **Task 0.1 הושלם** (סקירה + סבב תיקון אחד, נקי): מוד הבדיקה `theater-probe` ב-`C:\Users\asafa\.claude\dev-mods\87c79db4-401e-4363-a35f-1c75f8fa5a35\theater-probe\` (4 קבצים: `.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/register.tsx`, `hooks/probe-client.tsx`). `plugin validate` עובר (אזהרה על `author` בלבד), `tsc` נקי (tsconfig ב-`C:\Users\asafa\AppData\Local\Temp\probe-tsc`). אסף אישר "Enable for this session"; המוד נטען בסשן הזה והיומן `C:\Users\asafa\.claude\theater-probe.log` כבר מקבל שורת `invalidate seq=…` כל 2 שניות.
+- **סטייה מהתוכנית:** התוכנית אמרה `dev-mods\theater-probe`; בפועל המנוע טוען מודים חמים מתיקייה לכל סשן (`dev-mods\<session-id>\`), ולכן ה-probe יושב בתיקיית הסשן הזה. בסשן חדש יש להעתיק אותו לתיקיית הסשן החדש (הסקיל `plugin-authoring` מדפיס את הנתיב).
+- לדג'ר SDD (לא בגיט, git-ignored): `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md`; דוח המימוש והסקירות: `task-0.1-report.md` שם.
+- מכסה: 86% מחלון 5 השעות ב-06:10 (איפוס 09:20 מקומי) → נקודת שמירה זו.
+
+**מה השתנה ב-probe לעומת הקוד שבתוכנית (סבב התיקון):**
+- `move` של העכבר נשלח (post) לכל היותר פעם בטיק של 250ms ולעולם לא באותו טיק של `down`/`up`/`press` - כי `surface.post` הוא אחד לפריים ומאוחר מחליף מוקדם. לכן את "Press me" לוחצים **בעכבר**, לא במקש `p`.
+- היומן: חותמת זמן + מספר רץ `#n` בזמן הקריאה; כתיבה מרוכזת כל 250ms דרך שרשרת promise אחת; `invalidate seq=… hot=… offset=…` נרשם לפני כל ציור יזום (טיימר/גלילה). **בדיקה 4 מוגדרת מחדש:** אין שורת `render` בין `message press` לשורת ה-`invalidate` הבאה.
+- Input: `value` מבוקר - הטקסט נשמר במצב המקומי של המודול; `onSubmit` חובה בטיפוסים - נוסף post `submit`. ל-Text אין `key` - הוסר. תשובת `{ props }` ללחיצה משתמשת ב-rows/columns האחרונים שצוירו (לא 20/60 קבועים).
+
+**פתוח:** Task 0.2 - 7 הבדיקות מול המסך (אפיון סעיף 12 / תוכנית Task 0.2). התוצאות ייכתבו כאן בסעיף `## שלב 0 - תוצאות הבדיקה החיה (<תאריך>)` ויקומטו (`docs(mod): phase 0 probe results`). ההכרעה: 1-3 עוברות → שלבים 1-2; 1 נכשל ו-4 עובר → ערוץ ה-pull (Task 2.5 שלב 7); 1 ו-4 נכשלים → עצירה ודיון מחדש.
+
+**הבא:** בסשן הזה - `/theater-probe` ואז בדיקה 1. בסשן חדש - פרומפט ההמשך `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md` (גרסת 06:12; כולל העתקת ה-probe לתיקיית הסשן).
 
 ## נקודת שמירה 2026-10-10 05:34 - תכנון מחדש הושלם, ביצוע טרם החל (גובר על כל מה שמתחתיו)
 

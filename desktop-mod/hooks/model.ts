@@ -134,8 +134,8 @@ export function clipResult(text: string): { result: string; truncated: boolean }
 // so atoms are NOT exported from here. Each module that touches state declares
 // its own, e.g.
 //   const prefsAtom = atom({ plugin: 'agent-theater', key: 'prefs' } as const, DEFAULT_PREFS)
-// using these defaults (the contract's keys: payload, live, sessionId, prefs,
-// view, paneOpened, scanError — see ../types/index.d.ts).
+// using these defaults (the contract's keys: payload, sessionId, prefs, view,
+// paneOpened, scanError, tick — see ../types/index.d.ts).
 // ---------------------------------------------------------------------------
 
 export const EMPTY_PAYLOAD: TheaterPayload = {
@@ -145,6 +145,7 @@ export const EMPTY_PAYLOAD: TheaterPayload = {
   oversized: 0,
   scanned_ms: 0,
   demo: false,
+  stars: {},
 }
 
 export const DEFAULT_PREFS: TheaterPrefs = { lang: 'he', muted: false, showDone: false, pins: [] }
@@ -154,7 +155,6 @@ export const DEFAULT_VIEW: TheaterView = {
   search: '',
   helpOpen: false,
   demo: false,
-  justFinished: {},
   focusIndex: -1,
 }
 

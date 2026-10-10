@@ -23,10 +23,15 @@
 //                   state write redraws the pane and a redraw re-creates the
 //                   desktop's Svg frames), scanError only on change, `tick`
 //                   every poll (read by the text surfaces alone, for their
-//                   mm:ss) (+ the "🟢 N · " working count in the pane title,
-//                   PAGE's document.title, only when N changes); the ⭐/chime
-//                   "finish beat" runs in ui.tsx's render hook (a plugin never
-//                   sees its own state.set).
+//                   mm:ss). ONE PUBLISH PER POLL (spec §6.1): the ⭐/chime
+//                   "finish beat" (PAGE updateWS) runs HERE, in the poll —
+//                   starsOf (ui.tsx) stamps the ids just finished into the
+//                   payload it publishes (`stars`) and the toast + chime fire
+//                   for the ones the office shows — and the "🟢 N · " working
+//                   count in the pane title (PAGE's document.title, only when N
+//                   changes) goes out in the same tick BEFORE the write, so a
+//                   finish is the one $.state write of the publish (no deferred
+//                   `view` write; a plugin never sees its own state.set).
 //                   While the pane is closed (never opened, or closed by the
 //                   person) the files are NOT scanned — PAGE polled only while
 //                   the panel was visible — only the live map is aged so the
@@ -69,10 +74,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
+import { I18N } from './i18n'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
-import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs } from './model'
+import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs, type TheaterStatus } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { paneTitle, registerUi, renderKey, textSurfaceActive, workingCount } from './ui'
+import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -228,6 +234,26 @@ export const CALM_MS = 8_000
 /** Even an arrival or a finish waits this long after the previous publish, so a burst of them is ONE redraw. */
 export const SETTLE_MS = 5_000
 
+// The finish beat's memory (PAGE updateWS; a hot reload only loses a beat, as PAGE's reload does).
+/** PAGE prevStatus: agent id → last status seen (starsOf keeps it). */
+const prevStatus: Record<string, TheaterStatus> = {}
+/** The ⭐ map the last poll computed, published or not (a publish held back by SETTLE_MS must not lose a star). */
+let pendingStars: Record<string, number> = {}
+/** PAGE ding(): two chimes within this many ms are one (storm guard). */
+const DING_GAP_MS = 400
+/** The finish chime, the plugin's own file. */
+const DING_ASSET = 'sounds/done.wav'
+/** PAGE lastDing: the storm guard. */
+let lastDing = 0
+
+/** PAGE ding(): the finish chime, unless muted; two within DING_GAP_MS are one. Never rejects. */
+async function ding($: EngineInterface, muted: boolean, now: number): Promise<void> {
+  if (muted) return
+  if (now - lastDing < DING_GAP_MS) return
+  lastDing = now
+  await $.audio.play({ asset: DING_ASSET }).catch(() => undefined)
+}
+
 /**
  * One poll. Pane up: scan the files (or the demo cast), age + merge this
  * session's live agents, publish, retitle. Pane down: only age the live map
@@ -263,25 +289,67 @@ export async function poll($: EngineInterface): Promise<void> {
     if (!scanned) return
     const { error, ...payload } = scanned
     const merged = mergeLive(payload, aged, sessionId, now)
+    // THE FINISH BEAT (PAGE updateWS), here in the poll — not in the render — so a finish is the ONE
+    // write below: the ⭐ ids ride the payload (`stars`: starsOf stamps the finishes just seen `now` and
+    // drops the expired), the toast + chime fire now. Only an agent the office SHOWS is celebrated (its
+    // room shows finished, it matches the search, its chat is open — officeView, as the pane draws it);
+    // a hidden finish is remembered (prevStatus) and never celebrated later. `prefs` is read only on a
+    // finish or a retitle (the pane's render reads it once per draw; the tests count redraws by it).
+    const published = await read($, payloadAtom)
+    // (a hot reload emptied the module's maps: the published payload still has the stars; a publish held
+    // back by SETTLE_MS left them in pendingStars)
+    const prevStars = { ...published.stars, ...pendingStars }
+    const stars = starsOf(prevStatus, merged.agents, prevStars, now)
+    const fresh = Object.keys(stars).filter(id => !(id in prevStars))
+    let prefs: Prefs | undefined
+    if (fresh.length > 0) {
+      prefs = await read($, prefsAtom)
+      const roomDone = parseRoomDone(await $.store.get(STORE_ROOM_DONE_KEY).catch(() => undefined))
+      const shown = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins).visible.map(a => a.id))
+      const L = I18N[prefs.lang]
+      let celebrated = false
+      for (const id of fresh) {
+        const a = merged.agents.find(x => x.id === id)
+        if (a === undefined || !shown.has(id)) {
+          delete stars[id]
+          continue
+        }
+        $.ui.toast(`${cardName(a, prefs.lang)} — ${L.finishedToast}`)
+        celebrated = true
+      }
+      if (celebrated) void ding($, prefs.muted, now)
+    }
+    pendingStars = stars
+    const office: Payload = { ...merged, stars }
     // THE FLICKER GUARD. Every $.state.set redraws the pane, and a redraw
     // re-creates the desktop's interactive Svg frames (their animations restart:
     // the flicker), so the office is published ONLY when what it draws changed:
     // renderKey (ui.tsx) projects a payload at `now` onto what is drawn —
-    // minute-resolution clocks, the ⭐ ids still inside their window (the beat's
-    // view.justFinished), never scanned_ms or raw timestamps. The text
-    // surfaces' mm:ss tick from `tick` instead, which the desktop never reads.
-    const key = renderKey(merged, now, view.justFinished)
+    // minute-resolution clocks, the ⭐ ids still inside their window (`stars`),
+    // never scanned_ms or raw timestamps. The text surfaces' mm:ss tick from
+    // `tick` instead, which the desktop never reads.
+    const key = renderKey(office, now)
     // THE CALM GUARD: on the desktop EVERY redraw of the pane blinks (even a pane of plain Text), so
     // the moment-to-moment activity (tool / phase, the minute) is batched: published at most once
     // per CALM_MS. What matters at once (an agent arriving, finishing, failing, a ⭐) is in the
     // coarse key and publishes once SETTLE_MS has passed since the previous publish (a burst = one redraw).
-    const coarse = renderKey(merged, now, view.justFinished, true)
+    const coarse = renderKey(office, now, true)
     const since = now - lastPublishAt
     const due = (coarse !== lastCoarse && since >= SETTLE_MS) || since >= CALM_MS
     // (the second test, held to the same SETTLE_MS: what is IN state differs in substance — a reload, a hook beneath)
-    if ((key !== lastKey && due) || ((lastCoarse === undefined || since >= SETTLE_MS) && renderKey(await read($, payloadAtom), now, view.justFinished, true) !== coarse)) {
+    if ((key !== lastKey && due) || ((lastCoarse === undefined || since >= SETTLE_MS) && renderKey(published, now, true) !== coarse)) {
+      // THE RETITLE first, in the same tick (spec §6.1): the title follows what the pane is about to show
+      // (PAGE: document.title = (run ? "🟢 N · " : "") + docTitle), and the engine coalesces the redraws of
+      // one tick, so the $.ui.open and the write below are ONE redraw — and the title never changes between
+      // two calm publishes. An open id is retitled in place (never a second instance); no `focus`.
+      const run = workingCount(office)
+      if (run !== lastRun) {
+        lastRun = run
+        prefs ??= await read($, prefsAtom)
+        await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, run) }).catch(() => undefined)
+      }
       // Never roll the office back: a slower, older scan loses to a newer publish.
-      await update($, payloadAtom, cur => (cur.scanned_ms > merged.scanned_ms ? cur : merged))
+      await update($, payloadAtom, cur => (cur.scanned_ms > office.scanned_ms ? cur : office))
       lastKey = key
       lastCoarse = coarse
       lastPublishAt = now
@@ -294,15 +362,6 @@ export async function poll($: EngineInterface): Promise<void> {
     // any write of ours redraws the pane, so an idle desktop office must see no write at all
     if (textSurfaceActive(now)) {
       await update($, tickAtom, () => now)
-    }
-    // the title follows what the pane SHOWS (the published payload), so it never changes between two calm publishes
-    const run = workingCount(await read($, payloadAtom))
-    if (run !== lastRun) {
-      // PAGE: document.title = (run ? "🟢 N · " : "") + docTitle, on every poll.
-      // An open id is retitled in place (never a second instance); no `focus`.
-      lastRun = run
-      const prefs = await read($, prefsAtom)
-      await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, run) }).catch(() => undefined)
     }
   } catch (err) {
     await update($, scanErrorAtom, () => (err instanceof Error ? err.message : String(err))).catch(() => undefined)

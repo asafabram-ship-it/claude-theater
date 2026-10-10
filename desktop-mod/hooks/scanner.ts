@@ -1667,6 +1667,7 @@ async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Pay
     oversized: oversizedFiles.size,
     scanned_ms: now,
     demo: false,
+    stars: {}, // the ⭐ stamps are the poll's (register.tsx, ui.tsx starsOf), never the scan's
   }
 }
 
@@ -1847,7 +1848,7 @@ export function demoPayload(now: number, phase?: number): Payload {
     { start_offset: 300, is_session: true, mtime_offset: 14, model: 'claude-opus-5-5' }))
   resolvePersonas(agents)
   sortAgents(agents)
-  return { agents, versions: ['2.1.0'], skipped: 0, oversized: 0, scanned_ms: now, demo: true }
+  return { agents, versions: ['2.1.0'], skipped: 0, oversized: 0, scanned_ms: now, demo: true, stars: {} }
 }
 
 // RESULT_CHAR_LIMIT is applied through clipResult (model.ts); re-exported so

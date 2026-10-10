@@ -99,6 +99,14 @@ export type TheaterPayload = {
   scanned_ms: number
   /** True when the payload is the synthetic demo office, never the real files. */
   demo: boolean
+  /**
+   * The ⭐ stars: agent id → when the office first saw it finish (the poll's
+   * clock, ms), kept while inside the JUST_FINISHED window and pruned by the
+   * poll. Stamped by register.tsx (ui.tsx starsOf) on the way to $.state — the
+   * scanner and the demo emit `{}` — so a finish costs the one write the
+   * publish makes (no deferred `view` write); the pane only draws them.
+   */
+  stars: Record<string, number>
 }
 
 /**
@@ -153,8 +161,6 @@ export type TheaterView = {
   helpOpen: boolean
   /** Demo mode on (demoPayload instead of the scan). */
   demo: boolean
-  /** Agent id → end_ms of agents that finished within the ⭐ window (drives the star and the confetti). */
-  justFinished: Record<string, number>
   /** Index of the keyboard-focused card, for the arrow-key walk; -1 when none. */
   focusIndex: number
 }
@@ -162,10 +168,8 @@ export type TheaterView = {
 declare module 'claude-code' {
   interface PluginState {
     'agent-theater': {
-      /** The last scan, as the office draws it (after live merge). */
+      /** The last scan, as the office draws it (after the live merge, the ⭐ stars stamped). */
       payload: TheaterPayload
-      /** The current session's subagents, keyed by agentId, from the engine's events. */
-      live: Record<string, TheaterLiveAgent>
       /** This session's id ("" until known), so live agents land in the right room. */
       sessionId: string
       prefs: TheaterPrefs

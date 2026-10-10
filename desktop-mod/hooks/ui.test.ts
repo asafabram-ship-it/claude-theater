@@ -1,11 +1,13 @@
 // ui.tsx: the office pane. Pure ports first (fmt, elapsed, search, room order,
 // the tri-state room toggle, the finish test, the demo office), then the pane
 // driven through the engine: session.start starts the poll on a mocked clock,
-// a test hook beneath the plugin rewrites each payload write into a fixture,
+// a test hook beneath the plugin rewrites each payload write into a fixture
+// (or, with in-memory files, the scanner's own office is published: the finish
+// beat is the poll's, over the SCAN, so a finish is driven from the files),
 // and the pane is mounted and acted on by key on the terminal and the desktop
 // (and drawn on mobile/vscode, which lack Input / Client).
 
-import type { Agent } from './model'
+import type { Agent, Payload } from './model'
 import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
@@ -15,10 +17,10 @@ import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
 import { demoPayload } from './scanner'
 import {
-  CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, detectFinishes, emptyKind, fmt, gridFor,
-  headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, pruneJustFinished, roomShowsDone, roomStats, toggledRoomDone, workingCount,
+  CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, emptyKind, fmt, gridFor,
+  headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   TILE_MAX_PER_ROW, minuteClock, renderKey, roomCols, tilesPerRow,
-  splitSentence,
+  splitSentence, starsOf,
 } from './ui'
 import { ROOM_COLS, ROW_H, ROW_H_TITLED, roomWidth } from './office-svg'
 
@@ -121,18 +123,22 @@ test('room "show finished" is tri-state: an override equal to the global toggle 
   expect(rd).toEqual({ [SA]: false })
 })
 
-test('detectFinishes fires once, only for a shown card, never on first sight, and prunes', () => {
+test('starsOf (the finish beat\'s ⭐ stamps): fires once, never on first sight, keeps a live star, drops an expired one, prunes prevStatus to the office', () => {
   const prev: Record<string, Agent['status']> = {}
   const a = agent({ id: 'a' })
-  expect(detectFinishes(prev, [a], new Set(['a']))).toEqual([])
+  expect(starsOf(prev, [a], {}, T0)).toEqual({}) // first sight: remembered, no star
+  expect(prev.a).toBe('running')
   const done = { ...a, status: 'done' as const }
-  expect(detectFinishes(prev, [done], new Set()).map(x => x.id)).toEqual([])   // hidden: no beat, but remembered
+  expect(starsOf(prev, [done], {}, T0 + 1000)).toEqual({ a: T0 + 1000 }) // running → done: ⭐ stamped now
   expect(prev.a).toBe('done')
+  expect(starsOf(prev, [done], { a: T0 + 1000 }, T0 + 2000)).toEqual({ a: T0 + 1000 }) // once: the stamp holds
+  // the window ends: an expired star is dropped (its agent's too, whether or not it is still in the office)
+  expect(starsOf(prev, [done], { a: T0 + 1000, gone: T0 - JUST_FINISHED_MS }, T0 + 1000 + JUST_FINISHED_MS)).toEqual({})
+  expect(starsOf(prev, [done], { a: T0 + 1000 }, T0 + 1000 + JUST_FINISHED_MS - 1)).toEqual({ a: T0 + 1000 })
   const prev2: Record<string, Agent['status']> = { a: 'running', gone: 'running' }
-  expect(detectFinishes(prev2, [done], new Set(['a'])).map(x => x.id)).toEqual(['a'])
-  expect(prev2.gone).toBeUndefined()
-  expect(detectFinishes(prev2, [done], new Set(['a']))).toEqual([])
-  expect(pruneJustFinished({ a: T0, b: T0 - JUST_FINISHED_MS - 1 }, T0 + 1)).toEqual({ a: T0 })
+  expect(starsOf(prev2, [done], {}, T0)).toEqual({ a: T0 })
+  expect(prev2.gone).toBeUndefined() // pruned to the office's ids
+  expect(starsOf(prev2, [done], { a: T0 }, T0 + 1)).toEqual({ a: T0 })
 })
 
 test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop, two rooms led by their topics, distinct personas, sorted running/stale/done', () => {
@@ -229,8 +235,12 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
     writes: { payload: 0, scanError: 0, view: 0, tick: 0 },
     /** $.fs.write calls seen beneath the plugin: none is expected (the diagnostics log is gone). */
     fsWrites: 0,
-    /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle), so it counts the redraws. */
+    /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle or a finish), so it counts the redraws. */
     prefsReads: 0,
+    /** The `payload` the plugin last read back from $.state (a state.get tap): what the pane draws, ⭐ stars included. */
+    payload: undefined as Payload | undefined,
+    /** The order of the plugin's calls that redraw: 'open' (a retitle), 'payload' / 'view' (a $.state write). */
+    seq: [] as string[],
   }
   const clock = mock.clock(on, { now: T0 })
   // an in-memory store the test can read back (mock.store would hook store.set
@@ -293,18 +303,25 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   on('fs.write', ($, e, next) => { captured.fsWrites += 1; return next(e) })
   on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
-  on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); return { value: { isPlaced: true as const } } })
+  on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); captured.seq.push('open'); return { value: { isPlaced: true as const } } })
   // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible)
   on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
   on('ui.focus', () => ({}))
   // the poll's payload write becomes the fixture of the moment (unless the scanner reads `files`: then it is counted and kept)
+  // (the ⭐ stars the poll stamped ride the payload: the rewrite keeps them)
   on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) => {
     captured.writes.payload += 1
-    return files ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now() } })
+    captured.seq.push('payload')
+    return files ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now(), stars: (e.value as Payload).stars } })
+  })
+  on('state.get', { plugin: 'agent-theater', key: 'payload' }, async ($, e, next) => {
+    const got = await next(e)
+    captured.payload = (got as { value?: { value?: Payload } }).value?.value
+    return got
   })
   on('state.get', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.prefsReads += 1; return next(e) })
   on('state.set', { plugin: 'agent-theater', key: 'scanError' }, ($, e, next) => { captured.writes.scanError += 1; return next(e) })
-  on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; return next(e) })
+  on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; captured.seq.push('view'); return next(e) })
   on('state.set', { plugin: 'agent-theater', key: 'tick' }, ($, e, next) => { captured.writes.tick += 1; return next(e) })
   return { captured, clock }
 }
@@ -314,6 +331,32 @@ const QHOME = 'C:/Users/test'
 const QPROJ = `${QHOME}/.claude/projects/-C-x`
 const QSESS = 'sess-quiet-0001'
 const Q1 = `${QPROJ}/${QSESS}/subagents/agent-q1.jsonl`
+const Q2 = `${QPROJ}/${QSESS}/subagents/agent-q2.jsonl`
+const Q3 = `${QPROJ}/${QSESS}/subagents/agent-q3.jsonl`
+
+/** A subagent transcript mid-tool (one prompt, a Grep pending), shaped as quietOffice's q1. */
+function subagentMidTool(id: string, prompt: string, mtimeMs: number): { text: string; mtimeMs: number } {
+  const rec = (o: Record<string, unknown>) => JSON.stringify(o)
+  return {
+    text: [
+      rec({ type: 'user', agentId: id, sessionId: QSESS, timestamp: '2026-06-01T10:00:00.000Z', cwd: 'C:/x', version: '2.1.0', message: { content: prompt } }),
+      rec({ type: 'assistant', timestamp: '2026-06-01T10:00:05.000Z', version: '2.1.0', message: { content: [{ type: 'tool_use', name: 'Grep', input: { pattern: 'test' } }] } }),
+    ].join('\n') + '\n',
+    mtimeMs,
+  }
+}
+
+/** The agent of `path` finishes at `now`: its pending tool returns and it answers with an end_turn (the scanner's done). */
+function finishIn(files: MemFiles, path: string, now: number, answer: string): void {
+  const f = files.get(path)!
+  files.set(path, {
+    text: f.text +
+      JSON.stringify({ type: 'user', timestamp: '2026-06-01T10:00:08.000Z', version: '2.1.0', message: { content: [{ type: 'tool_result', content: 'ok' }] } }) + '\n' +
+      JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T10:00:09.000Z', version: '2.1.0', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: answer }] } }) + '\n',
+    mtimeMs: now,
+  })
+}
+
 function quietOffice(now: number): MemFiles {
   const rec = (o: Record<string, unknown>) => JSON.stringify(o)
   const files: MemFiles = new Map()
@@ -335,7 +378,7 @@ function quietOffice(now: number): MemFiles {
     mtimeMs: now - 10_000,
   })
   // q2: mid-tool (Bash) on Opus
-  files.set(`${QPROJ}/${QSESS}/subagents/agent-q2.jsonl`, {
+  files.set(Q2, {
     text: [
       rec({ type: 'user', agentId: 'q2', sessionId: QSESS, timestamp: '2026-06-01T10:00:00.000Z', cwd: 'C:/x', version: '2.1.0', message: { content: 'Run the tests.' } }),
       rec({ type: 'assistant', timestamp: '2026-06-01T10:00:05.000Z', version: '2.1.0', message: { model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pytest' } }] } }),
@@ -580,44 +623,54 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
   }
 })
 
-test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast and the chime (unless muted)', async ($, on) => {
-  let agents = fixture()
-  const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: true, pins: [] } })
+test('the finish beat (the poll\'s, over the scanned office): a shown agent that turns done gets ⭐, confetti, a toast and the chime (unless muted); a hidden finish is never celebrated', async ($, on) => {
+  const files = quietOffice(T0)
+  files.set(Q3, subagentMidTool('q3', 'Count the tests.', T0 - 9000)) // a third subagent, for the hidden finish
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: true, pins: [] } }, files)
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
-  // a1 finishes
-  agents = fixture().map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
-  // a finish settles: it is published once SETTLE_MS passed since the previous publish (a burst = one redraw)
+  // q1 finishes; a finish settles: it is published once SETTLE_MS passed since the previous publish (a burst = one redraw)
+  finishIn(files, Q1, clock.now(), 'Found 12 TODOs; listed them in TODO.md.')
   await clock.advance(SETTLE_MS)
-  expect(captured.toasts).toEqual(['map session-token validation — סיים'])
+  const q1 = captured.payload?.agents.find(a => a.id === 'q1')
+  expect(q1?.status).toBe('done')
+  expect(captured.toasts).toEqual([`${cardName(q1!, 'he')} — סיים`])
   expect(captured.plays).toBe(1)
+  expect(captured.payload?.stars).toEqual({ q1: clock.now() }) // the ⭐ rides the payload, stamped by the poll's clock
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
   const burst = await ui.find({ type: 'Client' })
-  expect(burst?.key).toBe('confetti:a1')
+  expect(burst?.key).toBe('confetti:q1')
   await ui.advance(90 * 12 + 10)
-  expect((await ui.find({ in: 'confetti:a1', type: 'Text' }))?.text).toMatch(/[🎉✨🎊⭐✅]/)
+  expect((await ui.find({ in: 'confetti:q1', type: 'Text' }))?.text).toMatch(/[🎉✨🎊⭐✅]/)
   // no replay on the next poll; the star outlives the burst and dies after the window
   await clock.advance(POLL_MS)
   expect(captured.plays).toBe(1)
+  expect(captured.toasts).toHaveLength(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
   await clock.advance(JUST_FINISHED_MS + POLL_MS)
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
+  expect(captured.payload?.stars).toEqual({})
   // muted: toast but no chime
   await ui.press({ key: 'mute' })
-  agents = agents.map(a => (a.id === 'b1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'triaged' } : a))
+  finishIn(files, Q2, clock.now(), 'All green.')
   await clock.advance(SETTLE_MS)
-  expect(captured.toasts.length).toBe(2)
+  expect(captured.toasts).toHaveLength(2)
   expect(captured.plays).toBe(1)
-  // a hidden finish (room hides its finished) is remembered, never celebrated later
+  const starQ2 = clock.now()
+  expect(captured.payload?.stars).toEqual({ q2: starQ2 })
+  // a hidden finish (finished are hidden) is remembered, never celebrated later — not even once they show
   await ui.press({ key: 'showDone' })
-  agents = agents.map(a => (a.id === 'lead-a' ? { ...a, status: 'done' as const, end_ms: clock.now() } : a))
+  finishIn(files, Q3, clock.now(), '41 tests.')
   await clock.advance(POLL_MS)
+  expect(captured.payload?.agents.find(a => a.id === 'q3')?.status).toBe('done')
+  expect(captured.payload?.stars).toEqual({ q2: starQ2 }) // q2's star still inside its window; none for q3
   await ui.press({ key: 'showDone' })
   await clock.advance(POLL_MS)
-  expect(captured.toasts.length).toBe(2)
+  expect(captured.toasts).toHaveLength(2)
+  expect(captured.payload?.stars).toEqual({}) // q2's window ended; q3 never starred
   await ui.unmount()
 })
 
@@ -715,22 +768,13 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   expect((await ui.find({ key: 'open:newbie' }))?.text).toMatch(/^3 /)
   await clock.advance(POLL_MS)
   expect((await tileOf(ui, 'newbie'))?.tile.includes(' entering')).toBe(false)
-  // a finish: toast + chime as before, ⭐ + hop (one-shot) in the tile, and NO confetti Client on the desktop
+  // a finish: the tile turns done, and NO confetti Client on the desktop (the ⭐ + hop + toast + chime are the
+  // poll's beat over a SCANNED office — this fixture enters beneath the poll — see THE FLICKER GUARD)
   agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
   await ui.press({ key: 'showDone' })
   await clock.advance(POLL_MS)
-  expect(captured.toasts).toEqual(['map session-token validation — סיים'])
-  expect(captured.plays).toBe(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/ recent justdone/)
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws done/)
-  // the next redraw keeps the ⭐ (static) and drops the one-shot hop
-  await clock.advance(POLL_MS) // (SETTLE_MS has passed since the finish was published: the next poll redraws, the ⭐ still inside its window)
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
-  expect((await tileOf(ui, 'a1'))?.tile.includes('justdone')).toBe(false)
-  await clock.advance(JUST_FINISHED_MS + POLL_MS)
-  expect((await tileOf(ui, 'a1'))?.tile.includes('⭐')).toBe(false)
   await ui.unmount()
 })
 
@@ -741,8 +785,8 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await clock.advance(POLL_MS) // the first poll scans the files and publishes
   expect(captured.writes.payload).toBe(1)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  // the pane's render reads `prefs` once per draw; the only other reader is the poll's retitle (one read per
-  // $.ui.open it makes, captured in `opens`) — so this counts the redraws
+  // the pane's render reads `prefs` once per draw; the only other reader is the poll, on a retitle (one read
+  // per $.ui.open it makes, captured in `opens`; a finish in the same poll shares it) — so this counts the redraws
   const renders = () => captured.prefsReads - captured.opens.length
   // the office as scanned: the lead on Fable (its model read from the conversation's tail), q2 on Opus, q1 unknown
   expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="pillt m-fable"[^>]*>Fable 5\.1</)
@@ -790,7 +834,9 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect(renderKey(sample, T0)).toBe(renderKey({ ...sample, scanned_ms: 2, versions: ['9.9.9'], skipped: 4 }, T0 + POLL_MS))
   expect(renderKey(sample, T0)).not.toBe(renderKey({ ...sample, agents: sample.agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a)) }, T0))
   expect(renderKey(sample, T0)).not.toBe(renderKey(sample, T0 + 60_000))
-  expect(renderKey(sample, T0, { a2: T0 })).not.toBe(renderKey(sample, T0, {}))
+  // the ⭐ ride the payload: a live star keys differently, an expired one keys as none
+  expect(renderKey({ ...sample, stars: { a2: T0 } }, T0)).not.toBe(renderKey(sample, T0))
+  expect(renderKey({ ...sample, stars: { a2: T0 - JUST_FINISHED_MS } }, T0)).toBe(renderKey(sample, T0))
   // a VISIBLE change: q1 dispatches Write → exactly one publish, one desktop redraw, the tile recoloured
   const q1 = files.get(Q1)!
   files.set(Q1, {
@@ -824,6 +870,47 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 3)
   expect(renders()).toBe(desktop1 + 3)
+  // ONE PUBLISH PER POLL: a finish is ONE write that redraws — the ⭐ rides the payload (`stars`), nothing writes
+  // `view` (no deferred beat), and the retitle (2 → 1 working) goes out in the same tick BEFORE the write.
+  // (A finish is celebrated only on a card the office shows: finished shown first — a press, one redraw.)
+  await ui.press({ key: 'showDone' })
+  const writes1 = { ...captured.writes }
+  const opens1 = captured.opens.length
+  const desktop2 = renders()
+  finishIn(files, Q1, clock.now(), 'Found 12 TODOs; listed them in TODO.md.')
+  await clock.advance(POLL_MS)
+  expect(captured.writes.view).toBe(writes1.view) // no view write: the star is in the payload
+  expect(captured.writes.payload).toBe(writes1.payload + 1) // the one publish
+  expect(captured.writes.scanError).toBe(writes1.scanError)
+  expect(captured.payload?.stars).toEqual({ q1: clock.now() }) // ⭐ q1, stamped by the poll's clock at the finish
+  expect(captured.opens.length).toBe(opens1 + 1)
+  expect(captured.opens[captured.opens.length - 1]).toBe('🟢 1 · 🎭 התיאטרון') // retitled: q2 alone works now
+  expect(captured.seq.slice(-2)).toEqual(['open', 'payload']) // ... in the same tick, BEFORE the write
+  expect(renders()).toBe(desktop2 + 1) // one redraw (the beat's prefs read is the retitle's)
+  expect(captured.toasts).toHaveLength(1)
+  expect(captured.plays).toBe(1)
+  // the tile: ⭐ + the hop (one-shot) + done; no confetti Client on the desktop (the hop is its celebration)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/⭐/)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/ recent justdone/)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/class="ws done/)
+  expect(await ui.find({ type: 'Client' })).toBeUndefined()
+  // quiet: the ⭐ holds inside its window, nothing is written or redrawn (so the one-shot hop is still drawn:
+  // it goes with the next redraw, the star's expiry below)
+  await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(writes1.payload + 1)
+  expect(renders()).toBe(desktop2 + 1)
+  expect((await tileOf(ui, 'q1'))?.tile).toMatch(/⭐/)
+  // the window ends: ONE publish drops the star (the stars are pruned in the payload), then quiet again
+  await clock.advance(JUST_FINISHED_MS)
+  expect(captured.writes.payload).toBe(writes1.payload + 2)
+  expect(renders()).toBe(desktop2 + 2)
+  expect(captured.payload?.stars).toEqual({})
+  expect((await tileOf(ui, 'q1'))?.tile.includes('⭐')).toBe(false)
+  expect(captured.writes.view).toBe(writes1.view)
+  expect(captured.toasts).toHaveLength(1)
+  await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(writes1.payload + 2)
+  expect(renders()).toBe(desktop2 + 2)
   await ui.unmount()
 })
 

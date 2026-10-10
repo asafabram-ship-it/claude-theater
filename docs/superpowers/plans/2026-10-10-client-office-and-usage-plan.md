@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**סטטוס:** שלב 1 (Tasks 1.1-1.4) הושלם 2026-10-10 11:09 (`49c328d`, 91 בדיקות); Task 0.1 הושלם 06:12 (ה-probe בתיקיית הטעינה החמה של הסשן, `dev-mods\<session-id>\theater-probe`); Task 0.2 (הבדיקה החיה) ו-Task 1.5 (מדידה) ממתינים לאסף; 3 הכרעות תוכנית פתוחות (TAIL_SWITCH/Seek, דגל DIAG, housekeeping של ה-beat) - ראו HANDOFF 11:09. פרומפט ההמשך: `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
+**סטטוס:** שלב 1 (Tasks 1.1-1.4 + 1.4b) הושלם 2026-10-10 13:15 (`4bc5b6e`, 93 בדיקות); ההכרעות של אסף נרשמו באפיון סעיף 2 פריטים 7-9 (Task 1.2b מותנה במדידה; מחיקה מלאה של יומן האבחון; Task 1.4b בוצע). Task 0.1 הושלם 06:12 (ה-probe בתיקיית הטעינה החמה של הסשן, `dev-mods\<session-id>\theater-probe`); Task 0.2 (הבדיקה החיה) ו-Task 1.5 (מדידה) ממתינים לאסף - ראו HANDOFF 13:15. פרומפט ההמשך: `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
 
 **Goal:** On the Claude Desktop app, draw the Theater office inside ONE `Client` surface module so that data updates and scrolling never blink, characters are clickable, the scan stops slowing the machine, and the prompt footer shows the five-hour rate-limit meter.
 

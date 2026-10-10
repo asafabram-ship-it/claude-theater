@@ -33,7 +33,8 @@ export type Prefs = TheaterPrefs
 export type View = TheaterView
 
 // ---------------------------------------------------------------------------
-// Constants (claude_theater.py lines 39-58, 266-267, 658) — same values.
+// Constants (claude_theater.py lines 39-58, 266-267, 658) — same values, except the
+// two phase-1 cadence constants (GLOB_TTL_SEC, POLL_MS: the scan was slowing the machine).
 // ---------------------------------------------------------------------------
 
 /**
@@ -54,8 +55,8 @@ export const MAX_AGE_MIN = 180
 export const RUNNING_STALE_SEC = 90
 /** A mid-tool/mid-turn agent silent longer than this is treated as hung and may go idle. */
 export const IN_FLIGHT_MAX_SEC = 1200
-/** Directory listings are cached this long between scans (the Python _throttled_glob). */
-export const GLOB_TTL_SEC = 6
+/** Directory listings are reused this long between scans: 30 s (was the Python _throttled_glob's 6 s). */
+export const GLOB_TTL_SEC = 30
 /** Stop reasons that mean "the turn continues", never "done". */
 export const CONTINUATION_STOP_REASONS: readonly string[] = ['tool_use', 'pause_turn']
 /** A result longer than this is cut and `truncated` set. */
@@ -66,8 +67,8 @@ export const KNOWN_CC_VERSIONS: readonly string[] = ['2.1']
 export const TAIL_MAX_BYTES = 200_000
 /** `$.fs.read` rejects a file over 4 MiB; the scanner degrades instead of crashing. */
 export const FS_READ_LIMIT = 4 * 1024 * 1024
-/** The scan period (the extension polled every 1.5 s). */
-export const POLL_MS = 1500
+/** The scan period: 5 s (was the extension's 1.5 s); only while the pane is open. */
+export const POLL_MS = 5000
 /** ⏰ long-running badge threshold. */
 export const LONG_RUNNING_MS = 10 * 60 * 1000
 /** ⭐ "just finished" window (PAGE line 1583: the `recent` class is removed 10 s after the finish). */

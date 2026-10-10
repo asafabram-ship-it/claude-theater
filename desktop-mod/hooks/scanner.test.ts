@@ -9,7 +9,7 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { FS_READ_LIMIT, MAX_AGE_MIN, RESULT_CHAR_LIMIT, RUNNING_STALE_SEC } from './model'
+import { FS_READ_LIMIT, GLOB_TTL_SEC, MAX_AGE_MIN, POLL_MS, RESULT_CHAR_LIMIT, RUNNING_STALE_SEC } from './model'
 import {
   computeInFlight,
   computePhase,
@@ -155,6 +155,8 @@ class MemFs {
 
 const NOW = Date.parse('2026-06-01T15:00:00.000Z')
 const MIN = 60_000
+/** The listing TTL in ms: a scan this long after a listing (or a throttled tail read) sees the directory afresh. */
+const TTL = GLOB_TTL_SEC * 1000
 const HOME = '/home/u'
 const PROJ = `${HOME}/.claude/projects/-home-dev-demo-project`
 
@@ -518,12 +520,12 @@ test('scanAll: negative entries — a corrupt or unflushed transcript is not re-
   expect(p1.skipped).toBe(3) // the malformed fixture's 2 + the corrupt first line
   expect(p1.agents.map(a => a.id)).not.toContain('corrupt-0010')
   const reads = fs.reads.length
-  const p2 = await scanAll(io, NOW + 1500)
+  const p2 = await scanAll(io, NOW + POLL_MS)
   expect(p2.skipped).toBe(3) // still counted, from the negative entry
   expect(fs.reads.slice(reads).filter(r => r.includes('corrupt'))).toEqual([]) // never re-parsed until the file changes
   expect(fs.reads.slice(reads).filter(r => r.includes('blank'))).toEqual([]) // the unflushed one waits for the listing TTL
   // after GLOB_TTL_SEC the unflushed file is tried again (its flush may not move the key); the corrupt one is not
-  await scanAll(io, NOW + 7000)
+  await scanAll(io, NOW + TTL + 1000)
   expect(fs.reads.slice(reads).filter(r => r.includes('blank')).length).toBe(1)
   expect(fs.reads.slice(reads).filter(r => r.includes('corrupt'))).toEqual([])
   // a growing OVERSIZED transcript: its first line is read through `head` once, its tail at most every GLOB_TTL_SEC
@@ -540,10 +542,10 @@ test('scanAll: negative entries — a corrupt or unflushed transcript is not re-
   expect(heads).toBe(1)
   expect(tails).toBe(1)
   fs2.put(hugePath, fs2.files.get(hugePath)!.text, NOW + 1000, FS_READ_LIMIT + 2) // grew: new (mtime,size)
-  await scanAll(io2, NOW + 1500)
+  await scanAll(io2, NOW + POLL_MS)
   expect(tails).toBe(1) // reused within GLOB_TTL_SEC
-  fs2.put(hugePath, fs2.files.get(hugePath)!.text, NOW + 6500, FS_READ_LIMIT + 3)
-  await scanAll(io2, NOW + 7000)
+  fs2.put(hugePath, fs2.files.get(hugePath)!.text, NOW + TTL + 500, FS_READ_LIMIT + 3)
+  await scanAll(io2, NOW + TTL + 1000)
   expect(tails).toBe(2)
   expect(heads).toBe(1) // the first line never changes
 })
@@ -744,7 +746,7 @@ test('scanAll: cache hits re-read nothing, status tracks the clock, journal re-r
   const first = await scanAll(io, NOW)
   const reads = fs.reads.length
   const lists = fs.lists.length
-  const second = await scanAll(io, NOW + 1500)
+  const second = await scanAll(io, NOW + POLL_MS)
   expect(fs.lists.slice(lists)).toEqual([`${HOME}/.claude/sessions`]) // projects listing throttled (GLOB_TTL_SEC); the registry is listed every scan
   expect(fs.reads.slice(reads)).toEqual([]) // every agent/parent/journal/registry read is cached
   expect(byId(second.agents, 'fixture-run-0001').persona_id).toBe(byId(first.agents, 'fixture-run-0001').persona_id)
@@ -760,7 +762,7 @@ test('scanAll: cache hits re-read nothing, status tracks the clock, journal re-r
   expect(byId((await scanAll(io2, NOW)).agents, 'fixture-wf-0005').status).toBe('running')
   fs2.put(`${PROJ}/sess-aaaa-1111/subagents/workflows/wf_0001/journal.jsonl`,
     '{"type":"result","agentId":"fixture-wf-0005","result":"all good"}\n', NOW + 5000)
-  const wf = byId((await scanAll(io2, NOW + 7000)).agents, 'fixture-wf-0005')
+  const wf = byId((await scanAll(io2, NOW + TTL + 1000)).agents, 'fixture-wf-0005')
   expect(wf.status).toBe('done')
   expect(wf.result).toBe('all good')
   expect(wf.end_ms).toBe(NOW - 30_000)
@@ -773,9 +775,9 @@ test('scanAll: a new agent shows up after the listing TTL; a vanished one leaves
   await scanAll(io, NOW)
   fs.put(`${PROJ}/sess-aaaa-1111/subagents/agent-new-0009.jsonl`, FIXTURES['cc-2.1/running.jsonl']!.replace('fixture-run-0001', 'new-0009'), NOW + 1000)
   expect((await scanAll(io, NOW + 2000)).agents.map(a => a.id)).not.toContain('new-0009')
-  expect((await scanAll(io, NOW + 7000)).agents.map(a => a.id)).toContain('new-0009')
+  expect((await scanAll(io, NOW + TTL + 1000)).agents.map(a => a.id)).toContain('new-0009')
   fs.files.delete(`${PROJ}/sess-aaaa-1111/subagents/agent-new-0009.jsonl`)
-  expect((await scanAll(io, NOW + 8000)).agents.map(a => a.id)).not.toContain('new-0009')
+  expect((await scanAll(io, NOW + TTL + 2000)).agents.map(a => a.id)).not.toContain('new-0009')
 })
 
 test('scanAll: >4 MiB degrades — skipped and counted, or read through the optional closures', async () => {
@@ -915,7 +917,7 @@ test("scanAll: every agent carries `model` — '' when the transcript names none
   expect(byId(p.agents, 'sess-bbbb-2222').model).toBe('')
   // cache hit: the model survives without a re-read
   const reads = fs.reads.length
-  const q = await scanAll(io, NOW + 1500)
+  const q = await scanAll(io, NOW + POLL_MS)
   expect(fs.reads.slice(reads)).toEqual([])
   expect(byId(q.agents, 'model-0012').model).toBe('claude-opus-5-5')
   expect(byId(q.agents, 'sess-aaaa-1111').model).toBe('claude-fable-5-1')
@@ -955,10 +957,10 @@ test("the lead's model is read RELIABLY from the session file's tail: a conversa
   fs.put(f, fs.files.get(f)!.text + answer('claude-sonnet-5-5'), NOW + 5000)
   expect(byId((await scanAll(io, NOW + 6000)).agents, 'sess-ffff-6666').model).toBe('claude-opus-5-5')
   expect(fs.reads.slice(reads)).toEqual([f])
-  expect(byId((await scanAll(io, NOW + 10_000)).agents, 'sess-ffff-6666').model).toBe('claude-sonnet-5-5')
+  expect(byId((await scanAll(io, NOW + 4000 + TTL)).agents, 'sess-ffff-6666').model).toBe('claude-sonnet-5-5') // the tail was read at NOW + 3000
   expect(fs.reads.slice(reads)).toEqual([f, f])
   // every lead of the office carries a string model; the ones whose files name none stay ''
-  for (const a of (await scanAll(io, NOW + 10_000)).agents.filter(x => x.is_session)) expect(typeof a.model).toBe('string')
+  for (const a of (await scanAll(io, NOW + 4000 + TTL)).agents.filter(x => x.is_session)) expect(typeof a.model).toBe('string')
   // an OVERSIZED conversation: no whole read possible → the tail closure finds the model; without it ''
   resetScannerCaches()
   const fs2 = office()
@@ -978,4 +980,9 @@ test('demoPayload: every demo agent names a plausible model', async () => {
   expect(byId(p.agents, 'demo-reader-bb').model).toBe('claude-haiku-4-5-20251001')
   expect(byId(p.agents, 'demo-conv-frontend').model).toBe('claude-fable-5-1')
   expect(new Set(p.agents.map(a => a.model)).size).toBeGreaterThanOrEqual(3)
+})
+
+test('phase 1 cadence: the poll is 5 s and listings are reused for 30 s', () => {
+  expect(POLL_MS).toBe(5000)
+  expect(GLOB_TTL_SEC).toBe(30)
 })

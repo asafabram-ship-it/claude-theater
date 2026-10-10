@@ -6,7 +6,7 @@
 // (and drawn on mobile/vscode, which lack Input / Client).
 
 import type { Agent } from './model'
-import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI, RUNNING_STALE_SEC } from './model'
+import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SETTLE_MS } from './register'
@@ -370,7 +370,7 @@ test('the office draws rooms, cards, counts and the footer on every surface', as
   let agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /משרד הסוכנים/ }))).toBeDefined()
@@ -407,14 +407,14 @@ test('the office draws rooms, cards, counts and the footer on every surface', as
   }
   // the scan error and the oversized count reach the footer
   agents = fixture()
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
 })
 
 test('the pane fits narrow, medium and wide bodies: cards, keys, the compact header/toolbar and the 🧠 model tag', async ($, on) => {
   const agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   for (const bodyColumns of [40, 70, 140] as const) {
     for (const surface of ['desktop', 'terminal'] as const) {
       const ui = await $.ui.mount({ ...PANE, surface, props: { ...PANE.props, bodyColumns } })
@@ -504,7 +504,7 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
   const agents = fixture()
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     // show finished → a2 appears, mirrored to the store
@@ -581,7 +581,7 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   let agents = fixture()
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: true, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
   // a1 finishes
@@ -596,11 +596,11 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   await ui.advance(90 * 12 + 10)
   expect((await ui.find({ in: 'confetti:a1', type: 'Text' }))?.text).toMatch(/[🎉✨🎊⭐✅]/)
   // no replay on the next poll; the star outlives the burst and dies after the window
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   expect(captured.plays).toBe(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
-  await clock.advance(JUST_FINISHED_MS + 1500)
+  await clock.advance(JUST_FINISHED_MS + POLL_MS)
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
   // muted: toast but no chime
   await ui.press({ key: 'mute' })
@@ -611,9 +611,9 @@ test('the finish beat: a shown agent that turns done gets ⭐, confetti, a toast
   // a hidden finish (room hides its finished) is remembered, never celebrated later
   await ui.press({ key: 'showDone' })
   agents = agents.map(a => (a.id === 'lead-a' ? { ...a, status: 'done' as const, end_ms: clock.now() } : a))
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   await ui.press({ key: 'showDone' })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   expect(captured.toasts.length).toBe(2)
   await ui.unmount()
 })
@@ -622,7 +622,7 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   let agents = fixture().map(a => (a.id === 'lead-a' ? { ...a, model: 'claude-fable-5-1' } : a))
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
   // two rooms of one row each → two SVGs, each interactive, with a viewBox and its intrinsic size in the MARKUP
   // (the host sizes the box from it: the markup's own height at the drawn width) and NO width/height PROPS
@@ -680,19 +680,19 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   expect((await tileOf(ui, 'b1'))?.tile).toMatch(/fam-agent/)
   expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/ is-session/)
   expect((await tileOf(ui, 'lead-a'))?.tile.includes(LEAD_MARK)).toBe(true)
-  // STABLE: the next poll (1.5 s later, same wall-clock minute) redraws the very same sources — no frame reload, no flicker
+  // STABLE: the next poll (POLL_MS later, same wall-clock minute) redraws the very same sources — no frame reload, no flicker
   const before = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(before.some(src => src.includes(' entering'))).toBe(true) // first sight: the whole cast walked in
-  await clock.advance(SETTLE_MS + 1500)
+  await clock.advance(POLL_MS)
   const settled = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(settled.some(src => src.includes(' entering'))).toBe(false) // one-shot: gone on the next redraw
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   const again = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(again).toEqual(settled)
-  expect(minuteClock(clock.now())).toBe(minuteClock(clock.now() - SETTLE_MS - 3000))
+  expect(minuteClock(clock.now())).toBe(minuteClock(clock.now() - 2 * POLL_MS))
   // a phase change (a1 moves from Read to Write) changes room A's source and leaves room B's alone
   agents = fixture().map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
-  await clock.advance(SETTLE_MS + 1500)
+  await clock.advance(POLL_MS)
   const changed = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
   expect(changed[0]).not.toBe(again[0])
   expect(changed[1]).toBe(again[1])
@@ -706,16 +706,16 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   expect((await tileOf(ui, 'a1'))?.tile.includes(' selected')).toBe(false)
   // a newcomer walks in on the poll that first shows it (one-shot), and has sat down by the next; it gets the next number
   agents = [...agents, agent({ id: 'newbie', role: 'index the docs', tool: 'Grep', persona_id: 5 })]
-  await clock.advance(SETTLE_MS + 1500)
+  await clock.advance(POLL_MS)
   expect((await tileOf(ui, 'newbie'))?.tile).toMatch(/ entering/)
   expect((await tileOf(ui, 'a1'))?.tile.includes(' entering')).toBe(false)
   expect((await ui.find({ key: 'open:newbie' }))?.text).toMatch(/^3 /)
-  await clock.advance(SETTLE_MS + 1500)
+  await clock.advance(POLL_MS)
   expect((await tileOf(ui, 'newbie'))?.tile.includes(' entering')).toBe(false)
   // a finish: toast + chime as before, ⭐ + hop (one-shot) in the tile, and NO confetti Client on the desktop
   agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
   await ui.press({ key: 'showDone' })
-  await clock.advance(SETTLE_MS + 1500)
+  await clock.advance(POLL_MS)
   expect(captured.toasts).toEqual(['map session-token validation — סיים'])
   expect(captured.plays).toBe(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
@@ -723,10 +723,10 @@ test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles an
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws done/)
   // the next redraw keeps the ⭐ (static) and drops the one-shot hop
-  await clock.advance(1500) // (SETTLE_MS has passed since the finish was published: the next poll redraws, the ⭐ still inside its window)
+  await clock.advance(POLL_MS) // (SETTLE_MS has passed since the finish was published: the next poll redraws, the ⭐ still inside its window)
   expect((await tileOf(ui, 'a1'))?.tile).toMatch(/⭐/)
   expect((await tileOf(ui, 'a1'))?.tile.includes('justdone')).toBe(false)
-  await clock.advance(JUST_FINISHED_MS + 1500)
+  await clock.advance(JUST_FINISHED_MS + POLL_MS)
   expect((await tileOf(ui, 'a1'))?.tile.includes('⭐')).toBe(false)
   await ui.unmount()
 })
@@ -735,7 +735,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   const files = quietOffice(T0)
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, files)
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500) // the first poll scans the files and publishes
+  await clock.advance(POLL_MS) // the first poll scans the files and publishes
   expect(captured.writes.payload).toBe(1)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
   // the pane's render reads `prefs` once per draw; the only other reader is the poll's retitle (one read per
@@ -750,8 +750,8 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   const writes0 = { ...captured.writes }
   const desktop0 = renders()
   // FIVE quiet polls (same wall-clock minute: T0 is 20 s past one): nothing drawn changed → nothing written, nothing redrawn
-  for (let i = 0; i < 5; i++) await clock.advance(1500)
-  expect(minuteClock(clock.now())).toBe(minuteClock(T0 + 1500))
+  for (let i = 0; i < 5; i++) await clock.advance(POLL_MS)
+  expect(minuteClock(clock.now())).toBe(minuteClock(T0 + POLL_MS))
   expect(captured.writes.payload).toBe(writes0.payload)
   expect(captured.writes.scanError).toBe(writes0.scanError)
   expect(captured.writes.view).toBe(writes0.view)
@@ -765,17 +765,25 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   const clockText = async () => (await term.find({ type: 'Text', text: /^\d\d:\d\d$/ }))?.text
   const c0 = await clockText()
   expect(c0).toBeDefined()
-  for (let i = 0; i < 3; i++) await clock.advance(1500)
+  for (let i = 0; i < 3; i++) await clock.advance(POLL_MS)
   expect(renders()).toBeGreaterThanOrEqual(terminal0 + 3)
   expect(await clockText()).not.toBe(c0)
   expect(captured.writes.payload).toBe(writes0.payload)
+  // the clocks: the lead's timer counts from its last activity (T0 - 5 s) at MINUTE resolution. Those three
+  // polls crossed the office's first minute boundary, which leaves it under a minute ("<1m": nothing drawn
+  // moved → NO publish, asserted just above); the boundary after moves it to "1m" (below)
+  const leadMtime = T0 - 5000
+  const boundary1 = minuteClock(T0) + 60_000
+  expect(clock.now()).toBeGreaterThan(boundary1)
+  expect(boundary1 - leadMtime).toBeLessThan(60_000)
+  expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="timer"[^>]*>&lt;1 דק׳</)
   await term.unmount()
   const desktop1 = renders()
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   expect(renders()).toBe(desktop1)
   // the same payload at the same minute keys the same; scanned_ms is not part of what is drawn
   const sample = { ...EMPTY_PAYLOAD, agents: fixture(), scanned_ms: 1 }
-  expect(renderKey(sample, T0)).toBe(renderKey({ ...sample, scanned_ms: 2, versions: ['9.9.9'], skipped: 4 }, T0 + 1500))
+  expect(renderKey(sample, T0)).toBe(renderKey({ ...sample, scanned_ms: 2, versions: ['9.9.9'], skipped: 4 }, T0 + POLL_MS))
   expect(renderKey(sample, T0)).not.toBe(renderKey({ ...sample, agents: sample.agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a)) }, T0))
   expect(renderKey(sample, T0)).not.toBe(renderKey(sample, T0 + 60_000))
   expect(renderKey(sample, T0, { a2: T0 })).not.toBe(renderKey(sample, T0, {}))
@@ -786,39 +794,30 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
       JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T10:00:07.000Z', version: '2.1.0', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: 'x' } }] } }) + '\n',
     mtimeMs: clock.now(),
   })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 1)
   expect(renders()).toBe(desktop1 + 1)
   expect((await tileOf(ui, 'q1'))?.tile).toMatch(/class="ws running fam-write/)
   // quiet again: still nothing
-  for (let i = 0; i < 3; i++) await clock.advance(1500)
-  expect(captured.writes.payload).toBe(writes0.payload + 1)
-  expect(renders()).toBe(desktop1 + 1)
-  // the clocks: the lead's timer counts from its last activity (T0 - 5 s) at MINUTE resolution. The first
-  // minute boundary leaves it under a minute ("<1m": nothing drawn moved → NO publish); the one after
-  // moves it to "1m" → ONE publish, ONE redraw, then quiet again
-  const leadMtime = T0 - 5000
-  expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="timer"[^>]*>&lt;1 דק׳</)
-  const boundary1 = minuteClock(clock.now()) + 60_000
-  await clock.advance(boundary1 - clock.now() + 1500)
-  expect(boundary1 - leadMtime).toBeLessThan(60_000)
+  for (let i = 0; i < 3; i++) await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 1)
   expect(renders()).toBe(desktop1 + 1)
   // RUNNING_STALE_SEC after its last activity the lead falls idle: a visible change (💤, grey) → one publish
   const idleAt = leadMtime + RUNNING_STALE_SEC * 1000
   expect(idleAt).toBeGreaterThan(clock.now())
-  await clock.advance(idleAt - clock.now() + 1500)
+  await clock.advance(idleAt - clock.now() + POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 2)
   expect(renders()).toBe(desktop1 + 2)
   expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="ws stale/)
+  // the minute boundary after the first one moves the lead's timer to "1m" → ONE publish, ONE redraw, then quiet again
   const boundary2 = boundary1 + 60_000
   expect(boundary2).toBeGreaterThan(clock.now())
-  await clock.advance(boundary2 - clock.now() + 1500)
+  await clock.advance(boundary2 - clock.now() + POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 3)
   expect(renders()).toBe(desktop1 + 3)
   expect((await tileOf(ui, QSESS))?.tile).toMatch(/class="timer"[^>]*>1 דק׳</)
-  await clock.advance(1500)
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
+  await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 3)
   expect(renders()).toBe(desktop1 + 3)
   await ui.unmount()
@@ -834,11 +833,11 @@ test('RESIZE: the rows scale with the pane — one column count for every room, 
   ]
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
   const widthsOf = async () => (await ui.findAll({ type: 'Svg' })).map(x => Number(/viewBox="0 0 (\d+) (\d+)"/.exec(String(x.props.source))?.[1]))
   const heightsOf = async () => (await ui.findAll({ type: 'Svg' })).map(x => Number(/viewBox="0 0 (\d+) (\d+)"/.exec(String(x.props.source))?.[2]))
-  await clock.advance(1500) // the cast has walked in (the one-shot `entering` is gone)
+  await clock.advance(POLL_MS) // the cast has walked in (the one-shot `entering` is gone)
   for (const [bodyColumns, cols, svgCount] of [[45, 3, 3], [90, 4, 3], [140, 5, 2], [200, 6, 2]] as const) {
     await ui.redraw({ ...PANE.props, bodyColumns })
     expect(roomCols(bodyColumns)).toBe(cols)
@@ -854,7 +853,7 @@ test('RESIZE: the rows scale with the pane — one column count for every room, 
     for (const id of ['lead-a', 'a1', 'a3', 'a4', 'a5', 'b1']) expect(await ui.find({ key: `open:${id}` })).toBeDefined()
     // a quiet poll after the resize draws the very same sources (no change → no reload)
     const after = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-    await clock.advance(1500)
+    await clock.advance(POLL_MS)
     expect((await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))).toEqual(after)
   }
   await ui.unmount()
@@ -864,7 +863,7 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
   const agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   for (const surface of ['terminal', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.findAll({ type: 'Svg' })).toHaveLength(0)
@@ -879,7 +878,7 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
 test('demo mode: the empty office offers a demo; it draws the scripted office and plays the finish beat', async ($, on) => {
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'en', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await messageOf(ui, 'desktop', /The office is empty/)).toBe(true)
   await ui.press({ key: 'watchDemo' })
@@ -925,7 +924,7 @@ test('DESKTOP RTL: the empty office is an RTL SVG message (the desktop Text cann
 test('DESKTOP 🎞/🖼: the still toggle draws the rooms as images (no frame to reload on a scroll) and back; desktop only', async ($, on) => {
   const { clock } = beneath(on, () => fixture(), { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(1500)
+  await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
   const interactive = async () => (await ui.findAll({ type: 'Svg' })).filter(x => x.props.source && String(x.props.source).includes('class="ws ')).map(x => x.props.isInteractive)
   expect((await ui.find({ key: 'still' }))?.text).toBe('🎞')

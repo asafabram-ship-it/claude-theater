@@ -19,6 +19,7 @@ import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
 import type { Agent, Payload, Prefs, View } from './model'
 import { cut } from './office-layout'
 import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
+import { personaName } from './personas'
 import { agentElapsed, cardName, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
 
 /** The family colour token of a model id — the one office-svg.ts colours the pill with (i18n.ts). */
@@ -156,7 +157,8 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   })
   const sel = view.selected !== null ? office.agents.find(a => a.id === view.selected) : undefined
   const drawer: OfficeDrawer | null = sel ? {
-    id: sel.id, name: cut(`${sel.emoji} ${cardName(sel, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
+    // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
+    id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
     chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
     model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
     elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),

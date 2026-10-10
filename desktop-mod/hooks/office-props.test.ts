@@ -53,9 +53,15 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(withDrawer.drawer?.task.length).toBe(4000)
   expect(withDrawer.drawer?.result.length).toBe(4000)
   expect(withDrawer.drawer?.elapsedMin).toBe(2) // running: elapsed since start, at the minute clock
+  expect(withDrawer.drawer?.name).toBe('🔬 החוקר') // the persona on the name line, as today's drawer
   expect(withDrawer.drawer?.sub).toBe('Read the spec')
+  const roled = buildOfficeProps(input(two, { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'a1' } }))
+  expect(roled.drawer?.name).toBe('🔬 החוקר') // a role never replaces the persona nor shows twice
+  expect(roled.drawer?.sub).toBe('Reviewer')
   const finished = buildOfficeProps(input(two, { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'a2' } }))
   expect(finished.drawer?.elapsedMin).toBe(1) // done: the duration start → end_ms (119 s)
+  const wide = buildOfficeProps(input([agent({ id: 'a1', emoji: '🦉'.repeat(30) })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
+  expect(wide.drawer?.name).toBe('🦉'.repeat(23) + '…') // the 48-cell cap: whole glyphs, an ellipsis for the rest
   // a selection the office no longer holds draws no drawer
   expect(buildOfficeProps(input([agent({ id: 'a1' })], { view: { ...DEFAULT_VIEW, selected: 'gone' } })).drawer).toBeNull()
 })

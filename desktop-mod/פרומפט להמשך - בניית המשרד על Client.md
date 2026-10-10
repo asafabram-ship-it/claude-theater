@@ -1,6 +1,6 @@
 # פרומפט להמשך: בניית המשרד על Client (תיאטרון הסוכנים בדסקטופ)
 
-נשמר: 2026-10-10 13:15 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 · Ultracode מופעל
+נשמר: 2026-10-10 15:51 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 · Ultracode מופעל
 
 ---
 
@@ -10,10 +10,10 @@
 
 **תור ראשון, לפני כל עבודה:**
 1. `get_usage` (self). צור CronCreate "usage-guard" כל 20 דקות (דקה לא עגולה) לפי סקיל `save-documents` (סעיף "שומר מכסה").
-2. קרא, בסדר הזה: `desktop-mod/HANDOFF.md` (שני הסעיפים העליונים, "נקודת שמירה 2026-10-10 13:15" ו-"11:09" - כולל "Carry לשלב 2"), `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (סעיפים 2 - כולל פריטים 7-9, 4, 8, 12 חובה), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` ("Global Constraints" + "Shared interfaces" + Task 0.2, Task 1.5, Task 1.2b, Phase 2 עם ההערות ב-2.3/2.4), והלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט; Tasks 0.1, 1.1-1.4, 1.4b כבר `complete` - אל תריץ אותן שוב; אם הלדג'ר חסר, פתח חדש לפי `superpowers:subagent-driven-development` ורשום אותן כ-complete לפי HANDOFF).
+2. קרא, בסדר הזה: `desktop-mod/HANDOFF.md` (שלושת הסעיפים העליונים, 15:51 / 13:15 / 11:09 - כולל "Carry ל-Task 2.3"), `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (סעיפים 2 - כולל פריטים 7-10, 4, 8, 12 חובה), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` ("Global Constraints" + "Shared interfaces" + Task 0.2, Task 1.5, Task 1.2b, Phase 2 עם ההערות ב-2.3/2.4), והלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט; Tasks 0.1, 1.1-1.4, 1.4b, 2.1, 2.2 כבר `complete` - אל תריץ אותן שוב; אם הלדג'ר חסר, פתח חדש לפי `superpowers:subagent-driven-development` ורשום אותן כ-complete לפי HANDOFF).
 3. אם `git status` מראה קבצים לא מקומטים - קמט ודחוף (`docs(mod): checkpoint <תאריך>`, עם השורה `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`).
 
-**איפה אנחנו:** שלב 1 (סריקה חסכונית) סגור: Tasks 1.1-1.4 ו-1.4b בקוד, 93 בדיקות, הכול נדחף (`4bc5b6e`). ההכרעות של אסף מ-10.10 רשומות באפיון סעיף 2 פריטים 7-9. שלב 0: מוד הבדיקה `theater-probe` בנוי ונסקר (Task 0.1), אבל **7 הבדיקות מול המסך (Task 0.2) טרם בוצעו**. Task 1.5 (מדידה) טרם בוצע.
+**איפה אנחנו:** שלב 1 (סריקה חסכונית) סגור ושלב 2 הטהור בוצע: Tasks 1.1-1.4, 1.4b, 2.1 (`office-layout.ts`) ו-2.2 (`office-props.ts`) בקוד, 111 בדיקות, הכול נדחף (`503fc5b`). ההכרעות של אסף מ-10.10 רשומות באפיון סעיף 2 פריטים 7-10; חוזה `OfficeDrawer` הורחב (`elapsedMin`, `sub`). שלב 0: מוד הבדיקה `theater-probe` בנוי ונסקר (Task 0.1), אבל **7 הבדיקות מול המסך (Task 0.2) טרם בוצעו**. Task 1.5 (מדידה) טרם בוצע.
 
 **המשימה, לפי הסדר:**
 
@@ -24,7 +24,7 @@
 
 **ב. Task 1.5 - מדידה:** לפי התוכנית (הפעלה זמנית של המוד ב-`~/.claude/settings.json`, שיחה חדשה, `/theater`, 5 סוכנים, 60 שניות, ואז הסרת השורה). ההפעלה היא פעולה על settings - לבקש אישור מאסף במפורש באותה הודעה. אם מעל היעד (§8.7) גם אחרי `POLL_MS` 8000 → Task 1.2b (מותנה, אפיון §2.7).
 
-**ג. שלב 2 - רק אם בדיקות 1-3 של שלב 0 עוברות**, עם `superpowers:subagent-driven-development` (סוכן טרי לכל משימה, סקירה בין משימות, מודל Fable). אם 1 נכשל ו-4 עובר → ערוץ ה-pull (אפיון 6.6; Task 2.5 שלב 7). אם 1 ו-4 נכשלים → עצור ודווח; הגישה נבחרת מחדש (אפיון, סוף §12). הערות Carry לשלב 2 כבר בתוכנית (Task 2.3/2.4) ובלדג'ר.
+**ג. שלב 2 מ-Task 2.3 ואילך - רק אם בדיקות 1-3 של שלב 0 עוברות** (2.1-2.2 כבר בוצעו), עם `superpowers:subagent-driven-development` (סוכן טרי לכל משימה, סקירה בין משימות, מודל Fable). אם 1 נכשל ו-4 עובר → ערוץ ה-pull (אפיון 6.6; Task 2.5 שלב 7). אם 1 ו-4 נכשלים → עצור ודווח; הגישה נבחרת מחדש (אפיון, סוף §12). הערות Carry לשלב 2 בתוכנית (Task 2.3/2.4), ב-HANDOFF 15:51 ("Carry ל-Task 2.3") ובלדג'ר - קרא אותן לפני ה-dispatch של 2.3.
 
 **כללים שאסף קבע (אל תשאל שוב):**
 - שיחה איתו בעברית פשוטה בלבד. קוד והודעות קומיט באנגלית.

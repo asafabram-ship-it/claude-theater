@@ -7,8 +7,8 @@
 // and the pane is mounted and acted on by key on the terminal and the desktop
 // (and drawn on mobile/vscode, which lack Input / Client).
 
-import type { Agent, Payload } from './model'
-import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
+import type { Agent, Payload, View } from './model'
+import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SETTLE_MS } from './register'
@@ -232,21 +232,30 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   const captured = {
     toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown>,
     /** $.state writes seen beneath the plugin, by key (the flicker guard's budget). */
-    writes: { payload: 0, scanError: 0, view: 0, tick: 0 },
+    writes: { payload: 0, scanError: 0, view: 0, tick: 0, prefs: 0 },
+    /** $.store writes seen beneath the plugin, by key (the housekeeping's budget: the prefs mirror, roomDone). */
+    storeWrites: {} as Record<string, number>,
     /** $.fs.write calls seen beneath the plugin: none is expected (the diagnostics log is gone). */
     fsWrites: 0,
-    /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle or a finish), so it counts the redraws. */
+    /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle, a finish or a pins prune — the last through `update`), so it counts the redraws. */
     prefsReads: 0,
     /** The `payload` the plugin last read back from $.state (a state.get tap): what the pane draws, ⭐ stars included. */
     payload: undefined as Payload | undefined,
-    /** The order of the plugin's calls that redraw: 'open' (a retitle), 'payload' / 'view' (a $.state write). */
+    /** The `view` the plugin last WROTE (a state.set tap). */
+    view: undefined as View | undefined,
+    /** The order of the plugin's calls that redraw: 'open' (a retitle), 'payload' / 'view' / 'prefs' (a $.state write) — and 'store:<key>' (a $.store write, which redraws nothing). */
     seq: [] as string[],
   }
   const clock = mock.clock(on, { now: T0 })
   // an in-memory store the test can read back (mock.store would hook store.set
   // itself, and an event may be hooked only once per module)
   on('store.get', ($, e) => ({ value: captured.store[e.key] }))
-  on('store.set', ($, e) => { captured.store[e.key] = e.value; return { value: undefined } })
+  on('store.set', ($, e) => {
+    captured.store[e.key] = e.value
+    captured.storeWrites[e.key] = (captured.storeWrites[e.key] ?? 0) + 1
+    captured.seq.push('store:' + e.key)
+    return { value: undefined }
+  })
   on('store.delete', ($, e) => { delete captured.store[e.key]; return { value: undefined } })
   on('store.keys', () => ({ value: Object.keys(captured.store) }))
   mock.env(on, { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' })
@@ -321,7 +330,8 @@ function beneath(on: On, current: () => Agent[], store: Record<string, unknown> 
   })
   on('state.get', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.prefsReads += 1; return next(e) })
   on('state.set', { plugin: 'agent-theater', key: 'scanError' }, ($, e, next) => { captured.writes.scanError += 1; return next(e) })
-  on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; captured.seq.push('view'); return next(e) })
+  on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; captured.view = e.value as View; captured.seq.push('view'); return next(e) })
+  on('state.set', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.writes.prefs += 1; captured.seq.push('prefs'); return next(e) })
   on('state.set', { plugin: 'agent-theater', key: 'tick' }, ($, e, next) => { captured.writes.tick += 1; return next(e) })
   return { captured, clock }
 }
@@ -334,12 +344,12 @@ const Q1 = `${QPROJ}/${QSESS}/subagents/agent-q1.jsonl`
 const Q2 = `${QPROJ}/${QSESS}/subagents/agent-q2.jsonl`
 const Q3 = `${QPROJ}/${QSESS}/subagents/agent-q3.jsonl`
 
-/** A subagent transcript mid-tool (one prompt, a Grep pending), shaped as quietOffice's q1. */
-function subagentMidTool(id: string, prompt: string, mtimeMs: number): { text: string; mtimeMs: number } {
+/** A subagent transcript mid-tool (one prompt, a Grep pending), shaped as quietOffice's q1; `session` is its room. */
+function subagentMidTool(id: string, prompt: string, mtimeMs: number, session = QSESS): { text: string; mtimeMs: number } {
   const rec = (o: Record<string, unknown>) => JSON.stringify(o)
   return {
     text: [
-      rec({ type: 'user', agentId: id, sessionId: QSESS, timestamp: '2026-06-01T10:00:00.000Z', cwd: 'C:/x', version: '2.1.0', message: { content: prompt } }),
+      rec({ type: 'user', agentId: id, sessionId: session, timestamp: '2026-06-01T10:00:00.000Z', cwd: 'C:/x', version: '2.1.0', message: { content: prompt } }),
       rec({ type: 'assistant', timestamp: '2026-06-01T10:00:05.000Z', version: '2.1.0', message: { content: [{ type: 'tool_use', name: 'Grep', input: { pattern: 'test' } }] } }),
     ].join('\n') + '\n',
     mtimeMs,
@@ -355,6 +365,30 @@ function finishIn(files: MemFiles, path: string, now: number, answer: string): v
       JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T10:00:09.000Z', version: '2.1.0', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: answer }] } }) + '\n',
     mtimeMs: now,
   })
+}
+
+/** The transcript at `path` ages out of the office: its mtime falls behind MAX_AGE_MIN (the scanner re-stats every file every scan). */
+function ageOut(files: MemFiles, path: string, now: number): void {
+  const f = files.get(path)!
+  files.set(path, { ...f, mtimeMs: now - (MAX_AGE_MIN + 1) * 60_000 })
+}
+
+/** A second open conversation beside quietOffice's: its lead answering, one FINISHED subagent (so the room header draws its ✅ toggle). */
+const QSESS2 = 'sess-quiet-0002'
+const QLEAD2 = `${QPROJ}/${QSESS2}.jsonl`
+const R1 = `${QPROJ}/${QSESS2}/subagents/agent-r1.jsonl`
+function secondRoom(files: MemFiles, now: number): void {
+  const rec = (o: Record<string, unknown>) => JSON.stringify(o)
+  files.set(QLEAD2, {
+    text: [
+      rec({ type: 'user', sessionId: QSESS2, cwd: 'C:/y', timestamp: '2026-06-01T09:30:00.000Z', message: { role: 'user', content: 'Second room. One finished helper.' } }),
+      rec({ type: 'assistant', sessionId: QSESS2, timestamp: '2026-06-01T09:30:01.000Z', message: { role: 'assistant', model: 'claude-fable-5-1', content: [{ type: 'text', text: 'On it.' }] } }),
+    ].join('\n') + '\n',
+    mtimeMs: now - 4000,
+  })
+  files.set(R1, subagentMidTool('r1', 'Lint the repo.', now - 7000, QSESS2))
+  finishIn(files, R1, now - 7000, 'Clean.')
+  files.set(`${QHOME}/.claude/sessions/8.json`, { text: JSON.stringify({ pid: 8, sessionId: QSESS2 }), mtimeMs: now })
 }
 
 function quietOffice(now: number): MemFiles {
@@ -921,6 +955,99 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes1.payload + 2)
   expect(renders()).toBe(desktop3 + 1)
+  await ui.unmount()
+})
+
+test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished selection resets view.selected (one view write); a vanished pinned room drops its pin (one prefs write) and its roomDone override (one store write); nothing when nothing vanished; never in the demo or on an empty office', async ($, on) => {
+  const files = quietOffice(T0)
+  secondRoom(files, T0)
+  finishIn(files, Q2, T0 - 7000, 'All green.') // room 1 has a finished agent too (its ✅ toggle is drawn)
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, files)
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS) // the first poll scans the files and publishes: two rooms, three working (both leads, q1)
+  expect(captured.writes.payload).toBe(1)
+  expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 התיאטרון')
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ key: 'pin:' + QSESS2 })).toBeDefined()
+  expect(await ui.find({ key: 'rdone:' + QSESS2 })).toBeDefined()
+  // (1) the drawer open on q1, then q1's transcript ages out of the office: the next structure publish
+  //     resets the selection — ONE extra view write, after the payload write, in the same tick — and the
+  //     drawer is closed; no prefs / store write (no room vanished)
+  await ui.press({ key: 'open:q1' })
+  expect(await ui.find({ key: 'close' })).toBeDefined()
+  expect(captured.view?.selected).toBe('q1')
+  const w1 = { ...captured.writes }
+  const s1 = { ...captured.storeWrites }
+  ageOut(files, Q1, clock.now())
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.agents.some(a => a.id === 'q1')).toBe(false)
+  expect(captured.writes.payload).toBe(w1.payload + 1)
+  expect(captured.writes.view).toBe(w1.view + 1)
+  expect(captured.view?.selected).toBeNull()
+  expect(captured.writes.prefs).toBe(w1.prefs)
+  expect(captured.storeWrites).toEqual(s1)
+  expect(captured.seq.slice(-3)).toEqual(['open', 'payload', 'view']) // the retitle (3 → 2 working), the publish, then the reset
+  expect(await ui.find({ key: 'close' })).toBeUndefined()
+  // a quiet poll after it: nothing is written (the selection is null, nothing else vanished)
+  const w2 = { ...captured.writes }
+  const reads2 = captured.prefsReads
+  await clock.advance(POLL_MS)
+  expect(captured.writes).toEqual(w2)
+  expect(captured.storeWrites).toEqual(s1)
+  expect(captured.prefsReads).toBe(reads2) // ... and the pane is not redrawn
+  // (2) room 2 pinned and its "show finished" overridden, then the whole room ages out: the next structure
+  //     publish drops the pin (one prefs write + its store mirror) and the override (one store write), after
+  //     the payload write in the same tick; no view write (nothing selected)
+  await ui.press({ key: 'pin:' + QSESS2 })
+  await ui.press({ key: 'rdone:' + QSESS2 })
+  expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS2])
+  expect(captured.store.roomDone).toEqual({ [QSESS2]: true })
+  const w3 = { ...captured.writes }
+  const s3 = { ...captured.storeWrites }
+  ageOut(files, QLEAD2, clock.now())
+  ageOut(files, R1, clock.now())
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.agents.map(a => a.session_full)).toEqual([QSESS, QSESS])
+  expect(captured.writes.payload).toBe(w3.payload + 1)
+  expect(captured.writes.prefs).toBe(w3.prefs + 1)
+  expect(captured.writes.view).toBe(w3.view)
+  expect(captured.storeWrites.prefs).toBe((s3.prefs ?? 0) + 1)
+  expect(captured.storeWrites.roomDone).toBe((s3.roomDone ?? 0) + 1)
+  expect((captured.store.prefs as { pins: string[] }).pins).toEqual([])
+  expect(captured.store.roomDone).toEqual({})
+  expect(captured.seq.slice(-5)).toEqual(['open', 'payload', 'prefs', 'store:prefs', 'store:roomDone'])
+  // (3) quiet polls afterwards: nothing is written, nothing redrawn (THE FLICKER GUARD holds after a prune)
+  const w4 = { ...captured.writes }
+  const s4 = { ...captured.storeWrites }
+  const reads4 = captured.prefsReads
+  for (let i = 0; i < 2; i++) await clock.advance(POLL_MS)
+  expect(captured.writes).toEqual(w4)
+  expect(captured.storeWrites).toEqual(s4)
+  expect(captured.prefsReads).toBe(reads4)
+  // the render's own copy of the overrides followed the prune: a toggle on room 1 writes room 1 alone
+  // (a stale copy would resurrect room 2's pruned entry)
+  await ui.press({ key: 'rdone:' + QSESS })
+  expect(captured.store.roomDone).toEqual({ [QSESS]: true })
+  // (4) never in the demo, never on an empty office: room 1 pinned, then the demo cast (other rooms) and an
+  //     office with no agent at all are published — the pin and the override stay
+  await ui.press({ key: 'pin:' + QSESS })
+  expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS])
+  const w5 = { ...captured.writes }
+  const s5 = { ...captured.storeWrites }
+  await ui.press({ key: 'demo' })
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.demo).toBe(true)
+  expect(captured.writes.payload).toBeGreaterThan(w5.payload)
+  await ui.press({ key: 'demo' })
+  ageOut(files, `${QPROJ}/${QSESS}.jsonl`, clock.now())
+  ageOut(files, Q2, clock.now())
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.demo).toBe(false)
+  expect(captured.payload?.agents).toEqual([])
+  expect(captured.writes.prefs).toBe(w5.prefs)
+  expect(captured.storeWrites).toEqual(s5)
+  expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS])
+  expect(captured.store.roomDone).toEqual({ [QSESS]: true })
   await ui.unmount()
 })
 

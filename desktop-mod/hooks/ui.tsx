@@ -10,6 +10,7 @@
 //   starsOf(...)           the finish beat's ⭐ stamps (pure; the poll runs it, see below)
 //   renderKey(payload, now) the flicker guard's projection of a payload (the poll compares it)
 //   officeView, parseRoomDone  what the office shows (the poll celebrates only a shown finish)
+//   rememberRoomDone(map)  the render's copy of the overrides, after the poll pruned them in $.store
 //
 // What it draws (spec "עובר כמו שהוא"), top to bottom — every line budgeted
 // from e.props.bodyColumns (gridFor / clip / cellWidth), nothing fixed-width:
@@ -529,8 +530,17 @@ async function loadRoomDone($: EngineInterface): Promise<Record<string, boolean>
   return roomDoneCache
 }
 
-async function saveRoomDone($: EngineInterface, value: Record<string, boolean>): Promise<void> {
+/**
+ * The render's copy of the overrides follows every write of theirs: saveRoomDone's here, and the poll's
+ * (register.tsx prunes the rooms no longer present straight in $.store — no `$` crosses the import, so it
+ * hands the kept map over instead). A stale copy would write a pruned room back on the next toggle.
+ */
+export function rememberRoomDone(value: Record<string, boolean>): void {
   roomDoneCache = value
+}
+
+async function saveRoomDone($: EngineInterface, value: Record<string, boolean>): Promise<void> {
+  rememberRoomDone(value)
   await $.store.set(STORE_ROOM_DONE_KEY, value).catch(() => undefined)
 }
 

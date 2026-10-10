@@ -31,7 +31,12 @@
 //                   count in the pane title (PAGE's document.title, only when N
 //                   changes) goes out in the same tick BEFORE the write, so a
 //                   finish is the one $.state write of the publish (no deferred
-//                   `view` write; a plugin never sees its own state.set).
+//                   `view` write; a plugin never sees its own state.set). The
+//                   old beat's housekeeping follows the write in the same tick,
+//                   only when something vanished: a selection whose agent left
+//                   the office → view.selected null; the pins / roomDone
+//                   overrides of rooms no longer present pruned (against a
+//                   real, non-empty office only — never the demo's cast).
 //                   While the pane is closed (never opened, or closed by the
 //                   person) the files are NOT scanned — PAGE polled only while
 //                   the panel was visible — only the live map is aged so the
@@ -78,7 +83,7 @@ import { I18N } from './i18n'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs, type TheaterStatus } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
+import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -355,6 +360,37 @@ export async function poll($: EngineInterface): Promise<void> {
       lastKey = key
       lastCoarse = coarse
       lastPublishAt = now
+      // THE HOUSEKEEPING of the old deferred beat (PAGE updateWS), in the same tick as the write, as rare extra
+      // writes only when something actually vanished — a quiet poll never reaches a write here:
+      // - the selection: `view.selected` is "null when closed" (types/index.d.ts), so a selected agent that left
+      //   the office resets it (one `view` write; the drawer is already gone, it draws only a present agent);
+      // - the pins and the per-room overrides (prefs.pins, $.store 'roomDone') of rooms no longer present —
+      //   only when the published rooms changed (a room vanished, or the first publish: pins kept from an
+      //   earlier session), and only against a REAL, NON-EMPTY office: the demo's cast and an empty or failed
+      //   scan must not wipe them. Each prunes only what changed (one `prefs` write + its store mirror, one
+      //   store write) — PAGE's rule, restored.
+      const liveIds = new Set(office.agents.map(a => a.id))
+      if (view.selected !== null && !liveIds.has(view.selected)) {
+        const gone = view.selected
+        await update($, viewAtom, v => (v.selected === gone ? { ...v, selected: null } : v))
+      }
+      const liveRooms = new Set(office.agents.map(a => a.session_full))
+      const prevRooms = new Set(published.agents.map(a => a.session_full))
+      const roomsChanged = liveRooms.size !== prevRooms.size || [...prevRooms].some(s => !liveRooms.has(s))
+      if (roomsChanged && office.agents.length > 0 && !office.demo) {
+        prefs ??= await read($, prefsAtom)
+        if (prefs.pins.some(s => !liveRooms.has(s))) {
+          const saved = await update($, prefsAtom, p => ({ ...p, pins: p.pins.filter(s => liveRooms.has(s)) }))
+          await $.store.set(STORE_PREFS_KEY, saved).catch(() => undefined)
+        }
+        const roomDone = parseRoomDone(await $.store.get(STORE_ROOM_DONE_KEY).catch(() => undefined))
+        if (Object.keys(roomDone).some(s => !liveRooms.has(s))) {
+          const kept: Record<string, boolean> = {}
+          for (const [s, v] of Object.entries(roomDone)) if (liveRooms.has(s)) kept[s] = v
+          await $.store.set(STORE_ROOM_DONE_KEY, kept).catch(() => undefined)
+          rememberRoomDone(kept)
+        }
+      }
     }
     const curError = await read($, scanErrorAtom)
     if ((error ?? null) !== curError) {

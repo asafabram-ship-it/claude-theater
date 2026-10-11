@@ -168,3 +168,21 @@ export const UNKNOWN_MODEL = '' as const
 
 /** $.store keys (prefs mirror). */
 export const STORE_PREFS_KEY = 'prefs'
+
+// ---------------------------------------------------------------------------
+// Module objects shared between register.tsx (writes) and ui.tsx (reads) — no
+// `$` crosses an import, no $.state write for what is not user state.
+// ---------------------------------------------------------------------------
+
+/**
+ * The 5-hour usage meter the desktop office draws in its header (`props.usage`):
+ * null until the usage poll (Phase 3) fills it. ui.tsx reads it on every draw.
+ */
+export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | null }
+
+/**
+ * The desktop office's fallback switch: while `clientFailed` the desktop draws
+ * the text cards instead of the office Client. Set by register.tsx on a
+ * `ui.fault` of the office module (Task 2.5); read by ui.tsx's render.
+ */
+export const DESKTOP = { clientFailed: false }

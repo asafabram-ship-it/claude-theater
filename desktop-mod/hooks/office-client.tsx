@@ -353,7 +353,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       ] }))
     } else if (props.drawer) {
       const items: RenderElement[] = inst.drawer.map(l => {
-        if (l.kind === 'name') return line([Text({ bold: true, children: [l.text] }), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', alignSelf: 'stretch' })
+        // (the row takes the drawer's full width so `space-between` parts the name and the ✕: `alignSelf: 'stretch'` is not a value the desktop's Box takes)
+        if (l.kind === 'name') return line([Text({ bold: true, children: [l.text] }), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
         if (l.kind === 'chips') return line((l.chips ?? []).map(ch => Text({ inverse: true, children: [` ${ch} `] })))
         if (l.kind === 'head') return Text({ bold: true, children: [l.text] })
         if (l.kind === 'dim' || l.kind === 'note') return Text({ dimColor: true, children: [l.text] })

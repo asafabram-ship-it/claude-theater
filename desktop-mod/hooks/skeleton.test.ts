@@ -17,7 +17,13 @@ test('the pane draws its header on the terminal and the desktop', async $ => {
       requestId: 'agent-theater',
       props: { title: 'Theater', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 24 }, view: {} },
     })
-    expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
+    if (surface === 'desktop') {
+      // the desktop pane is the office Client (office-client.tsx): its header line is the module's
+      expect((await ui.find({ type: 'Client' }))?.key).toBe('office')
+      expect(await ui.find({ in: 'office', type: 'Text', text: /🎭/ })).toBeDefined()
+    } else {
+      expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
+    }
     await ui.unmount()
   }
 })

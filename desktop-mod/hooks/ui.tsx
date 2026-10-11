@@ -22,22 +22,20 @@
 //   help     the keyboard-shortcuts popover (PAGE renderHelp) while open
 //   drawer   the selected agent (PAGE fillDrawer): chips (status, subagent_type,
 //            duration/elapsed, tool), model, activity, task, result, "shortened"
-//   DESKTOP  (e.surface === 'desktop') each ROOM is instead animated SVG ROWS from
-//            office-svg.ts (roomRowSvgs: the title on the first row + roomCols()
-//            tiles per row, the SAME count for every room of the render — a
-//            character at a desk, 10–12 px texts, light/dark, walk-in / bob / hop /
-//            ⭐ pop) scaled through their viewBox to the pane's width (bigger tiles
-//            in a wider pane; the count steps up only at breakpoints). The Svg is a
-//            leaf and Box has no onPress, so under the rows sits one tight row of
-//            small numbered Buttons 'open:<id>' (label "1", "2", …)
-//            matching the number badge on each tile; the tile's <title> tooltip
-//            carries the full details. The engine's room header line keeps only
-//            📌 and the counts (the title is in the SVG: no wrapping, no lone 💬).
-//            STABLE SOURCE: the SVG markup is identical between polls unless
-//            something visible changed (the frame reloads — and every animation
-//            restarts — on each source change): elapsed time at minute resolution
-//            from a clock quantized to the wall-clock minute, the one-shot classes
-//            (entering, justdone) only on the poll that triggers them.
+//   DESKTOP  (e.surface === 'desktop') the whole pane is instead ONE `Client`
+//            (key OFFICE_KEY, module ./office-client.tsx): the hooks build its JSON
+//            props from state (office-props.ts buildOfficeProps — the rooms, the
+//            drawer, the counts, the flags, the i18n strings, the usage meter) and
+//            size it to its FULL content (office-chrome.ts officeHeight: the
+//            chrome rows + the layout's rows), so the engine scrolls it natively
+//            and hands the window back as e.props.scroll (offset → props.offset,
+//            bodyRows → props.rows). The module draws the chrome and the text-cell
+//            tiles (office-layout.ts), the hover/selection/fx overlays, and POSTS
+//            what the person did (open / pin / roomDone / the toolbar / search —
+//            OfficeMessage) to `ui.message` (register.tsx). Nothing here handles a
+//            desktop press. Equal state → equal props → no redraw. While
+//            DESKTOP.clientFailed (a `ui.fault` of the module, register.tsx) the
+//            desktop falls through to the text cards below.
 //   rooms    one per conversation (session_full): pinned first 📌, then rooms with
 //            a running agent, then by last activity (PAGE's sort). Room header,
 //            one line: 📌/○ · 💬 topic-or-project (clipped from its end) · small
@@ -61,8 +59,8 @@
 // - Read state with read($, atom) so the pane redraws on every $.state.set;
 //   atoms are declared in THIS file (validate rule), never imported. The pane
 //   reads payload / prefs / view / scanError (+ tick off the desktop) and NOT
-//   the live map: a live agent's every tool.call writes it, and a redraw
-//   reloads the desktop's Svg frames (see renderKey — the flicker guard).
+//   the live map: a live agent's every tool.call writes it, and on the desktop
+//   every redraw blinks (see renderKey — the flicker guard).
 // - Draw with the table of e.surface: `$.ui.resolve(e)`. Width is
 //   e.props.bodyColumns (narrower than the viewport when docked).
 // - Hebrew default; `dirOf(prefs.lang)` decides the row direction (RTL = row-reverse).
@@ -104,10 +102,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
-import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
+import { DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
-import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS, messageSvg, roomRowSvgs, type TileDecor } from './office-svg'
-import { COMPACT_BELOW } from './office-chrome'
+import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS } from './office-svg'
+// the pure chrome maths (the Client's full content height) and the pure layout: never the surface
+// module itself (office-client.tsx is reached only through the literal `module` path below)
+import { COMPACT_BELOW, officeHeight } from './office-chrome'
+import { layoutOffice } from './office-layout'
+import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
 
@@ -134,24 +136,20 @@ export const CARD_MAX_W = 60
 /** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
 const BURST_MS = 1050
 /**
- * DESKTOP: the office is drawn as scalable SVG rows (office-svg.ts) that fill
- * the pane's width, so the tiles GROW with the pane. The tiles per row step
- * up only at breakpoints (bodyColumns): ROOM_COLS (3) under COLS_STEP_FROM +
- * COLS_STEP, then one more every COLS_STEP columns — 4 from 90, 5 from 130,
- * 6 from 170, 7 from 210, TILE_MAX_PER_ROW (8) from 250. Just under a
- * breakpoint a tile is about twice its size at 45 columns; just past one it
- * is still larger than at 45 (90/372 > 45/284 viewBox units per column), so
- * a wider pane means bigger tiles first and more tiles second. One count for
- * every room of a render (roomCols(width) once).
+ * SVG ERA (the desktop drew scalable SVG rows, office-svg.ts, before the
+ * Client office): the tiles-per-row breakpoints of that grid. Nothing draws
+ * with them any more; kept, with roomCols / tilesPerRow / TILE_HOP_MS /
+ * splitSentence below, only because ui.test.ts's old desktop tests import
+ * them — Task 2.6 removes those tests and these with them.
  */
 export const COLS_STEP_FROM = 50
 export const COLS_STEP = 40
-/** The widest desktop row (a very wide pane stays an office, not a strip). */
+/** SVG ERA: the widest desktop row. */
 export const TILE_MAX_PER_ROW = 8
-/** The finish poll's hop + ⭐ pop: `justdone` is passed while the star is younger than this (under POLL_MS: one poll). */
+/** SVG ERA: the hop's one-shot window (the Client's hop is the module's FX_DONE_MS). */
 export const TILE_HOP_MS = 1000
 
-/** A long sentence split at its " - " / " — " so each part is its own short line (the desktop empty state). */
+/** SVG ERA: a long sentence split at its " - " / " — " (the Client's empty office splits it in office-chrome.ts emptyLines). */
 export function splitSentence(s: string): string[] {
   return s.split(/\s[-—]\s/).map(x => x.trim()).filter(Boolean)
 }
@@ -435,16 +433,16 @@ export function gridFor(width: number): { perRow: number; cardW: number } {
   return { perRow, cardW }
 }
 
-/** DESKTOP: tiles per row for a body of `width` columns — ROOM_COLS, +1 per COLS_STEP columns past COLS_STEP_FROM, at most TILE_MAX_PER_ROW. */
+/** SVG ERA: tiles per row of the SVG grid — ROOM_COLS, +1 per COLS_STEP columns past COLS_STEP_FROM, at most TILE_MAX_PER_ROW (the Client's grid is office-layout.ts tilesPerRow). */
 export function roomCols(width: number): number {
   const w = Math.max(MIN_WIDTH, width)
   return Math.max(ROOM_COLS, Math.min(TILE_MAX_PER_ROW, ROOM_COLS + Math.floor(Math.max(0, w - COLS_STEP_FROM) / COLS_STEP)))
 }
 
-/** The same count (every room of a render shares it). */
+/** SVG ERA: the same count (every room of a render shared it). */
 export const tilesPerRow = roomCols
 
-/** DESKTOP: the clock the tiles are timed from — the wall-clock minute, so every room's timers tick (and its SVG reloads) together, once a minute. */
+/** DESKTOP: the clock the tiles are timed from — the wall-clock minute, so every tile's minutes (and so the props) move together, once a minute. */
 export function minuteClock(now: number): number {
   return Math.floor(now / 60_000) * 60_000
 }
@@ -452,7 +450,9 @@ export function minuteClock(now: number): number {
 /**
  * PAGE .entering (the walk-in): ids first seen within WALK_IN_MS of `now`.
  * `firstSeen` is the caller's memory (agent id → when it first appeared);
- * stamped for every agent of the office and pruned to the office's ids.
+ * stamped for every agent of the office and pruned to the office's ids. The
+ * desktop render calls it for the stamps alone (`enteredAt` in the Client's
+ * props: the module times its own walk-in fx from them).
  */
 export function walkIns(firstSeen: Record<string, number>, all: readonly Agent[], now: number): Set<string> {
   const entering = new Set<string>()
@@ -476,10 +476,10 @@ export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now
  * THE FLICKER GUARD's projection: everything the pane DRAWS of a payload at
  * `now`, as one string — and nothing it does not (scanned_ms, versions,
  * skipped, raw timestamps). Two payloads with the same key draw the same
- * office, so the poll publishes only when the key moved (register.tsx): a
- * $.state.set redraws every reader, a redraw of the pane re-creates the
- * desktop's interactive Svg frames (restarting their animations), so a
- * per-tick write WAS the flicker. Time enters at the resolution it is drawn:
+ * office (the same Client props), so the poll publishes only when the key
+ * moved (register.tsx): a $.state.set redraws every reader, and on the
+ * desktop every redraw of the pane blinks, so a per-tick write WAS the
+ * flicker. Time enters at the resolution it is drawn:
  * the elapsed MINUTE (the desktop tile's timer; the text surfaces tick their
  * mm:ss from the tick atom instead), the ⏰ long-running flag, and the ⭐ ids
  * still inside the JUST_FINISHED window (`payload.stars`, the poll's stamps)
@@ -518,7 +518,7 @@ export function parseRoomDone(stored: unknown): Record<string, boolean> {
 
 /** PAGE roomDone, cached from $.store ('roomDone'); null until first read. */
 let roomDoneCache: Record<string, boolean> | null = null
-/** PAGE .entering: agent id → when it first appeared in the office (the desktop tile's walk-in). */
+/** PAGE .entering: agent id → when it first appeared in the office (the desktop tile's walk-in: `enteredAt` in the Client's props). */
 const firstSeen: Record<string, number> = {}
 
 async function loadRoomDone($: EngineInterface): Promise<Record<string, boolean>> {
@@ -576,10 +576,10 @@ export function registerUi(on: On): void {
     const payload = await read($, payloadAtom)
     const view = await read($, viewAtom)
     const scanError = await read($, scanErrorAtom)
-    // the desktop draws SVG tiles (office-svg.ts) in a scalable grid; every other surface the text cards
+    // the desktop draws the office Client (office-client.tsx); every other surface the text cards
     const desktop = e.surface === 'desktop'
     // the text surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT
-    // (its tiles show minutes, and a redraw reloads its frames — the tick must never reach it)
+    // (its tiles show minutes, and every redraw of it blinks — the tick must never reach it)
     if (!desktop) await read($, tickAtom)
     const roomDone = await loadRoomDone($)
     // the clock is the engine's; a host without one (a bare test) falls back to the module's
@@ -588,22 +588,41 @@ export function registerUi(on: On): void {
     const lang = prefs.lang
     const L: Strings = I18N[lang]
     const rtl = dirOf(lang) === 'rtl'
-    // desktop + Hebrew: a column's short lines hug its right edge
-    const colAlign = desktop && rtl ? 'flex-end' : undefined
-    const row = rtl ? 'row-reverse' : 'row'
     const width = Math.max(MIN_WIDTH, e.props.bodyColumns || 80)
-    const compact = width < COMPACT_BELOW
-    const { perRow, cardW } = gridFor(width)
-    const cols = roomCols(width) // ONE count for every room of this render
-    const innerW = cardW - 2 // the status mark + its space
     const office = effectivePayload(payload, view, now)
     const all = office.agents
+
+    // --- DESKTOP: the office is ONE Client. The hooks build its props from state (buildOfficeProps: pure,
+    //     plain JSON) and size it to its full content (chrome + layout rows), so the engine scrolls it
+    //     natively and hands the window back as e.props.scroll; the module draws the tiles, the chrome and
+    //     the fx, and posts what the person did to `ui.message` (register.tsx). Nothing is written here.
+    //     Equal state → equal props → nothing redraws. While DESKTOP.clientFailed (a `ui.fault` of the
+    //     module) the desktop falls through to the text cards below.
+    if (e.surface === 'desktop' && !DESKTOP.clientFailed) {
+      const { Client } = $.ui.resolve(e)
+      walkIns(firstSeen, all, now) // the newcomers' stamps (enteredAt): the module's walk-in fx reads them
+      const footerBits: string[] = []
+      if (office.oversized > 0) footerBits.push(L.oversizedN(office.oversized))
+      if (scanError !== null && scanError !== '') footerBits.push(scanError)
+      const props = buildOfficeProps({
+        payload, prefs, view, roomDone, now, firstSeen, usage: USAGE.fiveHour, footer: footerBits.join(' · '),
+        columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0,
+      })
+      const height = officeHeight(props, layoutOffice(props).rows.length)
+      return <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
+    }
+
+    // desktop (the text fallback) + Hebrew: a column's short lines hug its right edge
+    const colAlign = desktop && rtl ? 'flex-end' : undefined
+    const row = rtl ? 'row-reverse' : 'row'
+    const compact = width < COMPACT_BELOW
+    const { perRow, cardW } = gridFor(width)
+    const innerW = cardW - 2 // the status mark + its space
     const showDone = view.demo || prefs.showDone
     const q = view.search
     const { rooms, stat, order } = officeView(all, q, lang, showDone, roomDone, prefs.pins)
     // the ⭐ as the poll published them (the finish beat is the poll's; a render only draws)
     const stars = office.stars
-    const entering = desktop ? walkIns(firstSeen, all, now) : new Set<string>()
     const counts = headerCounts(all)
     const focusIndex = order.length === 0 ? -1 : Math.min(view.focusIndex, order.length - 1)
     const focused = focusIndex >= 0 ? order[focusIndex] : undefined
@@ -615,7 +634,6 @@ export function registerUi(on: On): void {
     // --- handlers (closures over $, declared here so `$` never crosses an import) ---
     const toggleShowDone = () => void savePrefs($, p => ({ ...p, showDone: !p.showDone }))
     const toggleMute = () => void savePrefs($, p => ({ ...p, muted: !p.muted }))
-    const toggleStill = () => void savePrefs($, p => ({ ...p, still: !p.still }))
     const toggleLang = () => void setLang($, lang === 'he' ? 'en' : 'he')
     const toggleHelp = () => void update($, viewAtom, v => ({ ...v, helpOpen: !v.helpOpen }))
     const toggleDemo = () => void setDemo($, !view.demo)
@@ -649,7 +667,6 @@ export function registerUi(on: On): void {
       <Box flexDirection={row} flexWrap={compact ? 'nowrap' : 'wrap'} gap={1}>
         <Button key="showDone" hotkey={hk('f')} plain label={compact ? (showDone ? '☑' : '☐') : `${showDone ? '☑' : '☐'} ${L.showDone}`} onPress={toggleShowDone} />
         <Button key="mute" hotkey={hk('m')} plain label={prefs.muted ? '🔕' : '🔔'} onPress={toggleMute} />
-        {desktop ? <Button key="still" hotkey={hk('s')} plain label={prefs.still ? '🖼' : '🎞'} onPress={toggleStill} /> : null}
         <Button key="lang" hotkey={hk('l')} plain label={compact ? (lang === 'he' ? 'EN' : 'עב') : L.switchTo} onPress={toggleLang} />
         <Button key="help" hotkey={hk('h')} plain label="?" onPress={toggleHelp} />
         {view.demo
@@ -752,7 +769,7 @@ export function registerUi(on: On): void {
       const line2 = joinParts([activity, modelTag, subText])
       const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
       const burst = bursting
-        ? e.surface === 'terminal' // (the desktop never reaches here: its room SVG's hop + ⭐ pop are the celebration)
+        ? e.surface === 'terminal' // (the desktop's own celebration is the office Client's hop; its text fallback gets the emoji line)
           ? (() => {
               const { Client } = $.ui.resolve(e)
               return <Client key={`confetti:${a.id}`} module="./confetti.tsx" props={{ seed: personaIndex(a.id), width: innerW }} width={innerW} height={1} />
@@ -783,43 +800,6 @@ export function registerUi(on: On): void {
       )
     }
 
-    // --- DESKTOP: a room as scalable SVG ROWS (same viewBox width for every room, so every tile is the
-    //     same size) + ONE tight row of small numbered open Buttons (see the header). The tiles' decor
-    //     is built from a minute-quantized clock and one-shot flags, so a source is byte-identical
-    //     between polls unless something visible changed — and the poll does not redraw the pane at
-    //     all unless renderKey moved (register.tsx), so the frames reload only on a visible change
-    //     (or a resize: the width picks the columns).
-    const nowMin = minuteClock(now)
-    const desktopRoom = (s: string, members: readonly Agent[], title: string, small: string) => {
-      if (e.surface !== 'desktop') return null // (narrows the element table to the desktop's, which has Svg)
-      const { Svg } = $.ui.resolve(e)
-      const decors = new Map<string, TileDecor>()
-      members.forEach((a, i) => {
-        const failed = a.failed === true
-        const starAt = stars[a.id]
-        const star = a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS
-        decors.set(a.id, {
-          index: i + 1,
-          elapsedMs: agentElapsed(a, nowMin),
-          star, justdone: star && now - (starAt ?? 0) < TILE_HOP_MS,
-          longRunning: isLongRunning(a, now), failed,
-          selected: selected?.id === a.id, focused: focused?.id === a.id, entering: entering.has(a.id),
-        })
-      })
-      const rowsSvg = roomRowSvgs(members, decors, { lang, title, small, cols, nameOf: a => cardName(a, lang) })
-      // no width/height props: the box takes the slot's width and the markup's own height at it (the
-      // markup carries its intrinsic size), so the rows scale with the pane and hug their tiles
-      return [
-        ...rowsSvg.map((r, i) => <Svg key={`roomsvg:${s}:${i}`} source={r.source} alt={r.alt} isInteractive={prefs.still ? undefined : true} />),
-        <Box key={`opens:${s}`} flexDirection={row} flexWrap="wrap" gap={0}>
-          {members.map((a, i) => {
-            const lit = selected?.id === a.id || focused?.id === a.id
-            return <Button key={`open:${a.id}`} variant={lit ? "primary" : undefined} label={`${i + 1} ${a.emoji}`} onPress={() => openAgent(a.id)} />
-          })}
-        </Box>,
-      ]
-    }
-
     // --- rooms (PAGE ensureRoom + the room header): one line each ---
     const roomBoxes = rooms.map(s => {
       const st = stat.get(s)
@@ -837,16 +817,13 @@ export function registerUi(on: On): void {
       const titleBudget = width - 3 - countsW - 2
       const titleText = clip(`💬 ${title}`, titleBudget)
       const smallText = !compact && titleBudget - cellWidth(titleText) > cellWidth(small) + 4 ? small : ''
-      // the desktop's header line holds only 📌 and the counts: the title is drawn in the room SVG
-      // (fitted by px from its end, RTL-correct), so the line never wraps or strands a 💬
-      // the desktop packs its rooms (the SVG row has its own padding; the numbers row separates them)
       return (
-        <Box key={`room:${s}`} flexDirection="column" marginTop={desktop ? 0 : 1}>
+        <Box key={`room:${s}`} flexDirection="column" marginTop={1}>
           <Box flexDirection={row} justifyContent="space-between" gap={1}>
             <Box flexDirection={row} gap={1}>
               <Button key={`pin:${s}`} plain dimColor={!pinOn} label={pinOn ? '📌' : '○'} onPress={() => togglePin(s)} />
-              {desktop ? null : <Text bold>{titleText}</Text>}
-              {!desktop && smallText ? <Text dimColor>{smallText}</Text> : null}
+              <Text bold>{titleText}</Text>
+              {smallText ? <Text dimColor>{smallText}</Text> : null}
             </Box>
             <Box flexDirection={row} gap={1}>
               <Text>{countBits[0]}</Text>
@@ -856,26 +833,14 @@ export function registerUi(on: On): void {
                 : null}
             </Box>
           </Box>
-          {desktop
-            ? desktopRoom(s, members, title, small)
-            : chunks.map((chunk, i) => (
-              <Box key={`row:${s}:${i}`} flexDirection={row} gap={1}>
-                {chunk.map(card)}
-              </Box>
-            ))}
+          {chunks.map((chunk, i) => (
+            <Box key={`row:${s}:${i}`} flexDirection={row} gap={1}>
+              {chunk.map(card)}
+            </Box>
+          ))}
         </Box>
       )
     })
-
-    // --- DESKTOP: a message as SVG text. The desktop lays every Text out left-to-right and refuses the
-    //     bidi marks that would fix it, so a Hebrew line holding Latin ("ב-Claude Code") or ending in
-    //     ":" came out scrambled; an SVG <text direction="rtl"> is ordered (and centered) correctly ---
-    const desktopMessage = (title: string, lines: readonly string[]) => {
-      if (e.surface !== 'desktop') return null
-      const { Svg } = $.ui.resolve(e)
-      const m = messageSvg(title, lines, lang)
-      return <Svg source={m.source} alt={m.alt} />
-    }
 
     // --- empty states (PAGE emptyHTML) ---
     const empty = order.length === 0 && (() => {
@@ -884,12 +849,10 @@ export function registerUi(on: On): void {
       return (
         <Box key="empty" flexDirection="column" alignItems="center" marginTop={1}>
           <Text>🏢</Text>
-          {desktopMessage(msg, kind === 'office' ? splitSentence(L.emptySub) : []) ?? (
-            <Box flexDirection="column" alignItems="center">
-              <Text bold wrap="wrap">{msg}</Text>
-              {kind === 'office' ? <Text dimColor wrap="wrap">{L.emptySub}</Text> : null}
-            </Box>
-          )}
+          <Box flexDirection="column" alignItems="center">
+            <Text bold wrap="wrap">{msg}</Text>
+            {kind === 'office' ? <Text dimColor wrap="wrap">{L.emptySub}</Text> : null}
+          </Box>
           {kind === 'office' ? <Button key="watchDemo" variant="primary" label={L.watchDemo} onPress={() => void setDemo($, true)} /> : null}
         </Box>
       )

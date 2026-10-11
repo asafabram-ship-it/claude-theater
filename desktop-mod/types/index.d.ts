@@ -147,7 +147,7 @@ export type TheaterPrefs = {
   showDone: boolean
   /** Pinned rooms (session_full ids), drawn first. */
   pins: string[]
-  /** DESKTOP: draw the rooms as still images instead of animated frames (a redraw — a scroll — then does not blink). */
+  /** DESKTOP: the office Client draws no walk-in / finish / status effects (its frame clock stays off). */
   still?: boolean
 }
 

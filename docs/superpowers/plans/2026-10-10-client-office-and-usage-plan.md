@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**סטטוס:** שלב 1 (Tasks 1.1-1.4 + 1.4b) ושלב 2 הטהור (Tasks 2.1-2.2) הושלמו 2026-10-10 15:51 (`503fc5b`, 111 בדיקות); הכרעות אסף באפיון סעיף 2 פריטים 7-10 (Task 1.2b מותנה במדידה; מחיקה מלאה של יומן האבחון; Task 1.4b בוצע; 2.1-2.2 לפני השער). `OfficeDrawer` בחוזה קיבל `elapsedMin`/`sub` (הכרעת תוכנית 15:xx). Task 0.1 הושלם 06:12 (ה-probe בתיקיית הטעינה החמה של הסשן); Task 0.2 (הבדיקה החיה) ו-Task 1.5 (מדידה) ממתינים לאסף; Tasks 2.3+ מותנות בבדיקות 1-3 - ראו HANDOFF 15:51. פרומפט ההמשך: `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
+**סטטוס:** שלב 0 הושלם 2026-10-10 19:50 (בדיקות 1-4 PASS; הכרעות 11-12 באפיון סעיף 2; הערות תיקון תחת Tasks 2.3/2.4/2.5/3.2/3.4). שלב 1 (1.1-1.4, 1.4b) ושלב 2 עד Task 2.4 הושלמו 2026-10-11 06:00 (`9e44f9e`, 127 בדיקות). Task 2.5 נעצר לפני שהתחיל - להריץ מחדש; אחריו 2.6, 2.7; 2.8 עם אסף; Task 1.5; שלב 3. ראו HANDOFF 2026-10-11 06:00. פרומפט ההמשך: `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
 
 **Goal:** On the Claude Desktop app, draw the Theater office inside ONE `Client` surface module so that data updates and scrolling never blink, characters are clickable, the scan stops slowing the machine, and the prompt footer shows the five-hour rate-limit meter.
 

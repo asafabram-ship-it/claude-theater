@@ -1,6 +1,6 @@
 # פרומפט להמשך: בניית המשרד על Client (תיאטרון הסוכנים בדסקטופ)
 
-נשמר: 2026-10-10 15:51 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 · Ultracode מופעל
+נשמר: 2026-10-11 06:00 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 · Ultracode מופעל
 
 ---
 
@@ -10,21 +10,20 @@
 
 **תור ראשון, לפני כל עבודה:**
 1. `get_usage` (self). צור CronCreate "usage-guard" כל 20 דקות (דקה לא עגולה) לפי סקיל `save-documents` (סעיף "שומר מכסה").
-2. קרא, בסדר הזה: `desktop-mod/HANDOFF.md` (שלושת הסעיפים העליונים, 15:51 / 13:15 / 11:09 - כולל "Carry ל-Task 2.3"), `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (סעיפים 2 - כולל פריטים 7-10, 4, 8, 12 חובה), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` ("Global Constraints" + "Shared interfaces" + Task 0.2, Task 1.5, Task 1.2b, Phase 2 עם ההערות ב-2.3/2.4), והלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט; Tasks 0.1, 1.1-1.4, 1.4b, 2.1, 2.2 כבר `complete` - אל תריץ אותן שוב; אם הלדג'ר חסר, פתח חדש לפי `superpowers:subagent-driven-development` ורשום אותן כ-complete לפי HANDOFF).
+2. קרא, בסדר הזה: `desktop-mod/HANDOFF.md` (הסעיפים העליונים: "נקודת שמירה 2026-10-11 06:00", "שלב 0 - תוצאות הבדיקה החיה", 15:51 - כולל ה-Carry), `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (סעיפים 2 - כולל פריטים 7-12, 4, 8, 12 חובה), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` ("Global Constraints" + "Shared interfaces" + ה-Amendment תחת Tasks 2.3/2.4/2.5/3.2/3.4, Task 1.5, Task 1.2b), והלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט; Tasks 0.1, 0.2, 1.1-1.4, 1.4b, 2.1-2.4 כבר `complete` - אל תריץ אותן שוב; אם הלדג'ר חסר, פתח חדש לפי `superpowers:subagent-driven-development` ורשום אותן כ-complete לפי HANDOFF).
 3. אם `git status` מראה קבצים לא מקומטים - קמט ודחוף (`docs(mod): checkpoint <תאריך>`, עם השורה `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`).
 
-**איפה אנחנו:** שלב 1 (סריקה חסכונית) סגור ושלב 2 הטהור בוצע: Tasks 1.1-1.4, 1.4b, 2.1 (`office-layout.ts`) ו-2.2 (`office-props.ts`) בקוד, 111 בדיקות, הכול נדחף (`503fc5b`). ההכרעות של אסף מ-10.10 רשומות באפיון סעיף 2 פריטים 7-10; חוזה `OfficeDrawer` הורחב (`elapsedMin`, `sub`). שלב 0: מוד הבדיקה `theater-probe` בנוי ונסקר (Task 0.1), אבל **7 הבדיקות מול המסך (Task 0.2) טרם בוצעו**. Task 1.5 (מדידה) טרם בוצע.
+**איפה אנחנו:** שלב 0 הושלם (בדיקות 1-4 PASS; שינויי תכנון באפיון §2 פריטים 11-12: המנוע גולל טבעית, המד דרך `$.ui.status`). שלב 1 סגור. שלב 2: Tasks 2.1-2.4 בקוד ונסקרו (`office-layout.ts`, `office-props.ts`, `office-chrome.ts`, `office-client.tsx`, `ui.tsx` מחזיר Client אחד בדסקטופ), 127 בדיקות, הכול נדחף (`9e44f9e`). **Task 2.5 נעצר לפני שהתחיל** (אסף יצא) - מתחילים ממנו. Task 1.5 (מדידה) טרם בוצע. המוד הראשי עדיין כבוי.
 
-**המשימה, לפי הסדר:**
+**המשימה, לפי הסדר (SDD: סוכן טרי לכל משימה, סקירה, סבבי תיקון, מודל Fable):**
 
-**א. Task 0.2 - הבדיקה החיה (אסף מול המסך):**
-1. טען את ה-probe בסשן הזה: הפעל את הסקיל `plugin-authoring` (מדפיס את תיקיית הטעינה החמה של הסשן, `C:\Users\asafa\.claude\dev-mods\<session-id>\`), העתק לשם את `C:\Users\asafa\.claude\dev-mods\87c79db4-401e-4363-a35f-1c75f8fa5a35\theater-probe\` כולה חוץ מ-`.claude-plugin\types` (ארבעה קבצים), ובקש מאסף לאשר "Enable for this session". המוד נטען בסוף התור **ופותח את החלונית "probe" בעצמו** (ב-`session.start`). אם לא נפתחה: אסף כותב הודעה רגילה `theater-probe` (hook של `prompt.submit` מנקה תווי כיוון, פותח, ומפיל את ההודעה). **הקלדת `/theater-probe` אצל אסף לא עובדת** - המקלדת שלו מכניסה תווי RLE לפני ה-`/`. היומן: `C:\Users\asafa\.claude\theater-probe.log` (`invalidate`+`render` כל 2 שניות כשהחלונית מצוירת).
-2. בקש מאסף, בעברית פשוטה, צעד אחרי צעד, את 7 הבדיקות (אפיון §12 / תוכנית Task 0.2 שלב 1), עם העדכונים: בדיקה 4 = אין שורת `render` ביומן בין `message press` לשורת ה-`invalidate` הבאה; "Press me" בלחיצת **עכבר**, לא במקש `p`; בדיקה 6 - CPU עם החלונית בחזית ובלי סוכן שרץ (ב-HANDOFF 11:09 שתי מדידות שלא עונות על זה). קרא את היומן בעצמך אחרי כל בדיקה (`tail -40`). ממצאים שכבר ידועים מצילום: אימוג'י = 2 תאים, רקע צבעוני עובד, עברית תקינה, שורות של 60 תאים נשברות ברוחב 31.
-3. רשום את התוצאות ב-`desktop-mod/HANDOFF.md` בסעיף `## שלב 0 - תוצאות הבדיקה החיה (<תאריך>)`, קמט ודחוף (`docs(mod): phase 0 probe results`).
+**א. Task 2.5** (`register.tsx`: hook `ui.message` עם matcher `{ element: OFFICE_KEY }` לכל סוגי ההודעות חוץ מ-`content`/`pull`, `ui.fault` → `DESKTOP.clientFailed` + toast + invalidate ו-`/theater` מאפס, latch לציור מחדש; **בלי** hook ל-`ui.scroll` ובלי ערוץ pull - לפי ה-Amendment בראש ה-brief). Carry מ-2.4 שחייב להיכנס כאן: להחזיר `'Client' in els` בענף הדסקטופ ב-`ui.tsx`; להחליף את גשר הבדיקות `pressVia` ב-`ui.test.ts` בפוסטים אמיתיים דרך ה-Client; להפוך את `props.search === ''` ב-`office-client.mounted.test.ts` לציפייה האמיתית. ה-brief: `.superpowers/sdd/.../task-2.5-brief.md` (אם חסר: `scripts/task-brief` של הסקיל). טבלת ההודעות וחוזה ה-mount בדוחות 2.3 ו-2.4.
 
-**ב. Task 1.5 - מדידה:** לפי התוכנית (הפעלה זמנית של המוד ב-`~/.claude/settings.json`, שיחה חדשה, `/theater`, 5 סוכנים, 60 שניות, ואז הסרת השורה). ההפעלה היא פעולה על settings - לבקש אישור מאסף במפורש באותה הודעה. אם מעל היעד (§8.7) גם אחרי `POLL_MS` 8000 → Task 1.2b (מותנה, אפיון §2.7).
+**ב. Task 2.6** (ניקוי: בדיקות ה-SVG של הדסקטופ שמוגנות ב-`SVG_DESKTOP=false`, הפונקציות המתות ב-`office-svg.ts`, `TILE_HOP_MS`, `tileOf`/`roomSvgOf` - הרשימה בדוח 2.4 סעיף 6) ו-**Task 2.7** (ליטוש fx ו-hover; `rowCount` ב-`office-layout.ts` בלי בניית תאים; הגנה ב-`onPointer` על שורות מעבר לתקציב החלון; `office-view.ts` לשבירת המעגל `ui.tsx ⇄ office-props.ts`).
 
-**ג. שלב 2 מ-Task 2.3 ואילך - רק אם בדיקות 1-3 של שלב 0 עוברות** (2.1-2.2 כבר בוצעו), עם `superpowers:subagent-driven-development` (סוכן טרי לכל משימה, סקירה בין משימות, מודל Fable). אם 1 נכשל ו-4 עובר → ערוץ ה-pull (אפיון 6.6; Task 2.5 שלב 7). אם 1 ו-4 נכשלים → עצור ודווח; הגישה נבחרת מחדש (אפיון, סוף §12). הערות Carry לשלב 2 בתוכנית (Task 2.3/2.4), ב-HANDOFF 15:51 ("Carry ל-Task 2.3") ובלדג'ר - קרא אותן לפני ה-dispatch של 2.3.
+**ג. Task 2.8 - עם אסף מול המסך:** הפעלה מחדש של המוד (`CLAUDE_CODE_PLUGIN_DIRS` ב-`~/.claude/settings.json` - לבקש אישור מפורש), שיחה חדשה, `/theater`, בדיקה בעין לפי "Carry → 2.8" בלדג'ר (מקשים כפולים hotkey+onKey, caret בחיפוש בזמן פרסום, pointer y אחרי גלילה, גובהי Box/spacer, הבהוב). תיקונים → סבבים קטנים.
+
+**ד. Task 1.5** (מדידת CPU, 5 סוכנים, 60 שנ'; אם מעל היעד → Task 1.2b), **שלב 3** (`usage.ts`, `session.measure`, `$.ui.status` + כותרת + toasts; Task 3.4 כבר בוצע), **Task 4.1** (מחיקת השיבוטים ו-`dev-mods/*/theater-probe`, HANDOFF סופי, מיזוג ל-main לפי הכרעת אסף).
 
 **כללים שאסף קבע (אל תשאל שוב):**
 - שיחה איתו בעברית פשוטה בלבד. קוד והודעות קומיט באנגלית.

@@ -56,6 +56,11 @@ function width(text: string): number {
   return w
 }
 
+/** The width of `text` in cells, for the surface module's own line wrapping (the chrome's drawer and empty-office text). */
+export function textWidth(text: string): number {
+  return width(text)
+}
+
 export function blankRow(id: string, columns: number): CellRow {
   return { id, cells: Array.from({ length: Math.max(0, columns) }, () => ({ ch: ' ' })) }
 }

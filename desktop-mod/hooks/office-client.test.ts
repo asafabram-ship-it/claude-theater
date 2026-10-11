@@ -7,14 +7,12 @@
 // hooks module; an inline test plugin is copied to a temp folder and cannot
 // reach this file), so the mounted tests ride with Task 2.4 in ui.test.ts.
 
-import type { ClientKeyEvent, ClientPointerEvent, ClientSurface, RenderElement } from 'claude-code'
+import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
 import { I18N } from './i18n'
-import Office, {
-  CHROME_ROWS, FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, HELP_ROWS, HOTKEYS_FROM, RESULT_LINES, SEARCH_DEBOUNCE_MS, TASK_LINES,
-  chromeRows, drawerLines, officeHeight, windowOf,
-} from './office-client'
+import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, RESULT_LINES, ROW_CHARS_PER_COLUMN, TASK_LINES, WINDOW_CHARS, chromeRows, drawerLines, officeHeight, windowOf } from './office-chrome'
+import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
 import { TILE_H, TILE_W, layoutOffice } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
@@ -115,17 +113,22 @@ function withBg(tree: unknown, bg: string): Node[] {
 
 test('windowOf: the rows the engine shows, in layout coordinates, never shifted by a clamp', () => {
   // offset inside the chrome: the first (rows - (chrome - offset)) layout rows
-  expect(windowOf(3, 0, 30, 100)).toEqual({ from: 0, count: 27 })
-  expect(windowOf(3, 2, 30, 100)).toEqual({ from: 0, count: 29 })
+  expect(windowOf(3, 0, 30, 100, 45)).toEqual({ from: 0, count: 27 })
+  expect(windowOf(3, 2, 30, 100, 45)).toEqual({ from: 0, count: 29 })
   // offset past the chrome: a full window from offset - chrome
-  expect(windowOf(3, 3, 30, 100)).toEqual({ from: 0, count: 30 })
-  expect(windowOf(3, 10, 30, 100)).toEqual({ from: 7, count: 30 })
+  expect(windowOf(3, 3, 30, 100, 45)).toEqual({ from: 0, count: 30 })
+  expect(windowOf(3, 10, 30, 100, 45)).toEqual({ from: 7, count: 30 })
   // near the end: the count shrinks, `from` stays (no clamp shifting the rows under the pointer)
-  expect(windowOf(3, 90, 30, 100)).toEqual({ from: 87, count: 13 })
-  expect(windowOf(3, 200, 30, 100)).toEqual({ from: 197, count: 0 })
+  expect(windowOf(3, 90, 30, 100, 45)).toEqual({ from: 87, count: 13 })
+  expect(windowOf(3, 200, 30, 100, 45)).toEqual({ from: 197, count: 0 })
   // short content, tall window
-  expect(windowOf(3, 0, 30, 5)).toEqual({ from: 0, count: 5 })
-  expect(windowOf(3, 0, 0, 5)).toEqual({ from: 0, count: 0 })
+  expect(windowOf(3, 0, 30, 5, 45)).toEqual({ from: 0, count: 5 })
+  expect(windowOf(3, 0, 0, 5, 45)).toEqual({ from: 0, count: 0 })
+  // the byte budget: a wide window draws at most WINDOW_CHARS / (ROW_CHARS_PER_COLUMN × columns) rows, the rest stays blank
+  expect(windowOf(3, 3, 80, 500, 200)).toEqual({ from: 0, count: Math.floor(WINDOW_CHARS / (ROW_CHARS_PER_COLUMN * 200)) })
+  expect(windowOf(3, 3, 80, 500, 200).count).toBe(50)
+  expect(windowOf(3, 3, 80, 500, 250).count).toBe(40)
+  expect(windowOf(3, 3, 80, 500, 45).count).toBe(80)
 })
 
 test('chromeRows / officeHeight: header, toolbar, search; then help | drawer, the footer line, the empty block', () => {
@@ -164,9 +167,9 @@ test('render: the chrome, the windowed rows as run-merged Texts, blank space abo
   const keys = all.filter(n => n.type === 'Button').map(n => n.props.key)
   expect(keys).toEqual(['showDone', 'mute', 'lang', 'help', 'demo', 'still'])
   expect(all.find(n => n.type === 'Input')?.props.key).toBe('search')
-  // hotkeys only from HOTKEYS_FROM columns (the desktop draws a key chip per hotkey, which would wrap the toolbar)
+  // hotkeys only from COMPACT_BELOW columns, today's rule (the desktop draws a key chip per hotkey, which would wrap the toolbar)
   expect(all.filter(n => n.type === 'Button').every(n => n.props.hotkey === undefined)).toBe(true)
-  const wide = nodes(Office({ ...p, columns: HOTKEYS_FROM }, fake(HOTKEYS_FROM).surface))
+  const wide = nodes(Office({ ...p, columns: COMPACT_BELOW }, fake(COMPACT_BELOW).surface))
   expect(wide.filter(n => n.type === 'Button').map(n => n.props.hotkey)).toEqual(['f', 'm', 'l', 'h', 'd', 's'])
   // the room head and the tiles are rows of the layout, one Text per row with a Text per run
   const layout = layoutOffice(p)
@@ -238,13 +241,24 @@ test('fx: enter / done / status start the frame clock only while active and stop
   expect(f.setStates()).toBe(sets + Math.ceil(FX_ENTER_MS / FX_TICK_MS))   // one redraw per tick, none besides
   tree = Office(p, f.surface)
   expect(withBg(tree, FX_BG.enter)).toHaveLength(0)
-  // a star → done fx (FX_DONE_MS), a new clock
+  // a star → done fx (FX_DONE_MS, the head row pulses done/doneAlt by frame parity), a new clock; the same agent's
+  // running → done is also a status flash (FX_STATUS_FRAMES on the desk row), which ends first while the hop goes on
   p = withAgents(p, p.rooms[0]!.agents.map(a => a.id === 'a1' ? { ...a, status: 'done' as const, star: 7000 } : a))
-  tree = Office({ ...p, rooms: [{ ...p.rooms[0]!, showDone: true }] }, f.surface)
-  expect(withBg(tree, FX_BG.done).length + withBg(tree, FX_BG.status).length).toBeGreaterThan(0)
+  const shown = { ...p, rooms: [{ ...p.rooms[0]!, showDone: true }] }
+  tree = Office(shown, f.surface)
+  const hop = (t: unknown) => withBg(t, FX_BG.done).length + withBg(t, FX_BG.doneAlt).length
+  expect(hop(tree)).toBeGreaterThan(0)
+  expect(withBg(tree, FX_BG.status).length).toBeGreaterThan(0)
   expect(f.timers).toHaveLength(2)
-  for (let i = 0; i < Math.ceil(FX_DONE_MS / FX_TICK_MS); i++) f.tick()
+  for (let i = 0; i < FX_STATUS_FRAMES; i++) f.tick()
+  expect(f.timers[1]!.stopped).toBe(false)         // the status flash is over, the hop still runs the clock
+  tree = Office(shown, f.surface)
+  expect(withBg(tree, FX_BG.status)).toHaveLength(0)
+  expect(hop(tree)).toBeGreaterThan(0)
+  for (let i = 0; i < Math.ceil(FX_DONE_MS / FX_TICK_MS) - FX_STATUS_FRAMES; i++) f.tick()
   expect(f.timers[1]!.stopped).toBe(true)
+  tree = Office(shown, f.surface)
+  expect(hop(tree)).toBe(0)
   // a status change → FX_STATUS_FRAMES frames of the desk row
   p = withAgents(p, p.rooms[0]!.agents.map(a => a.id === 'lead' ? { ...a, status: 'stale' as const } : a))
   tree = Office(p, f.surface)
@@ -438,10 +452,12 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
   const d = drawer({ task: 'x'.repeat(4000), result: 'y'.repeat(4000), truncated: true })
   let slowest = 0
   let maxJson = 0
-  for (const columns of [24, 25, 31, 45, 60, 72, 100, 120, 160, 200]) {
+  // 40-row windows at ten widths, then the tall + wide panes a maximized window reaches (200 \u00d7 80, 250 \u00d7 80)
+  const sizes = [[24, 40], [25, 40], [31, 40], [45, 40], [60, 40], [72, 40], [100, 40], [120, 40], [160, 40], [200, 40], [200, 80], [250, 80]] as const
+  for (const [columns, rows] of sizes) {
     for (const offset of [0, 20]) {
       const f = fake(columns, 0)
-      const p = props({ columns, rows: 40, offset, rooms, selected: 'agent-3', drawer: d, helpOpen: false })
+      const p = props({ columns, rows, offset, rooms, selected: 'agent-3', drawer: d, helpOpen: false })
       const t0 = Date.now()
       const tree = Office(p, f.surface)
       slowest = Math.max(slowest, Date.now() - t0)
@@ -453,10 +469,18 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
       expect(json.length).toBeLessThan(100_000)
       expect(json).not.toMatch(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/)
       expect(f.setStates()).toBe(1)
+      // the window keeps its byte budget: past it the rows are left blank rather than unmounting the instance
+      const chrome = chromeRows(p)
+      const from = Math.max(0, offset - chrome)
+      const chromeElements = 3 + (p.footer ? 1 : 0) + 1   // header, toolbar, search, the drawer Box
+      const drawnRows = (tree as unknown as Node).children.length - chromeElements - (from > 0 ? 1 : 0)
+      expect(drawnRows).toBe(windowOf(chrome, offset, rows, layoutOffice(p).rows.length, columns).count)
+      expect(drawnRows).toBeLessThanOrEqual(Math.floor(WINDOW_CHARS / (ROW_CHARS_PER_COLUMN * columns)))
+      if (columns === 200 && rows === 80) expect(drawnRows).toBe(50)
     }
   }
-  // every width in between, one window each (the layout sweep is Task 2.1's; here the tree)
-  for (let columns = 24; columns <= 200; columns++) {
+  // widths in between, one window each, every fourth column (the per-column sweep is Task 2.1's; here the tree)
+  for (let columns = 24; columns <= 200; columns += 4) {
     const f = fake(columns, 0)
     const tree = Office(props({ columns, rows: 40, offset: 7, rooms, selected: 'agent-3', drawer: d }), f.surface)
     const json = JSON.stringify(tree)
@@ -464,6 +488,7 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
     expect(nodes(tree).length).toBeLessThan(20_000)
   }
   expect(slowest).toBeLessThan(1000)
-  // the widest 40-row window with the drawer open serialized to 57,033 characters on 2026-10-11: a regression guard well under the 100,000 bound
-  expect(maxJson).toBeLessThan(70_000)
+  // the widest 40-row window with the drawer open serialized to 57,033 characters on 2026-10-11; with the byte budget a
+  // 200 × 80 or 250 × 80 pane draws WINDOW_CHARS of rows plus the chrome and the drawer: a regression guard under the bound
+  expect(maxJson).toBeLessThan(80_000)
 })

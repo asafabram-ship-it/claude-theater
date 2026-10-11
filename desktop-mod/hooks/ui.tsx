@@ -107,6 +107,7 @@ import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from 
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
 import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS, messageSvg, roomRowSvgs, type TileDecor } from './office-svg'
+import { COMPACT_BELOW } from './office-chrome'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
 
@@ -123,8 +124,8 @@ const tickAtom = atom({ plugin: 'agent-theater', key: 'tick' } as const, 0)
 export const STORE_ROOM_DONE_KEY = 'roomDone'
 /** The narrowest body the pane lays out for (a narrower bodyColumns is drawn as this and scrolls). */
 export const MIN_WIDTH = 24
-/** Under this many columns the header, toolbar, room headers and nav draw icons alone, without key-hint chips. */
-export const COMPACT_BELOW = 60
+/** Under this many columns the header, toolbar, room headers and nav draw icons alone, without key-hint chips (the one threshold, office-chrome.ts: the desktop Client's toolbar reads it too). */
+export { COMPACT_BELOW } from './office-chrome'
 /** Two cards share a row from this width, three from COLS3_FROM. */
 export const COLS2_FROM = 72
 export const COLS3_FROM = 120

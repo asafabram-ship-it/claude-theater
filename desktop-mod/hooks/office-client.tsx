@@ -2,16 +2,18 @@
 // from OfficeProps, hit-tests the pointer and posts actions to the hooks.
 // No `$` here: everything reaches the hooks through `surface.post`, and the
 // hooks reach the module through new props (a redraw, or a `ui.message`
-// hook answering `{ props }`).
+// hook answering `{ props }`). The chrome's pure maths (heights, the drawer's
+// lines, the window) are office-chrome.ts, shared with the hooks.
 //
 // Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
 // Client as tall as the content (`officeHeight`); `props.offset` is the
 // engine's window offset and `props.rows` the pane's body height. The module
 // draws the chrome (header, toolbar, search, [footer], [help | drawer]), then
 // ONE spacer Box for the rows scrolled past, then only the layout rows the
-// window shows (`windowOf`), then nothing: the tree is bounded by the window,
-// not by the number of agents. Pointer rows are Client rows, so a hit is
-// `hitAt(layout, x, y - chromeRows)` on the full layout.
+// window shows (`windowOf`, capped by a byte budget), then nothing: the tree
+// is bounded by the window, not by the number of agents. Pointer rows are
+// Client rows, so a hit is `hitAt(layout, x, y - chromeRows)` on the full
+// layout.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while an fx is active and is stopped when the last one ends; the render
@@ -25,29 +27,21 @@
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { TILE_H, cut, hitAt, layoutOffice, rowRuns, textWidth, windowRows } from './office-layout'
+import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, drawerLines, emptyLines, windowOf } from './office-chrome'
+import type { DrawerLine } from './office-chrome'
+import { TILE_H, cut, hitAt, layoutOffice, rowRuns, windowRows } from './office-layout'
 import type { Cell, Hit, OfficeLayout } from './office-layout'
-import type { OfficeDrawer, OfficeMessage, OfficeProps } from './office-props'
+import type { OfficeMessage, OfficeProps } from './office-props'
 
-/** The chrome rows always there: header, toolbar, search. */
-export const CHROME_ROWS = 3
+/** The brief's contract: the chrome height constant is reachable from the module too (its home is office-chrome.ts). */
+export { CHROME_ROWS } from './office-chrome'
+
 export const FX_TICK_MS = 250
 export const FX_ENTER_MS = 700
 export const FX_DONE_MS = 1000
 /** A status change flashes the desk row for this many frames of the fx clock. */
 export const FX_STATUS_FRAMES = 2
 export const SEARCH_DEBOUNCE_MS = 150
-/** Toolbar hotkeys from this width (ui.tsx's COMPACT_BELOW): the desktop draws a key chip per hotkey, which would wrap a narrow toolbar. */
-export const HOTKEYS_FROM = 60
-/** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested). */
-export const TASK_LINES = 4
-export const RESULT_LINES = 3
-/** The help rows: a label key and the keys shown beside it (spec §6.4). */
-const HELP: ReadonlyArray<readonly [string, string]> = [
-  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x · Esc'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scHelp', 'h'],
-]
-/** The help popover's height: the border, the title row, one row per shortcut. */
-export const HELP_ROWS = 2 + 1 + HELP.length
 /** The background highlights the module lays over the layout's cells (the layout itself stays pure). */
 export const FX_BG = {
   hover: '#2b3350', focus: '#3b4f8a', selected: '#4a3f8a',
@@ -84,121 +78,10 @@ export type OfficeInst = {
 /** The local state: what a redraw reads (`setState` only from events). */
 export type OfficeState = { hover: string | null; focus: string | null; frame: number; inst: OfficeInst }
 
-export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
-
 type Surface = ClientSurface<OfficeState>
 
 function send(surface: Surface, m: OfficeMessage): void {
   surface.post(m)
-}
-
-// ---------------------------------------------------------------------------
-// pure parts (exported: the hooks size the Client with them, the tests pin them)
-// ---------------------------------------------------------------------------
-
-/**
- * The layout rows the engine's window shows, in layout coordinates: `from` is
- * the first row (the rows above it are one spacer), `count` how many — never
- * more than the content holds, so `windowRows` has nothing to clamp and the
- * rows stay under the pointer.
- */
-export function windowOf(chrome: number, offset: number, bodyRows: number, len: number): { from: number; count: number } {
-  const from = Math.max(0, offset - chrome)
-  const visible = Math.max(0, bodyRows - Math.max(0, chrome - offset))
-  return { from, count: Math.max(0, Math.min(visible, len - from)) }
-}
-
-/** `s` without a trailing ellipsis (no regex: a surface module spells no `$`, not even as an anchor). */
-function trimEllipsis(s: string): string {
-  return s.endsWith('…') ? s.slice(0, -1) : s
-}
-
-/** `text` broken into at most `max` lines of `width` cells (whole words; a longer word is split), the last one ending in … when lines were dropped. */
-export function wrapLines(text: string, width: number, max: number): string[] {
-  const out: string[] = []
-  if (width < 1 || max < 1) return out
-  const words = text.split(/\s+/).filter(Boolean)
-  let line = ''
-  let dropped = false
-  for (let i = 0; i < words.length; i++) {
-    let word = words[i]!
-    if (out.length >= max) { dropped = true; break }
-    const cand = line ? `${line} ${word}` : word
-    if (textWidth(cand) <= width) { line = cand; continue }
-    if (line) { out.push(line); line = '' }
-    while (textWidth(word) > width) {
-      if (out.length >= max) { dropped = true; break }
-      // the widest prefix within `width` cells, through the layout's own cut (one pass per line, not per code point)
-      let chunk = cut(word, width + 1)
-      if (chunk === word || textWidth(chunk) > width) chunk = cut(word, width)
-      if (chunk.endsWith('…')) chunk = chunk.slice(0, -1)
-      if (!chunk) break
-      out.push(chunk)
-      word = word.slice(chunk.length)
-    }
-    if (out.length >= max) { dropped = dropped || word.length > 0 || i < words.length - 1; break }
-    line = word
-  }
-  if (line) { if (out.length < max) out.push(line); else dropped = true }
-  if (dropped && out.length > 0) {
-    const last = out[out.length - 1]!
-    out[out.length - 1] = textWidth(last) < width ? `${last}…` : `${trimEllipsis(cut(last, width - 1))}…`
-  }
-  return out
-}
-
-/** The drawer's lines at `inner` cells (its box is `2 + lines.length` rows tall), from the drawer and the labels. */
-export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number): DrawerLine[] {
-  const lbl = (k: string) => L[k] ?? ''
-  const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
-  if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
-  const chips = [...d.chips]
-  if (d.elapsedMin !== null) chips.push(`${d.chips[0] === lbl('dDone') ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}′`)
-  const shown: string[] = []
-  let used = 0
-  for (const c of chips) {
-    const w = textWidth(c) + 2 + (shown.length ? 1 : 0)
-    if (used + w > inner) break
-    shown.push(c)
-    used += w
-  }
-  lines.push({ kind: 'chips', text: shown.map(c => ` ${c} `).join(' '), chips: shown })
-  lines.push({ kind: 'head', text: cut(`${lbl('dModel')}: 🧠 ${d.model} · ${lbl('dAction')}: ${d.act}`, inner) })
-  lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
-  for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })
-  if (d.result) {
-    lines.push({ kind: 'head', text: cut(lbl('dResult'), inner) })
-    for (const t of wrapLines(d.result, inner, RESULT_LINES)) lines.push({ kind: 'body', text: t })
-    if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner) })
-  }
-  return lines
-}
-
-/** The empty office's lines: the message, the sub's sentences (split as today's `splitSentence`), each wrapped. */
-function emptyLines(p: OfficeProps): { msg: string[]; sub: string[] } {
-  if (!p.empty) return { msg: [], sub: [] }
-  const w = Math.max(1, p.columns)
-  return { msg: wrapLines(p.empty.msg, w, 2), sub: p.empty.sub ? p.empty.sub.split(/\s[-—]\s/).flatMap(s => wrapLines(s, w, 2)) : [] }
-}
-
-/** The rows the empty-office block takes (a margin row, 🏢, the lines, the demo Button). */
-function emptyRows(p: OfficeProps): number {
-  if (!p.empty) return 0
-  const e = emptyLines(p)
-  return 1 + 1 + e.msg.length + e.sub.length + (p.empty.kind === 'office' ? 1 : 0)
-}
-
-/** The rows above the layout: header, toolbar, search, the footer line when there is one, then the help popover or the drawer. */
-export function chromeRows(p: OfficeProps): number {
-  let n = CHROME_ROWS + (p.footer ? 1 : 0)
-  if (p.helpOpen) n += HELP_ROWS
-  else if (p.drawer) n += 2 + drawerLines(p.drawer, p.labels, Math.max(1, p.columns - 4)).length
-  return n
-}
-
-/** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `layoutOffice(p).rows.length`). */
-export function officeHeight(p: OfficeProps, layoutRows: number): number {
-  return chromeRows(p) + (p.empty ? emptyRows(p) : layoutRows)
 }
 
 // ---------------------------------------------------------------------------
@@ -209,16 +92,20 @@ function layoutKeyOf(p: OfficeProps): string {
   return JSON.stringify([p.columns, p.rtl, p.selected, p.rooms])
 }
 
+/** The layout memo: computed first, the key assigned last, so a throw never leaves a stale layout under a new key. */
 function setLayout(inst: OfficeInst, p: OfficeProps, key: string): void {
-  inst.layoutKey = key
-  inst.layout = layoutOffice(p)
-  inst.hitById = new Map()
-  inst.order = []
-  for (const hit of inst.layout.hits) {
+  const layout = layoutOffice(p)
+  const hitById = new Map<string, Hit>()
+  const order: string[] = []
+  for (const hit of layout.hits) {
     if (hit.kind !== 'agent') continue
-    inst.hitById.set(hit.id, hit)
-    inst.order.push(hit.id)
+    hitById.set(hit.id, hit)
+    order.push(hit.id)
   }
+  inst.layout = layout
+  inst.hitById = hitById
+  inst.order = order
+  inst.layoutKey = key
 }
 
 function newInst(p: OfficeProps): OfficeInst {
@@ -395,11 +282,14 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     if (key !== inst.layoutKey) setLayout(inst, props, key)
     const layout = inst.layout
 
-    // --- the drawer's lines, memoised too (they decide the chrome's height) ---
+    // --- the drawer's lines, memoised too (they decide the chrome's height); the key assigned after the lines ---
     const inner = Math.max(1, props.columns - 4)
     if (props.drawer && !props.helpOpen) {
       const dk = JSON.stringify([props.columns, props.lang, props.drawer])
-      if (dk !== inst.drawerKey) { inst.drawerKey = dk; inst.drawer = drawerLines(props.drawer, props.labels, inner) }
+      if (dk !== inst.drawerKey) {
+        inst.drawer = drawerLines(props.drawer, props.labels, inner)
+        inst.drawerKey = dk
+      }
     }
     inst.chrome = CHROME_ROWS + (props.footer ? 1 : 0) + (props.helpOpen ? HELP_ROWS : props.drawer ? 2 + inst.drawer.length : 0)
 
@@ -419,13 +309,13 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const L = props.labels
     const lbl = (k: string) => L[k] ?? ''
     const row = props.rtl ? 'row-reverse' : 'row'
-    const hk = (k: string) => (props.columns >= HOTKEYS_FROM ? { hotkey: k } : {})
+    const wide = props.columns >= COMPACT_BELOW
+    const hk = (k: string) => (wide ? { hotkey: k } : {})
     const line = (children: RenderElement[], extra: Record<string, unknown> = {}) => Box({ flexDirection: row, columnGap: 1, flexWrap: 'nowrap', height: 1, overflow: 'hidden', ...extra, children })
     const kids: RenderElement[] = []
 
     // --- header: the counts, the 5-hour meter ---
     const c = props.counts
-    const wide = props.columns >= HOTKEYS_FROM
     const usage = props.usage ? ` · ${Math.round(props.usage.pct) >= 80 ? '⚠' : '⏳'} 5h ${Math.round(props.usage.pct)}%` : ''
     const counts = wide
       ? `🟢 ${c.run} ${lbl('working')}${c.idle ? ` · ⏳ ${c.idle} ${lbl('idleN')}` : ''} · ✅ ${c.done} ${lbl('finished')}`
@@ -443,9 +333,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     ]))
 
     // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS ---
+    const placeholder = lbl('searchPlaceholder')
     kids.push(line([Input({
       key: 'search',
-      placeholder: cut(`🔍 ${trimEllipsis(lbl('searchPlaceholder'))}`, props.columns),
+      placeholder: cut(`🔍 ${placeholder.endsWith('…') ? placeholder.slice(0, -1) : placeholder}`, props.columns),
       value: inst.query,
       onInput: (v: string) => { inst.query = v; queueSearch(surface, inst, v, false) },
       onSubmit: (v: string) => { inst.query = v; queueSearch(surface, inst, v, true) },
@@ -483,7 +374,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     } else {
       // --- the rooms: a spacer for the rows scrolled past, then the window's rows, one Text per row, a Text per styled run ---
       const body = props.rows > 0 ? props.rows : 30
-      const { from, count } = windowOf(inst.chrome, props.offset, body, layout.rows.length)
+      const { from, count } = windowOf(inst.chrome, props.offset, body, layout.rows.length, props.columns)
       if (from > 0) kids.push(Box({ height: from }))
       const rects = decor(s, props)
       const rows = windowRows(layout, from, count)

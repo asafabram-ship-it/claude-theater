@@ -166,8 +166,14 @@ export const DEFAULT_VIEW: TheaterView = {
  */
 export const UNKNOWN_MODEL = '' as const
 
-/** $.store keys (prefs mirror). */
+/** $.store keys (prefs mirror). (ui.tsx keeps 'roomDone', STORE_ROOM_DONE_KEY.) */
 export const STORE_PREFS_KEY = 'prefs'
+/**
+ * $.store key of the last five-hour usage toast, `{ resetsAt, at }` (usage.ts ToastMark): the window it was
+ * for and the threshold (80 | 95) it reached. Kept across sessions and hot reloads so a window toasts each
+ * threshold once, whichever conversation sees it first; written by register.tsx only when a toast fires.
+ */
+export const STORE_USAGE_TOAST_KEY = 'usageToast'
 
 // ---------------------------------------------------------------------------
 // Module objects shared between register.tsx (writes) and ui.tsx (reads) — no
@@ -176,7 +182,12 @@ export const STORE_PREFS_KEY = 'prefs'
 
 /**
  * The 5-hour usage meter the desktop office draws in its header (`props.usage`):
- * null until the usage poll (Phase 3) fills it. ui.tsx reads it on every draw.
+ * the five_hour window of the last reading, null when there is none (an API key,
+ * no subscription, before the first reading). Written by register.tsx alone (the
+ * first reading at session.start, then session.measure), which also puts the
+ * footer label ($.ui.status) up and redraws the pane when it changes; ui.tsx
+ * reads it on every draw. Module memory, never $.state: a hot reload empties it
+ * until the next measurement.
  */
 export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | null }
 

@@ -33,6 +33,8 @@ export type Strings = {
   scMute: string; scLang: string; scDemo: string; scHelp: string; scPrev: string; scNext: string
   resultTruncated: string; searchPlaceholder: string; emptyNoMatch: string
   mute: string; unmute: string; finishedToast: string; officeFailed: string
+  /** The five-hour usage toast (80% / 95%): the rounded percent and the reset's local HH:MM ('' when unknown). One line. */
+  usageToast: (pct: number, reset: string) => string
   srResults: (n: number) => string; srNoMatch: string; srCleared: string; pin: string; unpin: string
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
@@ -60,6 +62,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
     mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished',
     officeFailed: 'the office could not be drawn; showing the cards (/theater to retry)',
+    usageToast: (pct, reset) => `5-hour limit: ${pct}%${reset ? ` · resets ${reset}` : ''}`,
     srResults: n => `${n} agent${n === 1 ? '' : 's'} match`, srNoMatch: 'No agents match', srCleared: 'Search cleared',
     pin: 'Pin to top', unpin: 'Unpin',
     emptyNoActive: 'No active agents. Tick "Show finished" to see history.',
@@ -89,6 +92,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש.',
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',
     officeFailed: 'לא ניתן היה לצייר את המשרד; מוצגים כרטיסים (/theater לניסיון נוסף)',
+    usageToast: (pct, reset) => `מכסת 5 השעות: ${pct}%${reset ? ` · איפוס ${reset}` : ''}`,
     srResults: n => `${n} סוכנים תואמים`, srNoMatch: 'אין סוכנים תואמים', srCleared: 'החיפוש נוקה',
     pin: 'נעץ למעלה', unpin: 'בטל נעיצה',
     emptyNoActive: 'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',

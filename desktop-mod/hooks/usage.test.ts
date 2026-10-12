@@ -3,16 +3,26 @@
 // strings. The reset time is the machine's local HH:MM, so every expectation
 // that names a clock time is built from local getters or from a local-time
 // Date, never from a hard-coded UTC hour: the suite passes in any time zone.
+// Then the hooks that drive it (register.tsx, Task 3.2): session.measure and
+// the first reading at session.start put the label on the plugin's status line
+// ($.ui.status), hand the reading to the office header and toast at 80 / 95
+// once per window, driven through the engine with the kit beneath.
 
-import { expect, test } from 'claude-code/testing'
+import type { On, SessionRateLimit, UsageUnit } from 'claude-code'
+import { expect, test, type Engine } from 'claude-code/testing'
 
-import { pickFiveHour, usageBar, usageLabel } from './usage'
+import { POLL_MS } from './model'
+import { OFFICE_KEY, type OfficeProps } from './office-props'
+import { beneath } from './test-kit'
+import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageBar, usageLabel, usageThreshold } from './usage'
 
 test('pickFiveHour takes the five_hour window only', () => {
   expect(pickFiveHour([])).toBeNull()
   expect(pickFiveHour([{ kind: 'seven_day', percentUsed: 10 }])).toBeNull()
   expect(pickFiveHour([{ kind: 'seven_day', percentUsed: 10 }, { kind: 'five_hour', percentUsed: 42.4, resetsAt: '2026-10-10T11:30:00Z' }])).toEqual({ pct: 42.4, resetsAt: '2026-10-10T11:30:00Z' })
   expect(pickFiveHour([{ kind: 'five_hour', percentUsed: 7 }])).toEqual({ pct: 7, resetsAt: '' })
+  // a percentage that is not a finite number is no reading (never a `NaN%` label)
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) expect(pickFiveHour([{ kind: 'five_hour', percentUsed: bad }])).toBeNull()
 })
 
 test('usageBar: 10 cells, rounded', () => {
@@ -67,4 +77,270 @@ test('usageLabel: one short line — no newline, no bidi controls, same text in 
   expect(he).toBe(en)
   expect(he).not.toMatch(/[\r\n\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/)
   expect(he.length).toBeLessThanOrEqual(32)
+})
+
+// --- The pure pieces the hooks use: the comparison, the thresholds, the toast mark, the reset clock.
+
+test('sameFiveHour: the percentage to one decimal and the window; null equals null only', () => {
+  const R = '2026-10-10T11:30:00Z'
+  expect(sameFiveHour(null, null)).toBe(true)
+  expect(sameFiveHour(null, { pct: 0, resetsAt: R })).toBe(false)
+  expect(sameFiveHour({ pct: 0, resetsAt: R }, null)).toBe(false)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.0, resetsAt: R })).toBe(true)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.04, resetsAt: R })).toBe(true)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.1, resetsAt: R })).toBe(false)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42, resetsAt: '2026-10-10T16:30:00Z' })).toBe(false)
+})
+
+test('usageThreshold: 95, 80 or 0 on the rounded percent', () => {
+  expect(usageThreshold(0)).toBe(0)
+  expect(usageThreshold(79.4)).toBe(0)
+  expect(usageThreshold(79.5)).toBe(80)
+  expect(usageThreshold(94.4)).toBe(80)
+  expect(usageThreshold(94.5)).toBe(95)
+  expect(usageThreshold(100)).toBe(95)
+})
+
+test('toastDue / parseToastMark: once per window and threshold; a bad stored value is no mark', () => {
+  const R = '2026-10-10T11:30:00Z'
+  expect(toastDue(null, R, 80)).toBe(true)
+  expect(toastDue({ resetsAt: R, at: 80 }, R, 80)).toBe(false)
+  expect(toastDue({ resetsAt: R, at: 80 }, R, 95)).toBe(true)
+  expect(toastDue({ resetsAt: R, at: 95 }, R, 80)).toBe(false)
+  expect(toastDue({ resetsAt: R, at: 95 }, '2026-10-10T16:30:00Z', 80)).toBe(true)
+  expect(parseToastMark({ resetsAt: R, at: 95 })).toEqual({ resetsAt: R, at: 95 })
+  for (const bad of [undefined, null, 'x', 80, [], {}, { resetsAt: R }, { resetsAt: 1, at: 80 }, { resetsAt: R, at: 50 }]) expect(parseToastMark(bad)).toBeNull()
+})
+
+test('resetClock: the local HH:MM of the reset, empty when there is none', () => {
+  expect(resetClock(new Date(2026, 9, 10, 9, 5).toISOString())).toBe('09:05')
+  expect(resetClock('')).toBe('')
+  expect(resetClock('soon')).toBe('')
+})
+
+// --- The hooks (register.tsx): session.measure, the first reading at session.start, the footer line
+// ($.ui.status), the toasts at 80 / 95. Driven through the engine with the kit beneath (test-kit.ts: the
+// mocked clock, the in-memory $.store, the toasts); usageBeneath adds what the kit does not answer:
+// $.session.usage (the reading session.start asks for) and taps on $.ui.status and $.ui.invalidate. What
+// the hooks keep in module memory (USAGE, the last line, the last toast) outlives a test inside the plugin's
+// bundle, so each test draws its own windows (resetsAt) and ends on a reading without a five_hour window.
+
+const START = { cwd: 'C:/x', surface: 'desktop', isInteractive: true } as const
+const CONTEXT = { tokens: 1, window: 200_000, percent: 0 }
+const PANE = {
+  plugin: 'agent-theater', component: 'Pane', requestId: 'agent-theater', surface: 'desktop',
+  props: { title: 'T', isFocused: true, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+} as const
+const prefs = (lang: 'he' | 'en') => ({ prefs: { lang, muted: false, showDone: false, pins: [] } })
+
+/** A local wall-clock time on 2026-10-10 as ISO: it reads back as exactly HH:MM in any time zone. */
+const local = (h: number, m: number) => new Date(2026, 9, 10, h, m).toISOString()
+
+/** A five_hour reading (beside a seven_day window, which the meter ignores). */
+const limits = (pct: number, resetsAt: string): SessionRateLimit[] =>
+  [{ kind: 'seven_day', percentUsed: 12, resetsAt: '2026-10-15T00:00:00Z' }, { kind: 'five_hour', percentUsed: pct, resetsAt }]
+
+/** The engine measuring the session: a rate-limit window moved (or `changed` says what did). */
+const measure = ($: Engine, rateLimits: SessionRateLimit[], changed: UsageUnit[] = ['rateLimits']) =>
+  $.session.measure({ context: CONTEXT, rateLimits, changed })
+
+/**
+ * Beneath the plugin: the engine's echo of session.measure (core answers `{ changed }`; nothing in the kit does),
+ * $.session.usage answering `seen.usage` (or failing), and the status lines and redraw requests recorded.
+ */
+function usageBeneath(on: On) {
+  const seen = { usage: [] as SessionRateLimit[], usageFails: false, statuses: [] as Array<string | undefined>, invalidates: 0 }
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('session.usage', () => {
+    if (seen.usageFails) throw new Error('no usage here')
+    return { value: { startedAt: 0, context: CONTEXT, rateLimits: seen.usage } }
+  })
+  on('ui.status', ($, e) => { seen.statuses.push(e.text); return { value: undefined } })
+  on('ui.invalidate', ($, e, next) => { seen.invalidates += 1; return next(e) })
+  return seen
+}
+
+/** The usage meter the desktop office Client was handed on its last draw. */
+async function usageProp(ui: { find: (q: { type: string }) => Promise<{ key: string | undefined; props: Record<string, unknown> } | undefined> }): Promise<OfficeProps['usage']> {
+  const c = await ui.find({ type: 'Client' })
+  expect(c?.key).toBe(OFFICE_KEY)
+  return (c!.props.props as OfficeProps).usage
+}
+
+test('session.measure: the footer line ($.ui.status) is the five-hour label, and the pane is redrawn once with the meter', async ($, on) => {
+  const { clock } = beneath(on, () => [], prefs('he'))
+  const seen = usageBeneath(on)
+  await $.session.start(START)
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount(PANE)
+  const R = local(14, 30)
+  const s0 = seen.statuses.length
+  const i0 = seen.invalidates
+  await measure($, limits(42, R))
+  expect(seen.statuses.slice(s0)).toEqual(['⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30'])
+  expect(seen.statuses.at(-1)).toBe(usageLabel({ pct: 42, resetsAt: R }, 'he', 0))
+  expect(seen.invalidates - i0).toBe(1)
+  expect(await usageProp(ui)).toEqual({ pct: 42, resetsAt: R })
+  // the window moved: a new line, a new redraw (⚠ from 80)
+  await measure($, limits(80.4, R))
+  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▱▱ 80% · 14:30')
+  expect(seen.invalidates - i0).toBe(2)
+  expect(await usageProp(ui)).toEqual({ pct: 80.4, resetsAt: R })
+  await measure($, []) // (leave no reading behind)
+  expect(await usageProp(ui)).toBeNull()
+  await ui.unmount()
+})
+
+test('no five_hour window (an API key, no subscription, before the first reading): the line is cleared, never stale, and nothing toasts', async ($, on) => {
+  const { captured } = beneath(on, () => [], prefs('he'))
+  const seen = usageBeneath(on)
+  await $.session.start(START)
+  const R = local(9, 0)
+  await measure($, limits(90, R))
+  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 90% · 09:00')
+  const t0 = captured.toasts.length
+  expect(t0).toBeGreaterThan(0) // (90%: this window's 80 toast)
+  // the five_hour window left the reading (the seven_day one stays): the line is cleared, one redraw, no toast
+  const i0 = seen.invalidates
+  await measure($, [{ kind: 'seven_day', percentUsed: 97, resetsAt: R }])
+  expect(seen.statuses.at(-1)).toBeUndefined()
+  expect(seen.invalidates - i0).toBe(1)
+  // still none: nothing more is said
+  const s1 = seen.statuses.length
+  await measure($, [])
+  expect(seen.statuses.length).toBe(s1)
+  expect(seen.invalidates - i0).toBe(1)
+  // a new conversation whose first reading has no five_hour window, after one that showed a label: cleared at session.start
+  await measure($, limits(30, R))
+  expect(seen.statuses.at(-1)).toBe('⏳ 5h ▰▰▰▱▱▱▱▱▱▱ 30% · 09:00')
+  seen.usage = []
+  await $.session.start(START)
+  expect(seen.statuses.at(-1)).toBeUndefined()
+  // ... and when the reading itself fails
+  await measure($, limits(30, R))
+  seen.usageFails = true
+  await $.session.start(START)
+  expect(seen.statuses.at(-1)).toBeUndefined()
+  expect(captured.toasts.length).toBe(t0)
+  expect(seen.statuses.every(s => s === undefined || !/[\r\n\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/.test(s))).toBe(true)
+})
+
+test('toasts: once per window when the rounded percent reaches 80, once more at 95; a new window starts over ($.store usageToast)', async ($, on) => {
+  const { captured } = beneath(on, () => [], prefs('he'))
+  usageBeneath(on)
+  await $.session.start(START)
+  const R1 = local(14, 30)
+  await measure($, limits(79, R1))
+  await measure($, limits(79.4, R1))
+  expect(captured.toasts).toEqual([])
+  await measure($, limits(81, R1))
+  expect(captured.toasts).toEqual(['מכסת 5 השעות: 81% · איפוס 14:30'])
+  expect(captured.store.usageToast).toEqual({ resetsAt: R1, at: 80 })
+  await measure($, limits(85, R1))
+  await measure($, limits(79, R1)) // (a dip and back: still this window's 80)
+  await measure($, limits(88, R1))
+  expect(captured.toasts).toHaveLength(1)
+  await measure($, limits(96, R1))
+  expect(captured.toasts).toEqual(['מכסת 5 השעות: 81% · איפוס 14:30', 'מכסת 5 השעות: 96% · איפוס 14:30'])
+  expect(captured.store.usageToast).toEqual({ resetsAt: R1, at: 95 })
+  await measure($, limits(99, R1))
+  await measure($, limits(100, R1))
+  expect(captured.toasts).toHaveLength(2)
+  expect(captured.storeWrites.usageToast).toBe(2)
+  // the window reset: a new resetsAt starts the count over
+  const R2 = local(19, 30)
+  await measure($, limits(3, R2))
+  expect(captured.toasts).toHaveLength(2)
+  await measure($, limits(82, R2))
+  expect(captured.toasts.at(-1)).toBe('מכסת 5 השעות: 82% · איפוס 19:30')
+  expect(captured.toasts).toHaveLength(3)
+  // a jump straight past 95 in a fresh window is ONE toast, the 95 one
+  const R3 = local(23, 45)
+  await measure($, limits(97, R3))
+  expect(captured.toasts.at(-1)).toBe('מכסת 5 השעות: 97% · איפוס 23:45')
+  expect(captured.toasts).toHaveLength(4)
+  await measure($, limits(98, R3))
+  expect(captured.toasts).toHaveLength(4)
+  await measure($, [])
+})
+
+test('the first reading at session.start: the line at once; a toast only when this window was never toasted (a new conversation, a hot reload)', async ($, on) => {
+  // another conversation already toasted the 80 of window R1 (the $.store mark outlives it)
+  const R1 = local(11, 15)
+  const { captured } = beneath(on, () => [], { ...prefs('en'), usageToast: { resetsAt: R1, at: 80 } })
+  const seen = usageBeneath(on)
+  seen.usage = limits(85, R1)
+  await $.session.start(START)
+  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 11:15')
+  expect(captured.toasts).toEqual([])
+  // ... its 95 was not: that one toasts, in English as the prefs say
+  await measure($, limits(95, R1))
+  expect(captured.toasts).toEqual(['5-hour limit: 95% · resets 11:15'])
+  // a new conversation in the same window: no toast again
+  seen.usage = limits(96, R1)
+  await $.session.start(START)
+  expect(captured.toasts).toHaveLength(1)
+  // a window never toasted: the first reading toasts once, even at start
+  const R2 = local(16, 15)
+  seen.usage = limits(83, R2)
+  await $.session.start(START)
+  expect(captured.toasts).toEqual(['5-hour limit: 95% · resets 11:15', '5-hour limit: 83% · resets 16:15'])
+  expect(captured.store.usageToast).toEqual({ resetsAt: R2, at: 80 })
+  await $.session.start(START)
+  await measure($, limits(83, R2))
+  expect(captured.toasts).toHaveLength(2)
+  await measure($, [])
+})
+
+test('an unchanged reading does nothing: no line, no redraw, no store, no state; a measure of the context alone is not read', async ($, on) => {
+  const { captured, clock } = beneath(on, () => [], prefs('he'))
+  const seen = usageBeneath(on)
+  await $.session.start(START)
+  await clock.advance(POLL_MS) // (session.start's own poll settles first: its first publish retitles, a prefs read of its own)
+  const R = local(10, 10)
+  await measure($, limits(42, R))
+  const s0 = seen.statuses.length
+  const i0 = seen.invalidates
+  const w0 = JSON.stringify(captured.writes)
+  const sw0 = JSON.stringify(captured.storeWrites)
+  const p0 = captured.prefsReads
+  await measure($, limits(42, R))
+  await measure($, limits(42.0, R), ['rateLimits', 'context'])
+  // the seven_day window moved (rateLimits changed), the five-hour one did not
+  await measure($, [{ kind: 'seven_day', percentUsed: 13, resetsAt: '2026-10-15T00:00:00Z' }, { kind: 'five_hour', percentUsed: 42, resetsAt: R }])
+  // only the context moved: the rate limits are not read at all (even if they differ)
+  await measure($, limits(50, R), ['context'])
+  await measure($, limits(50, R), ['cost'])
+  expect(seen.statuses.length, 'status calls').toBe(s0)
+  expect(seen.invalidates, 'redraw requests').toBe(i0)
+  expect(JSON.stringify(captured.writes), '$.state writes').toBe(w0)
+  expect(JSON.stringify(captured.storeWrites), '$.store writes').toBe(sw0)
+  expect(captured.prefsReads, 'prefs reads').toBe(p0)
+  // one decimal is a new reading: the pane is redrawn (its header gets the new USAGE), while the line,
+  // whose text rounds to the same 42%, is not set again
+  await measure($, limits(42.1, R))
+  expect(seen.invalidates, 'redraw requests').toBe(i0 + 1)
+  expect(seen.statuses.length, 'status calls').toBe(s0)
+  await measure($, limits(43, R))
+  expect(seen.invalidates, 'redraw requests').toBe(i0 + 2)
+  expect(seen.statuses.length, 'status calls').toBe(s0 + 1)
+  await measure($, [])
+})
+
+test('SessionMode: the plugin adds no label there — the terminal and the desktop both draw $.ui.status, one label per surface', async ($, on) => {
+  beneath(on, () => [], prefs('he'))
+  const seen = usageBeneath(on)
+  on('ui.render', { component: 'SessionMode' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return Text({ children: [e.props.modes.join(' & ')] })
+  })
+  await $.session.start(START)
+  await measure($, limits(42, local(14, 30)))
+  expect(seen.statuses.at(-1)).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30')
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'agent-theater', component: 'SessionMode', requestId: 'session-mode', surface, props: { modes: ['focus'] } })
+    expect((await ui.find({ type: 'Text' }))?.text).toBe('focus')
+    await ui.unmount()
+  }
+  await measure($, [])
 })

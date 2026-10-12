@@ -13,10 +13,21 @@
 //
 // Lifecycle:
 //   session.start   load prefs from $.store, remember the session id, register
-//                   /theater, start the poll timer ($.clock.every POLL_MS).
+//                   /theater, start the poll timer ($.clock.every POLL_MS),
+//                   take the five-hour meter's first reading
+//                   ($.session.usage; session.measure below).
 //                   Each step is its own try: a failing $.command.register
 //                   (nothing answers it in a test harness, or a name clash)
 //                   never stops the office from scanning.
+//   session.measure THE FIVE-HOUR METER (spec §2 item 12): the engine pushes its
+//                   usage after each turn; when the five_hour rate-limit window
+//                   changed, USAGE (model.ts) takes it, the footer line follows
+//                   ($.ui.status — the desktop draws it on its footer, the
+//                   terminal under the prompt; no SessionMode label: one label
+//                   per surface), the pane is redrawn (its header draws USAGE)
+//                   and a toast fires at 80% and at 95%, once per window (the
+//                   mark in $.store 'usageToast'). No $.state write; an
+//                   unchanged reading does nothing at all.
 //   poll            while the pane is up: scanAll(scanIo($)) → liveAged
 //                   ($.agent.list()) → mergeLive → cleanOffice (THE TEXT GATE:
 //                   every agent text freed of what a surface refuses, once, here;
@@ -89,10 +100,11 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { I18N } from './i18n'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
-import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
+import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, STORE_USAGE_TOAST_KEY, USAGE, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
 import { cleanAgentText } from './office-chrome'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
 import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
+import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageLabel, usageThreshold, type FiveHour, type ToastMark } from './usage'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
 const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
@@ -494,6 +506,93 @@ function ensurePolling($: EngineInterface, restart = false): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE FIVE-HOUR METER (spec §2 item 12). The five_hour rate-limit window reaches
+// the person three ways: one footer line ($.ui.status — the desktop draws it on
+// its footer between the mode and the model, dim, after the plugin's name; the
+// terminal under the prompt, beside the engine's pinned notices), the office
+// header (USAGE → the Client's props.usage, ui.tsx) and a toast when the rounded
+// percent reaches 80, and again at 95 — once per window (`resetsAt`), whichever
+// conversation sees it first (the mark in $.store, STORE_USAGE_TOAST_KEY).
+// Nothing goes to $.state: on the desktop any state write redraws the pane, and
+// an unchanged reading must cost nothing (no line, no redraw, no store).
+// ---------------------------------------------------------------------------
+
+/**
+ * True once this environment took a reading (session.start's, or a measurement's). Until then a
+ * measurement is read whatever its `changed` says: a hot reload empties the module (USAGE back to
+ * null) and session.start does not fire again.
+ */
+let usageRead = false
+/** The text last handed to $.ui.status; null until this environment set one (so its first call always goes out, clearing a label an earlier environment left). */
+let statusText: string | undefined | null = null
+/** The last toast this environment made or found in $.store (the store holds it across environments; this closes the gap between a store read and its write). */
+let toastMark: ToastMark | null = null
+
+/** The plugin's status line: `text`, or cleared (undefined — never anything else); the same text twice is one call. Never throws. */
+function setStatus($: EngineInterface, text: string | undefined): void {
+  if (statusText !== null && statusText === text) return
+  try {
+    $.ui.status(text)
+    statusText = text
+  } catch {
+    // no status line on this host: the office header still draws the meter
+  }
+}
+
+/** The 80 / 95 toast for this reading: once per window per threshold, the higher one only on a jump past both. Never rejects. */
+async function usageToast($: EngineInterface, u: FiveHour, lang: Prefs['lang']): Promise<void> {
+  const at = usageThreshold(u.pct)
+  if (at === 0 || !toastDue(toastMark, u.resetsAt, at)) return
+  const stored = parseToastMark(await $.store.get(STORE_USAGE_TOAST_KEY).catch(() => undefined))
+  if (!toastDue(stored, u.resetsAt, at)) {
+    toastMark = stored // another conversation (or this one before a reload) toasted this window already
+    return
+  }
+  if (!toastDue(toastMark, u.resetsAt, at)) return // a reading that landed during the store read toasted it
+  toastMark = { resetsAt: u.resetsAt, at }
+  try {
+    $.ui.toast(I18N[lang].usageToast(Math.round(u.pct), resetClock(u.resetsAt)))
+  } catch {
+    // no toast on this host: the line and the header still say it
+  }
+  await $.store.set(STORE_USAGE_TOAST_KEY, toastMark).catch(() => undefined)
+}
+
+/**
+ * Takes one five-hour reading (null: no five_hour window). A reading equal to the last (usage.ts
+ * sameFiveHour: the percent to one decimal, the window) does nothing, unless `first` (a session's or this
+ * environment's first reading: the line is set and the toast checked even then). A new one: USAGE takes
+ * it, the pane is redrawn once (its header draws USAGE), the line follows (cleared without a reading) and
+ * the toast check runs. `lang` when the caller holds the prefs (session.start); else read here, only for a
+ * reading to show. Never rejects.
+ */
+async function takeUsage($: EngineInterface, u: FiveHour | null, first: boolean, lang?: Prefs['lang']): Promise<void> {
+  try {
+    const same = sameFiveHour(USAGE.fiveHour, u)
+    if (same && !first) return
+    USAGE.fiveHour = u
+    if (!same) {
+      try {
+        $.ui.invalidate('ui.render') // (ui.tsx's requestRedraw latch takes a `$`, which may not cross the import; one change is one call)
+      } catch {
+        // nothing draws the pane now: its next draw reads USAGE
+      }
+    }
+    if (u === null) {
+      setStatus($, undefined)
+      return
+    }
+    const l = lang ?? (await read($, prefsAtom).catch(() => DEFAULT_PREFS)).lang
+    const now = await $.clock.now().catch(() => 0)
+    if (USAGE.fiveHour !== u) return // a newer reading landed meanwhile: the line and the toast are its own
+    setStatus($, usageLabel(u, l, now))
+    await usageToast($, u, l)
+  } catch {
+    // decoration: never blocks the session
+  }
+}
+
 /** Prefs from $.store, defaults filled in; a bad value falls back to the default. */
 async function loadPrefs($: EngineInterface): Promise<Prefs> {
   try {
@@ -512,7 +611,7 @@ async function loadPrefs($: EngineInterface): Promise<Prefs> {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    // Four independent steps, each in its own try: none may block the session,
+    // Five independent steps, each in its own try: none may block the session,
     // and none may stop the ones after it (a /theater that cannot be registered
     // must still leave a scanning office behind).
     let prefs: Prefs = DEFAULT_PREFS
@@ -538,6 +637,34 @@ export const register: Register = on => {
       // the pane still auto-opens on the first subagent
     }
     ensurePolling($, true)
+    // THE FIVE-HOUR METER's first reading (session.measure keeps it after; the poll is already started, so a
+    // slow reading never holds the office back): the line at once, the toast if this window never had one;
+    // no five_hour window — or no reading at all — clears the line
+    let fiveHour: FiveHour | null = null
+    try {
+      fiveHour = pickFiveHour((await $.session.usage()).rateLimits)
+      usageRead = true
+    } catch {
+      usageRead = false // the next measurement is read whatever it says changed
+    }
+    await takeUsage($, fiveHour, true, prefs.lang)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // THE FIVE-HOUR METER: the engine's measurement after each main-thread turn (and when a rate-limit window
+  // moves a whole point). Read only when the rate limits are among what changed, or nothing was read yet in
+  // this environment; an unchanged five-hour reading then does nothing (takeUsage). Observe: next(e) as is.
+  on('session.measure', async ($, e, next) => {
+    try {
+      if (!usageRead || (Array.isArray(e.changed) && e.changed.includes('rateLimits'))) {
+        const first = !usageRead
+        const fiveHour = pickFiveHour(e.rateLimits ?? [])
+        usageRead = true
+        await takeUsage($, fiveHour, first)
+      }
+    } catch {
+      // decoration: never blocks the measurement
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 

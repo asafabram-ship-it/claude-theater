@@ -11,7 +11,7 @@ import type { Agent } from './model'
 import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS, RUNNING_STALE_SEC } from './model'
 import { expect, test } from 'claude-code/testing'
 
-import { SETTLE_MS } from './register'
+import { SETTLE_MS, cleanOffice } from './register'
 
 import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
@@ -21,7 +21,7 @@ import {
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   minuteClock, renderKey, starsOf,
 } from './ui'
-import { chromeRows, emptyLines, officeHeight } from './office-chrome'
+import { REFUSED_RE, chromeRows, emptyLines, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
 import { layoutOffice, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
@@ -185,6 +185,34 @@ test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop
   expect(workingCount({ agents: [...all, agent({ id: 'closed', closed: true })] })).toBe(3)
   expect(paneTitle('en', 3)).toBe('🟢 3 · 🎭 Theater')
   expect(paneTitle('he', 0)).toBe('🎭 התיאטרון')
+})
+
+test('THE TEXT GATE (register.tsx cleanOffice, the poll\'s one pass over the merged office): every agent text field the payload carries is cleaned — task and result keep their line breaks, the one-line fields do not; ids and numbers untouched; a clean office comes back equal; idempotent', () => {
+  const ESC = String.fromCharCode(0x1b)
+  const BEL = String.fromCharCode(0x07)
+  /** `s`, an ANSI colour code around "!", an RLM, a BEL, a line break, `s` again. */
+  const dirty = (s: string) => `${s}${ESC}[31m!${ESC}[0m\u200f${BEL}\n${s}`
+  const raw = agent({
+    id: 'dirty', role: dirty('role'), subagent_type: dirty('type'), tool: dirty('tool'), task: dirty('task'), task_short: dirty('short'),
+    result: dirty('result'), topic: dirty('topic'), model: dirty('model'), cwd: dirty('C:/w'), project: dirty('C:/p'), status: 'done', end_ms: T0,
+  })
+  const office = cleanOffice({ ...EMPTY_PAYLOAD, agents: [raw, ...fixture()], stars: { dirty: T0 }, scanned_ms: T0 })
+  // one-line fields: the code gone, the mark gone, the BEL and the line break spaces; task and result keep the line break
+  expect(office.agents[0]).toEqual({
+    ...raw, role: 'role!  role', subagent_type: 'type!  type', tool: 'tool!  tool', task: 'task! \ntask', task_short: 'short!  short',
+    result: 'result! \nresult', topic: 'topic!  topic', model: 'model!  model', cwd: 'C:/w!  C:/w', project: 'C:/p!  C:/p',
+  })
+  const strings = (x: unknown): string[] => (typeof x === 'string' ? [x] : x !== null && typeof x === 'object' ? Object.values(x).flatMap(strings) : [])
+  for (const s of strings(office)) expect(s).not.toMatch(REFUSED_RE)
+  // the rest of the payload as it was; a clean office is unchanged (an absent topic stays absent, a null result null)
+  expect({ ...office, agents: [] }).toEqual({ ...EMPTY_PAYLOAD, agents: [], stars: { dirty: T0 }, scanned_ms: T0 })
+  expect(office.agents.slice(1)).toEqual(fixture())
+  expect('topic' in office.agents[2]!).toBe(false)
+  expect(office.agents[2]!.result).toBeNull()
+  // idempotent (so the flicker guard's key is stable poll after poll), and deterministic
+  expect(cleanOffice(office)).toEqual(office)
+  expect(cleanOffice({ ...EMPTY_PAYLOAD, agents: [raw], stars: { dirty: T0 }, scanned_ms: T0 }).agents).toEqual([office.agents[0]])
+  expect(renderKey(cleanOffice({ ...EMPTY_PAYLOAD, agents: [raw] }), T0)).toBe(renderKey(cleanOffice({ ...EMPTY_PAYLOAD, agents: [{ ...raw }] }), T0))
 })
 
 test('joinParts: a "·" only between two non-empty parts, never dangling', () => {
@@ -917,6 +945,64 @@ test('a FAILED scan never touches user state: the first scan after a hot reload 
   expect(captured.storeWrites).toEqual(s)
   expect((await officePropsOf(ui))?.drawer?.id).toBe('q1') // the kept selection draws its drawer (the office Client's)
   await ui.unmount()
+})
+
+test('AGENT TEXT reaches every surface clean: an ANSI colour code and an RLM in a transcript\'s prompt and a conversation\'s first line, a BEL in a live spawn\'s description — the terminal cards and the desktop office Client both draw (no refusal, no fault), no drawn text holds a refused character, the Hebrew stays; quiet polls publish nothing', async ($, on) => {
+  const ESC = String.fromCharCode(0x1b)
+  const BEL = String.fromCharCode(0x07)
+  const RLM = String.fromCharCode(0x200f)
+  const rec = (o: Record<string, unknown>) => JSON.stringify(o)
+  const files = quietOffice(T0)
+  // the room's title (its lead's first line) carries a colour code and a mark ...
+  files.set(`${QPROJ}/${QSESS}.jsonl`, {
+    text: [
+      rec({ type: 'user', sessionId: QSESS, cwd: 'C:/x', timestamp: '2026-06-01T09:00:00.000Z', message: { role: 'user', content: `Quiet ${ESC}[1moffice${ESC}[0m${RLM} test. Nothing moves.` } }),
+      rec({ type: 'assistant', sessionId: QSESS, timestamp: '2026-06-01T09:00:01.000Z', message: { role: 'assistant', model: 'claude-fable-5-1', content: [{ type: 'text', text: 'Watching.' }] } }),
+    ].join('\n') + '\n',
+    mtimeMs: T0 - 5000,
+  })
+  // ... and so does a subagent's prompt (pasted from a terminal and a Hebrew editor), over two lines
+  files.set(`${QPROJ}/${QSESS}/subagents/agent-qx.jsonl`, subagentMidTool('qx', `Fix the ${ESC}[31mred${ESC}[0m test. ${RLM}בדקו שוב\nואז דווחו`, T0 - 6000))
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, files)
+  on('agent.spawn', ($, e) => ({ model: 'haiku', agentId: `live-${e.tool_use_id}` }))
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  // a live subagent of this session whose description rings a bell
+  await $.agent.spawn({ tool_use_id: 't1', prompt: `Ping${BEL} the team.\n${ESC}[1mnow${ESC}[0m`, description: `ring${BEL}bell`, subagentType: 'Explore', parentModel: 'opus' } as Parameters<typeof $.agent.spawn>[0])
+  await clock.advance(POLL_MS)
+  const clean = (s: string | undefined) => s === undefined || !REFUSED_RE.test(s)
+  const strings = (x: unknown): string[] => (typeof x === 'string' ? [x] : x !== null && typeof x === 'object' ? Object.values(x).flatMap(strings) : [])
+  // TERMINAL: the cards draw (a refused character refuses the whole tree: drawn() would reject)
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
+  await term.drawn()
+  expect((await term.find({ key: 'open:live-t1' }))?.text).toMatch(/ring bell/)
+  expect(await term.find({ type: 'Text', text: /^💬 Quiet office test\.$/ })).toBeDefined()
+  // the drawer: the first sentence (task_short) one line; the task keeps its line break and its Hebrew, loses the code and the mark
+  await term.press({ key: 'open:qx' })
+  expect(await term.find({ type: 'Text', text: /^Fix the red test\.$/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: 'Fix the red test. בדקו שוב\nואז דווחו' })).toBeDefined()
+  for (const el of await term.findAll({})) expect(clean(el.text)).toBe(true)
+  // DESKTOP: the office Client draws (no refusal, no fault → no fall back to the cards), its props and its drawing clean
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 90 } })
+  await desk.drawn({ in: OFFICE_KEY })
+  const p = (await officePropsOf(desk))!
+  expect(p).toBeDefined()
+  expect(p.drawer?.id).toBe('qx')
+  expect(p.drawer?.task).toBe('Fix the red test. בדקו שוב\nואז דווחו')
+  expect(p.rooms.find(r => r.id === QSESS)?.title).toBe('Quiet office test.')
+  expect(p.rooms.flatMap(r => r.agents).find(a => a.id === 'live-t1')?.name).toBe('ring bell')
+  for (const s of strings(p)) expect(clean(s)).toBe(true)
+  for (const el of await desk.findAll({ in: OFFICE_KEY })) expect(clean(el.text)).toBe(true)
+  // the cleaning is deterministic: quiet polls publish nothing and hand the Client the same props (the flicker guard's key holds)
+  const w0 = { ...captured.writes }
+  const before = JSON.stringify(p)
+  for (let i = 0; i < 3; i++) await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(w0.payload)
+  expect(captured.writes.scanError).toBe(w0.scanError)
+  expect(captured.writes.view).toBe(w0.view)
+  expect(JSON.stringify(await officePropsOf(desk))).toBe(before)
+  await term.unmount()
+  await desk.unmount()
 })
 
 test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', async ($, on) => {

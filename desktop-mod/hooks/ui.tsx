@@ -562,7 +562,7 @@ const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen })
 /** The drawer on `id`; `focusIndex` is the card's place in the text cards' walk (officeView().order). */
 const openedOn = (id: string, focusIndex: number) => (v: View): View => ({ ...v, selected: id, helpOpen: false, focusIndex })
 const drawerClosed = (v: View): View => ({ ...v, selected: null, helpOpen: false })
-/** The search set to `q`, cleaned (office-chrome.ts cleanSearch: SEARCH_MAX code points, no control character — an Input value holding one is refused, the text cards' as the Client's). */
+/** The search set to `q`, cleaned (office-chrome.ts cleanSearch: SEARCH_MAX code points, the bidi controls removed, every other control character a space — an Input value holding either is refused, the text cards' as the Client's). */
 const searchedFor = (q: string) => (v: View): View => ({ ...v, search: cleanSearch(q), focusIndex: -1 })
 const otherLang = (lang: Lang): Lang => (lang === 'he' ? 'en' : 'he')
 
@@ -658,7 +658,7 @@ async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<vo
     }
     case 'search': {
       if (typeof m.q !== 'string') return
-      const q = cleanSearch(m.q) // (by code point: never half a surrogate pair; control characters as spaces)
+      const q = cleanSearch(m.q) // (by code point: never half a surrogate pair; bidi controls removed, other control characters as spaces)
       if ((await read($, viewAtom)).search !== q) await update($, viewAtom, searchedFor(q))
       return
     }

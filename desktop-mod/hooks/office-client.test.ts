@@ -11,7 +11,7 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N } from './i18n'
-import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanSearch, drawerLines, officeHeight, windowOf } from './office-chrome'
+import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
 import { HOVER_BG, NO_DECOR, TILE_H, TILE_W, layoutOffice, walkShift } from './office-layout'
@@ -145,6 +145,41 @@ test('cleanSearch: the search text cut to SEARCH_MAX code points (never half an 
   expect(cleanSearch('👨\u200d💻 ✏\ufe0f 🦉 קוד')).toBe('👨\u200d💻 ✏\ufe0f 🦉 קוד')
   expect(cleanSearch('\u200f'.repeat(5000) + 'x'.repeat(300))).toBe('x'.repeat(SEARCH_MAX))   // marks do not eat the cap
   expect(cleanSearch(cleanSearch('🔍'.repeat(300) + '\u0007'))).toBe(cleanSearch('🔍'.repeat(300) + '\u0007'))
+})
+
+test('cleanAgentText: agent text as every surface takes it — an escape sequence removed whole, any other control a space, the bidi controls removed; tab and newline kept only in a multi-line field; Hebrew, emoji, ZWJ and VS16 kept; idempotent', () => {
+  const ESC = String.fromCharCode(0x1b)
+  const BEL = String.fromCharCode(0x07)
+  // an ANSI colour code leaves nothing behind (not "[31m"): CSI whole, the C1 CSI too, an OSC 8 hyperlink's wrapper
+  expect(cleanAgentText(`${ESC}[31mred${ESC}[0m`)).toBe('red')
+  expect(cleanAgentText(`a${ESC}[1;38;5;196mb${ESC}[0m c${ESC}[2K${ESC}[?25h`)).toBe('ab c')
+  expect(cleanAgentText(`${String.fromCharCode(0x9b)}31mx`)).toBe('x')
+  expect(cleanAgentText(`see ${ESC}]8;;https://x.test/a${BEL}link${ESC}]8;;${ESC}\\ here`)).toBe('see link here')
+  // any other control is a space: BEL, NUL, DEL, a C1 NEL, a lone ESC, an unfinished sequence
+  expect(cleanAgentText(`a${BEL}b${String.fromCharCode(0)}c${String.fromCharCode(0x7f)}d${String.fromCharCode(0x85)}e${ESC}f ${ESC}[3`)).toBe('a b c d e f  [3')
+  // the bidi controls (ALM, LRM, RLM, LRE..RLO, LRI..PDI) are removed: the desktop refuses them in a Text
+  expect(cleanAgentText('\u202bשלום\u202c \u2067x\u2069 \u200eA\u061cB\u202aC\u202dD\u202eE\u2066F\u2068G\u200fH')).toBe('שלום x ABCDEFGH')
+  // a single-line field (a name, a label, a title): line breaks and tabs are spaces, CRLF one space
+  expect(cleanAgentText('one\r\ntwo\nthree\tfour\rfive')).toBe('one two three four five')
+  // a multi-line field (task, result): newline and tab kept (the engine's two allowed controls), CRLF and CR a newline
+  expect(cleanAgentText('one\r\ntwo\nthree\tfour\rfive', true)).toBe('one\ntwo\nthree\tfour\nfive')
+  expect(cleanAgentText(`${ESC}[32mok${ESC}[0m\n${BEL}\u200fדוח`, true)).toBe('ok\n דוח')
+  // what must stay: Hebrew, emoji, a ZWJ sequence, a variation selector, a skin tone
+  expect(cleanAgentText('👨\u200d💻 ✏\ufe0f 🦉 קוד 👍🏽')).toBe('👨\u200d💻 ✏\ufe0f 🦉 קוד 👍🏽')
+  expect(cleanAgentText('')).toBe('')
+  // idempotent, and nothing a surface refuses is left (REFUSED_RE: the shared set — bidi, any control but tab / newline)
+  const dirty = [`${ESC}[31mred${ESC}[0m`, `x${ESC}${ESC}[[31m`, `${ESC}${'\u200f'}[31m`, 'a\r\n\r\nb\u0000\t', `${ESC}]0;title`, '\u061c\u2066\u2069', '👨\u200d💻 קוד']
+  for (const s of dirty) {
+    for (const multiline of [false, true]) {
+      const once = cleanAgentText(s, multiline)
+      expect(cleanAgentText(once, multiline)).toBe(once)
+      expect(once).not.toMatch(REFUSED_RE)
+      if (!multiline) expect(once).not.toMatch(/[\n\t]/)
+    }
+  }
+  expect(`a${BEL}`).toMatch(REFUSED_RE)
+  expect('a\u061c').toMatch(REFUSED_RE)
+  expect('a\nb\tc 👨\u200d💻 ✏\ufe0f').not.toMatch(REFUSED_RE)
 })
 
 test('chromeRows / officeHeight: header, toolbar, search; then help | drawer, the footer line, the empty block', () => {
@@ -610,7 +645,7 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
       const json = JSON.stringify(tree)
       maxJson = Math.max(maxJson, json.length)
       expect(json.length).toBeLessThan(100_000)
-      expect(json).not.toMatch(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/)
+      expect(json).not.toMatch(REFUSED_RE) // (the shared set, office-chrome.ts: the bidi controls, ALM included)
       expect(f.setStates()).toBe(1)
       // the window keeps its byte budget: past it the rows are left blank rather than unmounting the instance
       const chrome = chromeRows(p)

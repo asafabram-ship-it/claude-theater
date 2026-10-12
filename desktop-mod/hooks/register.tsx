@@ -18,7 +18,9 @@
 //                   (nothing answers it in a test harness, or a name clash)
 //                   never stops the office from scanning.
 //   poll            while the pane is up: scanAll(scanIo($)) → liveAged
-//                   ($.agent.list()) → mergeLive → $.state payload ONLY IF what
+//                   ($.agent.list()) → mergeLive → cleanOffice (THE TEXT GATE:
+//                   every agent text freed of what a surface refuses, once, here;
+//                   the scan error too) → $.state payload ONLY IF what
 //                   the pane draws changed (renderKey: the flicker guard — a
 //                   state write redraws the pane, and on the desktop a redraw
 //                   hands the office Client new props and blinks the pane),
@@ -87,7 +89,8 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { I18N } from './i18n'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
-import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs, type TheaterStatus } from './model'
+import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
+import { cleanAgentText } from './office-chrome'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
 import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
 
@@ -231,6 +234,58 @@ function liveWorking(): number {
   return Object.values(LIVE).filter(a => a.engine_status === 'running').length
 }
 
+/**
+ * THE TEXT GATE's memory: each text the last office carried → its clean form, one map per kind
+ * ([one-line, multi-line]). An unchanged agent's strings are the same strings poll after poll (the
+ * scanner's cache, the live map), so a quiet poll costs a lookup per field, not a regex pass; each poll
+ * keeps only what its office carried, so the memory is bounded by the office.
+ */
+let cleanMemo: [Map<string, string>, Map<string, string>] = [new Map(), new Map()]
+
+/**
+ * THE TEXT GATE: the office with every agent text field cleaned (office-chrome.ts cleanAgentText).
+ * Transcripts and the engine's events hand the scan raw text, and ONE control character (an ANSI colour
+ * code, a BEL) or bidi control (an RLM pasted from a Hebrew editor) in a Button's label or a Text refuses
+ * the WHOLE pane on every surface (the desktop's Client faults into the same refused cards). Run by the
+ * poll once on the merged office, before the finish beat, the flicker guard and the write — so the toast,
+ * renderKey and $.state all see clean text — the one choke point of both sources: scanAll's agents (the
+ * role re-resolved every scan, the room leads' topics, the demo cast) and mergeLive's live agents (a
+ * spawn's description and prompt, a tool name, a returned result). task and result keep their line breaks
+ * (the drawer draws them over several lines); every other field is one line. Not cleaned: the ids (id,
+ * session, session_full — keys of the pins, the overrides, the selection; uuids from the engine), the
+ * persona emoji (ours), numbers and flags. Deterministic and idempotent: the same raw office gives the same
+ * clean one, so renderKey holds on a quiet poll.
+ */
+export function cleanOffice(office: Payload): Payload {
+  const prev = cleanMemo
+  const next: [Map<string, string>, Map<string, string>] = [new Map(), new Map()]
+  const clean = (s: string, multiline: boolean): string => {
+    if (!s) return s
+    const k = multiline ? 1 : 0
+    const out = next[k].get(s) ?? prev[k].get(s) ?? cleanAgentText(s, multiline)
+    next[k].set(s, out)
+    return out
+  }
+  const agents = office.agents.map(a => {
+    const c: Agent = {
+      ...a,
+      role: clean(a.role, false),
+      subagent_type: clean(a.subagent_type, false),
+      tool: clean(a.tool, false),
+      task: clean(a.task, true),
+      task_short: clean(a.task_short, false),
+      result: a.result === null ? null : clean(a.result, true),
+      cwd: clean(a.cwd, false),
+      project: clean(a.project, false),
+      model: clean(a.model, false),
+    }
+    if (a.topic !== undefined) c.topic = clean(a.topic, false)
+    return c
+  })
+  cleanMemo = next
+  return { ...office, agents }
+}
+
 /** The poll in progress, if any (a tick that finds one running is skipped). */
 let polling = false
 /** The working count last written into the pane title (PAGE's document.title); undefined until the first poll. */
@@ -299,7 +354,8 @@ export async function poll($: EngineInterface): Promise<void> {
     }
     if (!scanned) return
     const { error, ...payload } = scanned
-    const merged = mergeLive(payload, aged, sessionId, now)
+    // THE TEXT GATE (cleanOffice): every agent text cleaned once, here, before anything reads the office
+    const merged = cleanOffice(mergeLive(payload, aged, sessionId, now))
     // THE FINISH BEAT (PAGE updateWS), here in the poll — not in the render — so a finish is the ONE
     // write below: the ⭐ ids ride the payload (`stars`: starsOf stamps the finishes just seen `now` and
     // drops the expired), the toast + chime fire now. Only an agent the office SHOWS is celebrated (its
@@ -400,9 +456,12 @@ export async function poll($: EngineInterface): Promise<void> {
         }
       }
     }
+    // the scan error is drawn in the footer: cleaned as agent text is, and compared clean (an error that
+    // carried a control character must not read as new on every poll)
+    const errText = error === undefined ? null : cleanAgentText(error)
     const curError = await read($, scanErrorAtom)
-    if ((error ?? null) !== curError) {
-      await update($, scanErrorAtom, () => error ?? null)
+    if (errText !== curError) {
+      await update($, scanErrorAtom, () => errText)
     }
     // the tick only while a text surface draws the pane (the TICK GUARD, ui.tsx): on the desktop
     // any write of ours redraws the pane, so an idle desktop office must see no write at all
@@ -410,7 +469,7 @@ export async function poll($: EngineInterface): Promise<void> {
       await update($, tickAtom, () => now)
     }
   } catch (err) {
-    await update($, scanErrorAtom, () => (err instanceof Error ? err.message : String(err))).catch(() => undefined)
+    await update($, scanErrorAtom, () => cleanAgentText(err instanceof Error ? err.message : String(err))).catch(() => undefined)
   } finally {
     polling = false
   }

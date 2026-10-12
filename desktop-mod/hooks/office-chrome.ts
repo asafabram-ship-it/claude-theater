@@ -2,7 +2,10 @@
 // the surface module draws above the rooms (header, toolbar, search, the
 // footer line, the help popover or the drawer), their exact heights, the
 // drawer's wrapped lines, and the window of layout rows the engine's scroll
-// offset shows. Shared by the surface module (office-client.tsx draws with it)
+// offset shows; and the ONE definition of the characters the surfaces refuse
+// (REFUSED_RE), with the two cleaners built on it: cleanSearch (the search
+// text) and cleanAgentText (every agent text the payload carries, cleaned by
+// the hooks' poll). Shared by the surface module (office-client.tsx draws with it)
 // and the hooks (ui.tsx sizes the Client with `officeHeight`): no `$`, no
 // engine, no clock, so both sides import it — the hooks never import the
 // surface module itself.
@@ -34,7 +37,7 @@ export const ROW_CHARS_PER_COLUMN = 7
 export const WINDOW_CHARS = 70_000
 /** The longest search text, in code points: what the module keeps and posts and the hooks store (a pasted page must not swell a post, the Input's value or the Client's props past their bounds). */
 export const SEARCH_MAX = 200
-/** C0 and C1 controls (an escape sequence in a paste): the surface refuses an Input value or a Text holding one. */
+/** C0 and C1 controls (an escape sequence in a paste): the surface refuses an Input value or a Text holding one (a Text takes tab and newline alone). */
 const CONTROL_RE = /\p{Cc}/gu
 /**
  * The bidi controls (ALM, LRM, RLM, LRE..RLO, LRI..PDI): the desktop refuses them in a Text, and a paste
@@ -42,6 +45,39 @@ const CONTROL_RE = /\p{Cc}/gu
  * zero-width joiner of emoji sequences (man + ZWJ + laptop), which must stay.
  */
 const BIDI_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
+/**
+ * A character a surface refuses in a Text or a Button's label: a bidi control, or a control character
+ * other than tab and newline (the two a Text takes). Built from the two sets above — the ONE definition
+ * of what the surfaces refuse — for the guards and the tests.
+ */
+export const REFUSED_RE = new RegExp(`${BIDI_RE.source}|(?![\\t\\n])${CONTROL_RE.source}`, 'u')
+/**
+ * A terminal escape sequence, removed whole so an ANSI colour code leaves nothing behind (not "[31m"):
+ * a CSI (ESC [ or the C1 CSI, then parameter, intermediate and final bytes) or an OSC (ESC ] up to BEL or
+ * ESC \ — a hyperlink's wrapper; bounded, so an unfinished one costs one short look ahead).
+ */
+const ESCAPE_SEQ_RE = /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]{0,2048}(?:\x07|\x1b\\)/u
+/** One pass over agent text: an escape sequence, a line break (CRLF as one), a bidi control, any other control. */
+const AGENT_TEXT_RE = new RegExp(`${ESCAPE_SEQ_RE.source}|\\r\\n?|${BIDI_RE.source}|${CONTROL_RE.source}`, 'gu')
+/** One of AGENT_TEXT_RE's single-character matches is a bidi control (removed) rather than a control (a space). */
+const BIDI_ONE_RE = new RegExp(`^(?:${BIDI_RE.source})$`)
+
+/**
+ * Agent text (a transcript's prompt or answer, a spawn's description, a tool or model name, a path, a scan
+ * error) as every surface takes it, in ONE regex pass: an escape sequence removed whole, a bidi control
+ * removed, every other control character a space; tab and newline kept only when `multiline` (a field drawn
+ * over several lines: task, result), CR and CRLF then a newline — otherwise a line break or a tab is a space.
+ * Hebrew, emoji, ZWJ sequences, variation selectors are kept. Idempotent: what it returns holds no ESC, no CR,
+ * no bidi control and no control at all but (when `multiline`) tab and newline, which it keeps as they are.
+ * The hooks clean the office once per poll (register.tsx cleanOffice); the surface module never needs it.
+ */
+export function cleanAgentText(s: string, multiline = false): string {
+  return s.replace(AGENT_TEXT_RE, m => {
+    if (m === '\n' || m === '\t') return multiline ? m : ' '
+    if (m[0] === '\r') return multiline ? '\n' : ' '
+    return m.length > 1 || BIDI_ONE_RE.test(m) ? '' : ' '
+  })
+}
 
 /**
  * The search text as the office keeps it: the bidi controls removed, every other control character

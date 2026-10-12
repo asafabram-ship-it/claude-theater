@@ -114,7 +114,7 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   return lines
 }
 
-/** The empty office's lines: the message, the sub's sentences (split as today's `splitSentence`), each wrapped. */
+/** The empty office's lines: the message, the sub's sentences (split at each " - " / " — "), each wrapped. */
 export function emptyLines(p: OfficeProps): { msg: string[]; sub: string[] } {
   if (!p.empty) return { msg: [], sub: [] }
   const w = Math.max(1, p.columns)

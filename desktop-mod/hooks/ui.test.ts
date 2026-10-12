@@ -7,9 +7,9 @@
 // and the pane is mounted and acted on by key on the terminal and the desktop
 // (and drawn on mobile/vscode, which lack Input / Client).
 
-import type { Agent, Payload, View } from './model'
-import { DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS, RUNNING_STALE_SEC } from './model'
-import { expect, mock, test } from 'claude-code/testing'
+import type { Agent } from './model'
+import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS, RUNNING_STALE_SEC } from './model'
+import { expect, test } from 'claude-code/testing'
 
 import { SETTLE_MS } from './register'
 
@@ -19,17 +19,15 @@ import { demoPayload } from './scanner'
 import {
   CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, emptyKind, fmt, gridFor,
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
-  TILE_MAX_PER_ROW, minuteClock, renderKey, roomCols, tilesPerRow,
-  splitSentence, starsOf,
+  minuteClock, renderKey, starsOf,
 } from './ui'
-import { ROOM_COLS, ROW_H, ROW_H_TITLED, roomWidth } from './office-svg'
-import { chromeRows, officeHeight } from './office-chrome'
+import { chromeRows, emptyLines, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
 import { layoutOffice, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
+import { T0, beneath, type MemFiles } from './test-kit'
 
-const T0 = 1_700_000_000_000
 const SA = 'sess-aaaa-1111-frontend'
 const SB = 'sess-bbbb-2222-research'
 const PANE = {
@@ -221,21 +219,12 @@ test('layout budget: cell widths, end-clipping with an ellipsis, the card grid p
   expect(gridFor(140).cardW).toBe(46)
 })
 
-type On = Parameters<typeof mock.store>[0]
-
 /** The pane's message (empty office, no match): an engine Text on the text surfaces, the office Client's `empty.msg` on the desktop. */
 async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Promise<{ props: Record<string, unknown> } | undefined> }, surface: string, re: RegExp): Promise<boolean> {
   if (surface !== 'desktop') return (await ui.find({ type: 'Text', text: re })) !== undefined
   const empty = ((await ui.find({ type: 'Client' }))?.props.props as OfficeProps | undefined)?.empty
   return !!empty && re.test(empty.msg)
 }
-
-/**
- * SVG ERA: the desktop drew scalable SVG rows (office-svg.ts) before the office Client (Task 2.4). The
- * tests guarded by this flag assert that removed path (tileOf / roomSvgOf, the viewBox steps); they
- * are skipped here and Task 2.6 deletes them with the helpers — the kit has no test.skip.
- */
-const SVG_DESKTOP = false
 
 /**
  * DESKTOP (the Client office): a left click inside the office Client on the layout hit `kind`/`id` — a
@@ -253,134 +242,6 @@ async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Rec
 /** DESKTOP (the Client office): whether the module draws the finish hop (the FX_BG.done / doneAlt pulse on a tile's head row). */
 async function hopShown(ui: { findAll: (q: { in?: string; type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }): Promise<boolean> {
   return (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).some(n => n.props.backgroundColor === FX_BG.done || n.props.backgroundColor === FX_BG.doneAlt)
-}
-
-/** An in-memory ~/.claude for `beneath`: path → text + mtime (sizes are the text's length). */
-type MemFiles = Map<string, { text: string; mtimeMs: number }>
-
-function beneath(on: On, current: () => Agent[], store: Record<string, unknown> = {}, files?: MemFiles) {
-  const captured = {
-    toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown>,
-    /** $.state writes seen beneath the plugin, by key (the flicker guard's budget). */
-    writes: { payload: 0, scanError: 0, view: 0, tick: 0, prefs: 0 },
-    /** $.store writes seen beneath the plugin, by key (the housekeeping's budget: the prefs mirror, roomDone). */
-    storeWrites: {} as Record<string, number>,
-    /** $.fs.write calls seen beneath the plugin: none is expected (the diagnostics log is gone). */
-    fsWrites: 0,
-    /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle, a finish or a pins prune — the last through `update`), so it counts the redraws. */
-    prefsReads: 0,
-    /** The `payload` the plugin last read back from $.state (a state.get tap): what the pane draws, ⭐ stars included. */
-    payload: undefined as Payload | undefined,
-    /** The `view` the plugin last WROTE (a state.set tap). */
-    view: undefined as View | undefined,
-    /** The order of the plugin's calls that redraw: 'open' (a retitle), 'payload' / 'view' / 'prefs' (a $.state write) — and 'store:<key>' (a $.store write, which redraws nothing). */
-    seq: [] as string[],
-    /** True → every $.env.get beneath rejects, so the scan FAILS (resolveHome is the one io call inside scanAll's try without a catch of its own). */
-    envDown: false,
-    /** Non-null → every `view` the plugin reads carries this `selected` (what $.state kept over a hot reload, which this harness cannot replay). */
-    selectedBeneath: null as string | null,
-  }
-  const clock = mock.clock(on, { now: T0 })
-  // an in-memory store the test can read back (mock.store would hook store.set
-  // itself, and an event may be hooked only once per module)
-  on('store.get', ($, e) => ({ value: captured.store[e.key] }))
-  on('store.set', ($, e) => {
-    captured.store[e.key] = e.value
-    captured.storeWrites[e.key] = (captured.storeWrites[e.key] ?? 0) + 1
-    captured.seq.push('store:' + e.key)
-    return { value: undefined }
-  })
-  on('store.delete', ($, e) => { delete captured.store[e.key]; return { value: undefined } })
-  on('store.keys', () => ({ value: Object.keys(captured.store) }))
-  // the environment beneath (what mock.env would hook), with a failure switch for the failed-scan test
-  const env: Record<string, string> = { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' }
-  on('env.get', ($, e) => {
-    if (captured.envDown) throw new Error('env down')
-    return { value: env[e.name] }
-  })
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: 'test-session' }))
-  // nothing beneath the plugins answers command.register: without this the plugin's
-  // session.start would abort before starting the poll
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('agent.list', () => ({ value: [] }))
-  // the file system beneath: an empty ~/.claude, or the in-memory `files` (then the scanner's own payload is published, unrewritten)
-  const dirsOf = () => {
-    const dirs = new Set<string>()
-    for (const p of files?.keys() ?? []) {
-      let d = p
-      for (;;) {
-        const i = d.lastIndexOf('/')
-        if (i <= 0) break
-        d = d.slice(0, i)
-        dirs.add(d)
-      }
-    }
-    return dirs
-  }
-  // (the engine hands a hook the path in the platform's separators: back to "/")
-  const norm = (p: string) => p.split("\\").join("/")
-  on('fs.exists', ($, e) => ({ value: files !== undefined && (files.has(norm(e.path)) || dirsOf().has(norm(e.path))) }))
-  on('fs.list', ($, e) => {
-    if (!files) return { value: [] }
-    const dir = norm(e.path)
-    if (!dirsOf().has(dir)) throw new Error(`ENOENT: ${dir}`)
-    const out: Array<{ name: string; kind: 'file' | 'dir'; size: number; mtimeMs: number; isLink: boolean }> = []
-    const sub = new Set<string>()
-    for (const [p, f] of files) {
-      if (!p.startsWith(dir + '/')) continue
-      const rest = p.slice(dir.length + 1)
-      const slash = rest.indexOf('/')
-      if (slash < 0) out.push({ name: rest, kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })
-      else sub.add(rest.slice(0, slash))
-    }
-    for (const d of sub) out.push({ name: d, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })
-    return { value: out }
-  })
-  on('fs.stat', ($, e) => {
-    const f = files?.get(norm(e.path))
-    if (f) return { value: { kind: 'file' as const, size: f.text.length, mtimeMs: f.mtimeMs, isLink: false } }
-    if (files && dirsOf().has(norm(e.path))) return { value: { kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false } }
-    throw new Error(`ENOENT: ${e.path}`)
-  })
-  on('fs.read', ($, e) => {
-    const f = files?.get(norm(e.path))
-    if (!f) throw new Error(`ENOENT: ${e.path}`)
-    return { value: f.text }
-  })
-  on('fs.write', ($, e, next) => { captured.fsWrites += 1; return next(e) })
-  on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
-  on('audio.play', () => { captured.plays += 1; return { value: undefined } })
-  on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); captured.seq.push('open'); return { value: { isPlaced: true as const } } })
-  // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible)
-  on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
-  on('ui.focus', () => ({}))
-  // the poll's payload write becomes the fixture of the moment (unless the scanner reads `files`: then it is counted and kept)
-  // (the ⭐ stars the poll stamped ride the payload: the rewrite keeps them)
-  on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) => {
-    captured.writes.payload += 1
-    captured.seq.push('payload')
-    return files ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now(), stars: (e.value as Payload).stars } })
-  })
-  on('state.get', { plugin: 'agent-theater', key: 'payload' }, async ($, e, next) => {
-    const got = await next(e)
-    captured.payload = (got as { value?: { value?: Payload } }).value?.value
-    return got
-  })
-  on('state.get', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.prefsReads += 1; return next(e) })
-  on('state.get', { plugin: 'agent-theater', key: 'view' }, async ($, e, next) => {
-    const got = await next(e)
-    const sel = captured.selectedBeneath
-    if (sel === null) return got
-    // (never written yet → `value` is undefined beneath and the plugin applies the atom's default: lay the selection over it)
-    const g = got as { value: { value: View | undefined; version: number } }
-    return { ...g, value: { ...g.value, value: { ...DEFAULT_VIEW, ...g.value.value, selected: sel } } } as typeof got
-  })
-  on('state.set', { plugin: 'agent-theater', key: 'scanError' }, ($, e, next) => { captured.writes.scanError += 1; return next(e) })
-  on('state.set', { plugin: 'agent-theater', key: 'view' }, ($, e, next) => { captured.writes.view += 1; captured.view = e.value as View; captured.seq.push('view'); return next(e) })
-  on('state.set', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.writes.prefs += 1; captured.seq.push('prefs'); return next(e) })
-  on('state.set', { plugin: 'agent-theater', key: 'tick' }, ($, e, next) => { captured.writes.tick += 1; return next(e) })
-  return { captured, clock }
 }
 
 /** A quiet office on disk (HOME = C:/Users/test): one open conversation (its lead answering on Fable) with two subagents, one of them on Opus. */
@@ -468,29 +329,6 @@ function quietOffice(now: number): MemFiles {
   })
   files.set(`${QHOME}/.claude/sessions/7.json`, { text: JSON.stringify({ pid: 7, sessionId: QSESS }), mtimeMs: now })
   return files
-}
-
-/** A mounted drawing's finder (what `$.ui.mount` answers), structurally. */
-type Mounted = { findAll: (q: { type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }
-
-/**
- * DESKTOP: a card's texts live inside its ROOM's SVG (one per room); the room SVG whose markup
- * carries `data-id="<id>"`, and the tile's own `<g>` markup cut out of it.
- */
-async function tileOf(ui: Mounted, id: string): Promise<{ source: string; tile: string; alt: string; isInteractive: unknown; width: unknown; height: unknown } | undefined> {
-  const t = (await ui.findAll({ type: 'Svg' })).find(x => String(x.props.source).includes(`data-id="${id}"`))
-  if (!t) return undefined
-  const source = String(t.props.source)
-  const start = source.lastIndexOf('<g class="ws', source.indexOf(`data-id="${id}"`))
-  const end = source.indexOf('<g class="ws', start + 1)
-  const tile = source.slice(start, end < 0 ? source.lastIndexOf('</svg>') : end)
-  return { source, tile, alt: String(t.props.alt), isInteractive: t.props.isInteractive, width: t.props.width, height: t.props.height }
-}
-
-/** DESKTOP: the room SVG of session `s` (the one whose alt starts with its title). */
-async function roomSvgOf(ui: Mounted, titleStart: string): Promise<{ source: string; alt: string } | undefined> {
-  const t = (await ui.findAll({ type: 'Svg' })).find(x => String(x.props.alt).startsWith(titleStart))
-  return t ? { source: String(t.props.source), alt: String(t.props.alt) } : undefined
 }
 
 test('the office draws rooms, cards, counts and the footer on every surface', async ($, on) => {
@@ -781,111 +619,6 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
   } finally {
     await ui.unmount()
   }
-})
-
-test('DESKTOP: each room is scalable interactive SVG rows with numbered tiles and a row of numbered open Buttons; a newcomer walks in; the finish is the tile\'s own (no confetti Client)', async ($, on) => {
-  if (!SVG_DESKTOP) return // SVG ERA — Task 2.6 deletes this test
-  let agents = fixture().map(a => (a.id === 'lead-a' ? { ...a, model: 'claude-fable-5-1' } : a))
-  const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
-  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(POLL_MS)
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  // two rooms of one row each → two SVGs, each interactive, with a viewBox and its intrinsic size in the MARKUP
-  // (the host sizes the box from it: the markup's own height at the drawn width) and NO width/height PROPS
-  // (the box takes the slot's width, so the drawing scales with the pane)
-  const svgs = await ui.findAll({ type: 'Svg' })
-  expect(svgs).toHaveLength(2)
-  for (const sv of svgs) {
-    expect(sv.props.isInteractive).toBe(true)
-    expect(sv.props.width).toBeUndefined()
-    expect(sv.props.height).toBeUndefined()
-    const src = String(sv.props.source)
-    expect(src.length).toBeLessThan(131072)
-    expect(/^<svg [^>]*viewBox="0 0 (\d+) (\d+)" width="\1" height="\2" style="width:100%;height:100%"/.test(src)).toBe(true)
-    expect(src).toMatch(/xml:lang="he"/)
-    expect(src).toMatch(/direction="rtl"/)
-    expect(src).toMatch(/prefers-color-scheme: light/)
-    expect(String(sv.props.alt).length).toBeGreaterThan(0)
-  }
-  // every room of a render shares ONE column count (and so one viewBox width): 3 at ~45 columns, stepping up at breakpoints
-  expect(new Set(svgs.map(sv => /viewBox="0 0 (\d+) /.exec(String(sv.props.source))?.[1])).size).toBe(1)
-  expect(roomCols(45)).toBe(ROOM_COLS)
-  expect(roomCols(24)).toBe(ROOM_COLS)
-  expect(roomCols(89)).toBe(3)
-  expect(roomCols(90)).toBe(4)
-  expect(roomCols(130)).toBe(5)
-  expect(roomCols(140)).toBe(5)
-  expect(roomCols(170)).toBe(6)
-  expect(roomCols(250)).toBe(TILE_MAX_PER_ROW)
-  expect(roomCols(400)).toBe(TILE_MAX_PER_ROW)
-  expect(tilesPerRow(45)).toBe(3)
-  expect((await roomSvgOf(ui, '💬 Ship the v2'))?.source).toMatch(new RegExp(`viewBox="0 0 ${roomWidth(3)} ${ROW_H_TITLED}"`))
-  // every tile has exactly one MODEL PILL: the lead's (Fable, read from its conversation), a1's (Opus), b1's ("?")
-  expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/class="pillt m-fable"[^>]*>Fable 5\.1</)
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="pillt m-opus"[^>]*>Opus 5\.5</)
-  expect((await tileOf(ui, 'b1'))?.tile).toMatch(/class="pillt m-other"[^>]*>\?</)
-  for (const sv of svgs) {
-    const src = String(sv.props.source)
-    expect((src.match(/class="pill /g) ?? []).length).toBe((src.match(/<g class="ws /g) ?? []).length)
-  }
-  // the numbers row is tight: no gap between the small dim Buttons
-  expect((await ui.find({ key: 'opens:' + SA }))?.props?.gap).toBe(0)
-  // numbered tiles ↔ numbered Buttons: room A = lead-a (1), a1 (2); room B = b1 (1). No tile:<id> Boxes any more.
-  for (const [id, n] of [['lead-a', '1'], ['a1', '2'], ['b1', '1']] as const) {
-    const t = await tileOf(ui, id)
-    expect(t).toBeDefined()
-    expect(t?.tile).toMatch(new RegExp(`class="numt"[^>]*>${n}</text>`))
-    expect((await ui.find({ key: `open:${id}` }))?.text).toMatch(new RegExp(`^${n} `))
-    expect(await ui.find({ key: `tile:${id}` })).toBeUndefined()
-  }
-  // the tile carries what the text card carried: status, activity, timer (minutes), model, the lead's 💬 — and a full tooltip
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws running fam-read/)
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/<title>2\. \S+ map session-token validation\nTask of a1\.\n📖 קורא · 🧠 Opus 5\.5 · &lt;1 דק׳<\/title>/)
-  expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/<title>1\. [^\n]*\n[^\n]*\n[^\n]*🧠 Fable 5\.1/)
-  expect((await tileOf(ui, 'a1'))?.alt).toMatch(/📖 קורא/)
-  expect((await tileOf(ui, 'b1'))?.tile).toMatch(/fam-agent/)
-  expect((await tileOf(ui, 'lead-a'))?.tile).toMatch(/ is-session/)
-  expect((await tileOf(ui, 'lead-a'))?.tile.includes(LEAD_MARK)).toBe(true)
-  // STABLE: the next poll (POLL_MS later, same wall-clock minute) redraws the very same sources — no frame reload, no flicker
-  const before = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-  expect(before.some(src => src.includes(' entering'))).toBe(true) // first sight: the whole cast walked in
-  await clock.advance(POLL_MS)
-  const settled = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-  expect(settled.some(src => src.includes(' entering'))).toBe(false) // one-shot: gone on the next redraw
-  await clock.advance(POLL_MS)
-  const again = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-  expect(again).toEqual(settled)
-  expect(minuteClock(clock.now())).toBe(minuteClock(clock.now() - 2 * POLL_MS))
-  // a phase change (a1 moves from Read to Write) changes room A's source and leaves room B's alone
-  agents = fixture().map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
-  await clock.advance(POLL_MS)
-  const changed = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-  expect(changed[0]).not.toBe(again[0])
-  expect(changed[1]).toBe(again[1])
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws running fam-write/)
-  // the Button opens the drawer exactly as the text card's did; the selection lights the tile (a visible change)
-  await ui.press({ key: 'open:a1' })
-  expect(await ui.find({ key: 'close' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^🧠 Opus 5\.5$/ })).toBeDefined()
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/ selected/)
-  await ui.press({ key: 'close' })
-  expect((await tileOf(ui, 'a1'))?.tile.includes(' selected')).toBe(false)
-  // a newcomer walks in on the poll that first shows it (one-shot), and has sat down by the next; it gets the next number
-  agents = [...agents, agent({ id: 'newbie', role: 'index the docs', tool: 'Grep', persona_id: 5 })]
-  await clock.advance(POLL_MS)
-  expect((await tileOf(ui, 'newbie'))?.tile).toMatch(/ entering/)
-  expect((await tileOf(ui, 'a1'))?.tile.includes(' entering')).toBe(false)
-  expect((await ui.find({ key: 'open:newbie' }))?.text).toMatch(/^3 /)
-  await clock.advance(POLL_MS)
-  expect((await tileOf(ui, 'newbie'))?.tile.includes(' entering')).toBe(false)
-  // a finish: the tile turns done, and NO confetti Client on the desktop (the ⭐ + hop + toast + chime are the
-  // poll's beat over a SCANNED office — this fixture enters beneath the poll — see THE FLICKER GUARD)
-  agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'mapped 4 places' } : a))
-  await ui.press({ key: 'showDone' })
-  await clock.advance(POLL_MS)
-  expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect((await tileOf(ui, 'a1'))?.tile).toMatch(/class="ws done/)
-  await ui.unmount()
 })
 
 test('THE FLICKER GUARD: polls with no visible change write NO payload / scanError / view and the desktop pane is NOT redrawn; a visible change or a minute\'s turn publishes ONCE; the terminal keeps ticking', async ($, on) => {
@@ -1183,43 +916,6 @@ test('a FAILED scan never touches user state: the first scan after a hot reload 
   await ui.unmount()
 })
 
-test('RESIZE: the rows scale with the pane — one column count for every room, stepping 3 → 4 → 5 → 6 at 45 / 90 / 140 / 200 columns; a resize redraws, a quiet poll after it does not', async ($, on) => {
-  if (!SVG_DESKTOP) return // SVG ERA — Task 2.6 deletes this test (the Client's resize is asserted in the DESKTOP Client test above)
-  // room A: the lead + four subagents (so 3 columns need two rows), room B: one
-  const agents = [
-    ...fixture().filter(a => a.id !== 'a2'),
-    agent({ id: 'a3', role: 'write the changelog', tool: 'Write', persona_id: 12 }),
-    agent({ id: 'a4', role: 'run the suite', tool: 'Bash', persona_id: 13 }),
-    agent({ id: 'a5', role: 'grep the logs', tool: 'Grep', persona_id: 14 }),
-  ]
-  const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
-  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
-  await clock.advance(POLL_MS)
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  const widthsOf = async () => (await ui.findAll({ type: 'Svg' })).map(x => Number(/viewBox="0 0 (\d+) (\d+)"/.exec(String(x.props.source))?.[1]))
-  const heightsOf = async () => (await ui.findAll({ type: 'Svg' })).map(x => Number(/viewBox="0 0 (\d+) (\d+)"/.exec(String(x.props.source))?.[2]))
-  await clock.advance(POLL_MS) // the cast has walked in (the one-shot `entering` is gone)
-  for (const [bodyColumns, cols, svgCount] of [[45, 3, 3], [90, 4, 3], [140, 5, 2], [200, 6, 2]] as const) {
-    await ui.redraw({ ...PANE.props, bodyColumns })
-    expect(roomCols(bodyColumns)).toBe(cols)
-    const widths = await widthsOf()
-    expect(widths).toHaveLength(svgCount) // room A: two rows under 5 columns, one from 5; room B: one row
-    expect(new Set(widths).size).toBe(1) // IDENTICAL across rooms and rows
-    expect(widths[0]).toBe(roomWidth(cols))
-    const heights = await heightsOf()
-    // every row hugs its tiles: the titled first row of each room, a bare row for the overflow
-    for (const h of heights) expect([ROW_H, ROW_H_TITLED].includes(h)).toBe(true)
-    expect(heights.filter(h => h === ROW_H_TITLED)).toHaveLength(2) // two rooms, two titles
-    // the numbered Buttons stay one per agent whatever the grid
-    for (const id of ['lead-a', 'a1', 'a3', 'a4', 'a5', 'b1']) expect(await ui.find({ key: `open:${id}` })).toBeDefined()
-    // a quiet poll after the resize draws the very same sources (no change → no reload)
-    const after = (await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))
-    await clock.advance(POLL_MS)
-    expect((await ui.findAll({ type: 'Svg' })).map(x => String(x.props.source))).toEqual(after)
-  }
-  await ui.unmount()
-})
-
 test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', async ($, on) => {
   const agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
@@ -1262,7 +958,6 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
 })
 
 test('DESKTOP RTL: the empty office is the office Client\'s (the direction a flag, the sub split into its own lines by the module); the search placeholder drops its trailing ellipsis; the terminal keeps its Text lines', async ($, on) => {
-  expect(splitSentence('הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:')).toEqual(['הפעילו סוכן ב-Claude Code', 'או הציצו איך נראה משרד עמוס:'])
   beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   const desk = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
@@ -1270,6 +965,8 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   const p = await officePropsOf(desk)
   expect(p?.rtl).toBe(true)
   expect(p?.empty).toEqual({ kind: 'office', msg: 'המשרד ריק', sub: 'הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:' })
+  // the sub is split at its " - " into its own lines (office-chrome.ts emptyLines, the module's split)
+  expect(emptyLines(p!)).toEqual({ msg: ['המשרד ריק'], sub: ['הפעילו סוכן ב-Claude Code', 'או הציצו איך נראה משרד עמוס:'] })
   expect(await desk.find({ type: 'Svg' })).toBeUndefined()
   expect(await desk.find({ type: 'Text', text: /Claude Code/ })).toBeUndefined()
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^המשרד ריק$/ })).toBeDefined()

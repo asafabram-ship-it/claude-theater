@@ -11,18 +11,18 @@
 // beneath), so these tests read its effects: the store, the counted $.state
 // writes beneath, and the Client's props on the next draw.
 
-import { expect, mock, test } from 'claude-code/testing'
-import type { JsonValue, On } from 'claude-code'
+import { expect, test } from 'claude-code/testing'
+import type { JsonValue } from 'claude-code'
 
-import type { Agent, View } from './model'
-import { EMPTY_PAYLOAD, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
+import type { Agent } from './model'
+import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
 import { chromeRows } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { layoutOffice, type Hit } from './office-layout'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { SEARCH_MAX } from './ui'
+import { T0, beneath } from './test-kit'
 
-const T0 = 1_700_000_000_000
 const SA = 'sess-aaaa-1111-frontend'
 const SB = 'sess-bbbb-2222-research'
 const PANE = {
@@ -40,6 +40,9 @@ function agent(over: Partial<Agent> & { id: string }): Agent {
   }
 }
 
+/** The $.store the tests start from: Hebrew, the chime on, finished hidden, no pins. */
+const PREFS = () => ({ prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+
 /** Room A (a lead, a reader, a finished writer) and room B (one MCP agent). */
 function fixture(): Agent[] {
   return [
@@ -48,50 +51,6 @@ function fixture(): Agent[] {
     agent({ id: 'a2', role: 'draft the v2 migration guide', status: 'done', tool: 'Write', end_ms: T0 - 2000, result: 'Done.', persona_id: 11 }),
     agent({ id: 'b1', role: 'triage open bugs', tool: 'mcp__github__search_issues', session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research', persona_id: 9 }),
   ]
-}
-
-/** The hooks beneath the plugin: an empty ~/.claude, the pane shown, every publish rewritten to `current()`, the writes counted. */
-function beneath(on: On, current: () => Agent[]) {
-  const clock = mock.clock(on, { now: T0 })
-  const captured = {
-    store: { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } } as Record<string, unknown>,
-    /** $.state writes of the plugin, by key. */
-    writes: {} as Record<string, number>,
-    /** $.store writes of the plugin, by key. */
-    storeWrites: {} as Record<string, number>,
-    /** The `view` the plugin last wrote. */
-    view: undefined as View | undefined,
-    /** `prefs` reads: the pane's render reads it once per draw. */
-    prefsReads: 0,
-    toasts: [] as string[],
-    opens: [] as string[],
-  }
-  on('store.get', ($, e) => ({ value: captured.store[e.key] }))
-  on('store.set', ($, e) => {
-    captured.store[e.key] = e.value
-    captured.storeWrites[e.key] = (captured.storeWrites[e.key] ?? 0) + 1
-    return { value: undefined }
-  })
-  on('store.delete', ($, e) => { delete captured.store[e.key]; return { value: undefined } })
-  on('store.keys', () => ({ value: Object.keys(captured.store) }))
-  mock.env(on, { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' })
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: 'test-session' }))
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('agent.list', () => ({ value: [] }))
-  on('fs.exists', () => ({ value: false }))
-  on('fs.list', () => ({ value: [] }))
-  on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
-  on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); return { value: { isPlaced: true as const } } })
-  on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
-  on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) => next({ ...e, value: { ...EMPTY_PAYLOAD, stars: {}, agents: current(), scanned_ms: clock.now() } }))
-  on('state.set', { plugin: 'agent-theater' }, ($, e, next) => {
-    captured.writes[e.key] = (captured.writes[e.key] ?? 0) + 1
-    if (e.key === 'view') captured.view = e.value as View
-    return next(e)
-  })
-  on('state.get', { plugin: 'agent-theater', key: 'prefs' }, ($, e, next) => { captured.prefsReads += 1; return next(e) })
-  return { captured, clock }
 }
 
 type Ui = {
@@ -126,7 +85,7 @@ async function writesOf(captured: ReturnType<typeof beneath>['captured'], act: (
 }
 
 test('ui.message: the office Client\'s own posts — toolbar Buttons, letter keys, tile and room-head clicks, the search Input — change prefs / view / the store as the text cards\' presses do, one atom per message', async ($, on) => {
-  const { captured, clock } = beneath(on, () => fixture())
+  const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   expect(OFFICE_KEY).toBe('office') // the ui.message / ui.fault matchers carry it as a literal (validate reads matchers statically)
@@ -209,7 +168,7 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect((await propsOf(ui)).demo).toBe(false)
 
   // the language: the pref (+ mirror) and the pane retitled in English with the working count; the module's labels follow
-  expect(await writesOf(captured, () => ui.press({ key: 'lang' }))).toMatchObject({ prefs: 1, 'store:prefs': 1 })
+  expect(await writesOf(captured, () => ui.press({ key: 'lang' }))).toEqual({ prefs: 1, 'store:prefs': 1 }) // the retitle is a ui.open, not a write
   expect((captured.store.prefs as { lang: string }).lang).toBe('en')
   expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 Theater')
   expect((await propsOf(ui)).lang).toBe('en')
@@ -225,7 +184,7 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
 })
 
 test('ui.message: what is not an office message is ignored — content / pull (dropped by the amendment), focus, no `t`, wrong field types, not an object — no write, no redraw; a search text is capped', async ($, on) => {
-  const { captured, clock } = beneath(on, () => fixture())
+  const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
@@ -250,7 +209,7 @@ test('ui.message: what is not an office message is ignored — content / pull (d
 })
 
 test('ui.fault on the office: the desktop falls back to the text cards and toasts once; /theater tries the Client again; a second fault toasts again', async ($, on) => {
-  const { captured, clock } = beneath(on, () => fixture())
+  const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })

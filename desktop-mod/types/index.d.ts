@@ -181,7 +181,7 @@ declare module 'claude-code' {
       /**
        * The poll's clock (ms), written every tick while the pane is up. Read
        * ONLY by the text surfaces' pane (their mm:ss timers tick with it); the
-       * desktop never reads it, so a tick redraws no room SVG (no frame reload).
+       * desktop never reads it, so a tick never redraws the office Client.
        */
       tick: number
     }

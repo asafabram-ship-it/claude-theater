@@ -22,7 +22,7 @@ import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
 import { personaName } from './personas'
 import { agentElapsed, cardName, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
 
-/** The family colour token of a model id — the one office-svg.ts colours the pill with (i18n.ts). */
+/** The family colour token of a model id (i18n.ts): office-layout.ts colours the model pill by it (MODEL_BG). */
 export { modelFamily } from './i18n'
 
 /** The Client's key and the `ui.message` matcher. */

@@ -110,7 +110,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, REDRAW_LATCH_MS, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
-import { ROOM_COLS, UNKNOWN_MODEL_PILL, WALK_IN_MS } from './office-svg'
+import { UNKNOWN_MODEL_PILL, WALK_IN_MS } from './office-svg'
 // the pure chrome maths (the Client's full content height) and the pure layout: never the surface
 // module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, officeHeight } from './office-chrome'
@@ -141,24 +141,6 @@ export const COLS3_FROM = 120
 export const CARD_MAX_W = 60
 /** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
 const BURST_MS = 1050
-/**
- * SVG ERA (the desktop drew scalable SVG rows, office-svg.ts, before the
- * Client office): the tiles-per-row breakpoints of that grid. Nothing draws
- * with them any more; kept, with roomCols / tilesPerRow / TILE_HOP_MS /
- * splitSentence below, only because ui.test.ts's old desktop tests import
- * them — Task 2.6 removes those tests and these with them.
- */
-export const COLS_STEP_FROM = 50
-export const COLS_STEP = 40
-/** SVG ERA: the widest desktop row. */
-export const TILE_MAX_PER_ROW = 8
-/** SVG ERA: the hop's one-shot window (the Client's hop is the module's FX_DONE_MS). */
-export const TILE_HOP_MS = 1000
-
-/** SVG ERA: a long sentence split at its " - " / " — " (the Client's empty office splits it in office-chrome.ts emptyLines). */
-export function splitSentence(s: string): string[] {
-  return s.split(/\s[-—]\s/).map(x => x.trim()).filter(Boolean)
-}
 
 /**
  * THE TICK GUARD. `tick` (the text surfaces' mm:ss clock) is written by the
@@ -438,15 +420,6 @@ export function gridFor(width: number): { perRow: number; cardW: number } {
   const cardW = Math.min(CARD_MAX_W, Math.floor((w - (perRow - 1)) / perRow))
   return { perRow, cardW }
 }
-
-/** SVG ERA: tiles per row of the SVG grid — ROOM_COLS, +1 per COLS_STEP columns past COLS_STEP_FROM, at most TILE_MAX_PER_ROW (the Client's grid is office-layout.ts tilesPerRow). */
-export function roomCols(width: number): number {
-  const w = Math.max(MIN_WIDTH, width)
-  return Math.max(ROOM_COLS, Math.min(TILE_MAX_PER_ROW, ROOM_COLS + Math.floor(Math.max(0, w - COLS_STEP_FROM) / COLS_STEP)))
-}
-
-/** SVG ERA: the same count (every room of a render shared it). */
-export const tilesPerRow = roomCols
 
 /** DESKTOP: the clock the tiles are timed from — the wall-clock minute, so every tile's minutes (and so the props) move together, once a minute. */
 export function minuteClock(now: number): number {

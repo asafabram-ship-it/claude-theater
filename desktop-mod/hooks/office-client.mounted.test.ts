@@ -18,45 +18,27 @@
 // running and stopping, the spacer and the window — and those effects of its
 // posts; register.test.ts covers every message kind.
 
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, test } from 'claude-code/testing'
 
-import { EMPTY_PAYLOAD, PERSONA_EMOJI, POLL_MS } from './model'
+import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
 import { CHROME_ROWS, chromeRows, windowOf } from './office-chrome'
 import { FX_BG, FX_ENTER_MS, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import { TILE_W } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
+import { T0, beneath } from './test-kit'
 
 /** Enabled in Task 2.4 (the desktop branch of ui.tsx returns the Client). */
 const ENABLED = true
 
-const T0 = 1_700_000_000_000
 const PANE = { plugin: 'agent-theater', component: 'Pane', requestId: 'agent-theater', props: { title: 'T', isFocused: true, bodyColumns: 45, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } } as const
 function agent(over: Partial<Agent> & { id: string }): Agent {
   return { persona_id: 3, emoji: PERSONA_EMOJI[3] ?? '', role: 'map the docs', subagent_type: 'Explore', status: 'running', tool: 'Read', phase: 'tool', task: 't', task_short: 't', result: null, start_ms: T0 - 30_000, end_ms: null, session: 'sess-a', session_full: 'sess-aaaa', cwd: '/w', project: '/w', mtime_ms: T0 - 1000, is_session: false, closed: false, is_workflow: false, truncated: false, model: 'claude-opus-5-5', ...over }
 }
 
-/** The hooks beneath: an empty ~/.claude, the pane shown, the payload rewritten to `current()` on every publish. */
-function beneath(on: Parameters<typeof mock.store>[0], current: () => Agent[]) {
-  const clock = mock.clock(on, { now: T0 })
-  const store: Record<string, unknown> = { prefs: { lang: 'he', muted: true, showDone: false, pins: [] } }
-  on('store.get', ($, e) => ({ value: store[e.key] }))
-  on('store.set', ($, e) => { store[e.key] = e.value; return { value: undefined } })
-  on('store.delete', ($, e) => { delete store[e.key]; return { value: undefined } })
-  on('store.keys', () => ({ value: Object.keys(store) }))
-  mock.env(on, { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' })
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: 'test-session' }))
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('agent.list', () => ({ value: [] }))
-  on('fs.exists', () => ({ value: false }))
-  on('fs.list', () => ({ value: [] }))
-  on('ui.open', () => ({ value: { isPlaced: true as const } }))
-  on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
-  on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) => next({ ...e, value: { ...EMPTY_PAYLOAD, stars: {}, agents: current(), scanned_ms: clock.now() } }))
-  return { clock, store }
-}
+/** The $.store the mounted cases start from: Hebrew, muted, finished hidden, no pins. */
+const PREFS = () => ({ prefs: { lang: 'he', muted: true, showDone: false, pins: [] } })
 
 type Found = { props: Record<string, unknown> }
 type Drawn = { type: string; props: Record<string, unknown>; children?: Array<Drawn | string> }
@@ -100,7 +82,7 @@ async function bgRows(ui: Finder, p: OfficeProps, bg: string): Promise<number[]>
 test('DESKTOP (2.4): the pane is one Client; it draws the room head, the tiles and the chrome; a click on a tile focuses it; a newcomer walks in on the fx clock, which then stops', async ($, on) => {
   if (!ENABLED) return
   let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 })]
-  const { clock } = beneath(on, () => agents)
+  const { clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
@@ -155,7 +137,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the room head, the tiles a
 test('DESKTOP (2.4): the engine scrolls natively — the Client is full height and the engine\'s offset reaches it as props.offset', async ($, on) => {
   if (!ENABLED) return
   const many = Array.from({ length: 30 }, (_, i) => agent({ id: `a${i}`, session_full: `s${i % 3}`, session: `s${i % 3}` }))
-  const { clock } = beneath(on, () => many)
+  const { clock } = beneath(on, () => many, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, scroll: { offset: 0, bodyRows: 20 } } })
@@ -177,7 +159,7 @@ test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across
   if (!ENABLED) return
   // four agents at 45 columns (3 tiles per row): lead, a1, a2 in the first block, a3 alone in the second
   let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 }), agent({ id: 'a2', persona_id: 8 }), agent({ id: 'a3', persona_id: 9 })]
-  const { clock } = beneath(on, () => agents)
+  const { clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
@@ -240,7 +222,7 @@ test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across
 test('DESKTOP (2.4): the window — a spacer for the rows scrolled past, the rows of the window, a click in full-layout coordinates', async ($, on) => {
   if (!ENABLED) return
   const many = Array.from({ length: 12 }, (_, i) => agent({ id: `a${i}` }))
-  const { clock } = beneath(on, () => many)
+  const { clock } = beneath(on, () => many, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, scroll: { offset: 12, bodyRows: 10 } } })

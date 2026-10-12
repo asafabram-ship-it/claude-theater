@@ -179,10 +179,23 @@ test('bounds: 100 agents in 10 rooms at 45 and 200 columns stay small', () => {
   }
 })
 
-// (CPU-bound: 354 layouts of 100 agents; ~5-7 s while the other test files run beside it, so it gets the limits test's budget)
-test('sweep: 100 agents at every width 24..200 — rows fit the columns, hits stay inside, a 40-row window is under the tree limits', { timeoutMs: 30_000 }, () => {
+/**
+ * The sweep's widths: every one from 24 to 60 (the docked panes), then every 4th to 200, plus both sides of
+ * each step of tilesPerRow past 60 (the width where one more tile fills the row exactly, and the one before).
+ */
+function sweepWidths(): number[] {
+  const out = new Set<number>()
+  for (let c = 24; c <= 60; c++) out.add(c)
+  for (let c = 64; c <= 200; c += 4) out.add(c)
+  for (let c = 61; c <= 200; c++) if (tilesPerRow(c) !== tilesPerRow(c - 1)) { out.add(c - 1); out.add(c) }
+  return [...out].sort((a, b) => a - b)
+}
+
+// (CPU-bound: ~180 layouts of 100 agents, the narrow ones hundreds of rows tall; 3.4-5.1 s while the other test
+// files run beside it, so it keeps the limits test's budget: under the default 5 s it timed out in one run of two)
+test('sweep: 100 agents at widths 24..200 (every one to 60, then every 4th and each tile-row step), both directions — rows fit the columns, hits stay inside, a 40-row window is under the tree limits', { timeoutMs: 30_000 }, () => {
   const rooms = tenByTen()
-  for (let columns = 24; columns <= 200; columns++) {
+  for (const columns of sweepWidths()) {
     for (const rtl of [true, false]) {
       const lay = layoutOffice(props({ columns, rtl, rooms }))
       const perRow = tilesPerRow(columns)

@@ -631,20 +631,35 @@ test('header: the five-hour meter is the full label (bar and reset clock) where 
   expect(endOf(header(45, { usage: { pct: 80, resetsAt: R } }), ' · ⚠ 5h 80%')).toBe(' · ⚠ 5h 80%')
   // no reading: no meter at any width
   for (const columns of [24, 45, 59, 60, 90, 200]) expect(header(columns, { usage: null })).not.toContain('5h')
-  // every width: the line fits, holds no refused character, and shows the meter whole or not at all — the full label
-  // only from COMPACT_BELOW and only when it fits whole, the short form otherwise (a bar cut in half hides the percent)
+  // every width, several counts and two readings: the line fits, holds no refused character, and the meter is whole or absent — the
+  // full label only from COMPACT_BELOW and only when the whole line fits, else the short form when that fits, else the counts alone
+  // (never a `5h` or a percent cut in half: `⏳ 5h 4…` would read as 4%)
+  const countSets = [{ run: 2, idle: 0, done: 0 }, { run: 2, idle: 0, done: 5 }, { run: 2, idle: 3, done: 12 }, { run: 12, idle: 30, done: 120 }]
+  const readings = [u, { pct: 100, resetsAt: R }]
   let fullFrom = Infinity
-  for (let columns = 24; columns <= 200; columns++) {
-    const line = header(columns, { usage: u })
-    expect(textWidth(line), `${columns} columns`).toBeLessThanOrEqual(columns)
-    expect(line).not.toMatch(REFUSED_RE)
-    if (line.includes('▰') || line.includes('▱')) {
-      expect(columns, `${columns} columns: the bar`).toBeGreaterThanOrEqual(COMPACT_BELOW)
-      expect(endOf(line, full), `${columns} columns: the whole label`).toBe(full)
-      fullFrom = Math.min(fullFrom, columns)
-    } else if (columns >= 40) {
-      expect(endOf(line, short), `${columns} columns: the short form`).toBe(short)
+  for (const counts of countSets) {
+    for (const reading of readings) {
+      const fullOf = usageLabel(reading, 'he', 100)
+      const shortOf = usageShort(reading)
+      for (let columns = 24; columns <= 200; columns++) {
+        const at = `${JSON.stringify(counts)}, ${reading.pct}%, ${columns} columns`
+        const base = header(columns, { counts, usage: null })
+        const line = header(columns, { counts, usage: reading })
+        expect(textWidth(line), at).toBeLessThanOrEqual(columns)
+        expect(line, at).not.toMatch(REFUSED_RE)
+        expect([base, `${base} · ${shortOf}`, `${base} · ${fullOf}`], at).toContain(line)
+        if (line.includes('▰') || line.includes('▱')) {
+          expect(columns, `${at}: the bar`).toBeGreaterThanOrEqual(COMPACT_BELOW)
+          if (counts === countSets[0] && reading === u) fullFrom = Math.min(fullFrom, columns)
+        }
+      }
     }
+  }
+  // the three cuts that used to slice the percent (the short form does not fit): the counts alone
+  for (const [columns, counts] of [[24, countSets[1]!], [30, countSets[2]!], [36, countSets[3]!]] as const) {
+    const line = header(columns, { counts, usage: u })
+    expect(line, `${columns} columns`).toBe(header(columns, { counts, usage: null }))
+    expect(line, `${columns} columns`).not.toContain('5h')
   }
   // the full label takes over where the whole line fits, and not before COMPACT_BELOW: the short Hebrew counts leave room for it at
   // 60 (the line is 58 cells), while the English ones with an idle count need more — one column fewer, the short form

@@ -12,9 +12,10 @@
 import type { On, SessionRateLimit, UsageUnit } from 'claude-code'
 import { expect, test, type Engine } from 'claude-code/testing'
 
-import { POLL_MS } from './model'
+import { PERSONA_EMOJI, POLL_MS } from './model'
+import type { Agent } from './model'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
-import { beneath } from './test-kit'
+import { T0, beneath } from './test-kit'
 import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageBar, usageLabel, usageShort, usageThreshold } from './usage'
 
 test('pickFiveHour takes the five_hour window only', () => {
@@ -476,4 +477,35 @@ test('terminal header: the card header ends with the short meter (wide and narro
   await measure($, [])
   expect(await names5h(narrow)).toBeUndefined()
   await narrow.unmount()
+})
+
+/** One agent for the card header's counts (running, stale = the idle count, or done); the rest is the scanner's usual shape. */
+function agent(id: string, status: Agent['status']): Agent {
+  return {
+    id, persona_id: 3, emoji: PERSONA_EMOJI[3] ?? '', role: '', subagent_type: '', status, tool: 'Read', phase: 'tool',
+    task: `Task of ${id}.`, task_short: `Task of ${id}.`, result: null, start_ms: T0 - 30_000, end_ms: status === 'done' ? T0 - 2000 : null,
+    session: 'sess-aaa', session_full: 'sess-aaaa', cwd: '/w', project: '/w', mtime_ms: T0 - 1000,
+    is_session: false, closed: false, is_workflow: false, truncated: false, model: '',
+  }
+}
+
+test('terminal header: the meter is drawn whole or not at all — a narrow pane whose counts leave no room for it shows the counts alone', async ($, on) => {
+  const { clock } = beneath(on, () => [agent('r1', 'running'), agent('s1', 'stale'), agent('d1', 'done')], prefs('he'))
+  usageBeneath(on)
+  await $.session.start({ ...START, surface: 'terminal' })
+  await clock.advance(POLL_MS)
+  const TERMINAL = { ...PANE, surface: 'terminal' } as const
+  // 24 columns (the narrowest the pane lays out for): the compact counts are 11 cells, the meter would make 23 of the 21 there are
+  const tight = await $.ui.mount({ ...TERMINAL, props: { ...PANE.props, bodyColumns: 24 } })
+  expect(await cardHeader(tight)).toBe('🟢1 ⏳1 ✅1')
+  await measure($, limits(42, local(21, 10)))
+  expect(await cardHeader(tight)).toBe('🟢1 ⏳1 ✅1') // (no `· ⏳ 5…`, no `5h`: the percent is never cut in half)
+  expect(await names5h(tight)).toBeUndefined()
+  await tight.unmount()
+  // room for it (a wider pane, same reading): the idle `⏳1` and the meter's `⏳ 5h 42%` are both there, told apart by `5h`
+  const roomy = await $.ui.mount({ ...TERMINAL, props: { ...PANE.props, bodyColumns: 45 } })
+  expect(await cardHeader(roomy)).toBe('🟢1 ⏳1 ✅1 · ⏳ 5h 42%')
+  await measure($, [])
+  expect(await cardHeader(roomy)).toBe('🟢1 ⏳1 ✅1')
+  await roomy.unmount()
 })

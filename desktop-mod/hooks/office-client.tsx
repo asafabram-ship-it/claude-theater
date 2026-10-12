@@ -352,15 +352,18 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const kids: RenderElement[] = []
 
     // --- header: the counts, the 5-hour meter. The meter is the full label (bar and reset clock, usage.ts) from
-    //     COMPACT_BELOW columns when the whole line fits, else the short `⏳ 5h 42%` (it keeps `5h`: the idle count
-    //     is a `⏳` too): a bar cut in half would hide the percent, so the label is never the part that is cut ---
+    //     COMPACT_BELOW columns when the whole line fits, else the short `⏳ 5h 42%` when that fits (it keeps `5h`:
+    //     the idle count is a `⏳` too), else nothing: a meter is drawn whole or not at all, never cut in half (`5h 4…`
+    //     reads as 4%) — the same rule as the text cards' header (ui.tsx) ---
     const c = props.counts
     const counts = wide
       ? `🟢 ${c.run} ${lbl('working')}${c.idle ? ` · ⏳ ${c.idle} ${lbl('idleN')}` : ''} · ✅ ${c.done} ${lbl('finished')}`
       : `🟢 ${c.run}${c.idle ? ` · ⏳ ${c.idle}` : ''} · ✅ ${c.done}`
     const head = `🎭 ${counts}`
+    const fits = (meter: string) => textWidth(head + meter) <= props.columns
     const full = props.usage ? ` · ${usageLabel(props.usage, props.lang, props.nowMin)}` : ''
-    const meter = props.usage ? (wide && textWidth(head + full) <= props.columns ? full : ` · ${usageShort(props.usage)}`) : ''
+    const short = props.usage ? ` · ${usageShort(props.usage)}` : ''
+    const meter = props.usage ? (wide && fits(full) ? full : fits(short) ? short : '') : ''
     kids.push(line([Text({ bold: true, wrap: 'truncate', children: [cut(head + meter, props.columns)] })]))
 
     // --- toolbar: the same keys as today's pane ---

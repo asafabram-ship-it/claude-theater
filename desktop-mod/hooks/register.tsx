@@ -20,8 +20,9 @@
 //   poll            while the pane is up: scanAll(scanIo($)) → liveAged
 //                   ($.agent.list()) → mergeLive → $.state payload ONLY IF what
 //                   the pane draws changed (renderKey: the flicker guard — a
-//                   state write redraws the pane and a redraw re-creates the
-//                   desktop's Svg frames), scanError only on change, `tick`
+//                   state write redraws the pane, and on the desktop a redraw
+//                   hands the office Client new props and blinks the pane),
+//                   scanError only on change, `tick`
 //                   every poll (read by the text surfaces alone, for their
 //                   mm:ss). ONE PUBLISH PER POLL (spec §6.1): the ⭐/chime
 //                   "finish beat" (PAGE updateWS) runs HERE, in the poll —
@@ -333,9 +334,9 @@ export async function poll($: EngineInterface): Promise<void> {
     }
     pendingStars = stars
     const office: Payload = { ...merged, stars }
-    // THE FLICKER GUARD. Every $.state.set redraws the pane, and a redraw
-    // re-creates the desktop's interactive Svg frames (their animations restart:
-    // the flicker), so the office is published ONLY when what it draws changed:
+    // THE FLICKER GUARD. Every $.state.set redraws the pane, and on the desktop a
+    // redraw rebuilds the office Client's props and redraws it (every redraw of the
+    // pane blinks: the flicker), so the office is published ONLY when what it draws changed:
     // renderKey (ui.tsx) projects a payload at `now` onto what is drawn —
     // minute-resolution clocks, the ⭐ ids still inside their window (`stars`),
     // never scanned_ms or raw timestamps. The text surfaces' mm:ss tick from

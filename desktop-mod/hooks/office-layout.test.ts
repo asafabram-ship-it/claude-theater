@@ -4,7 +4,8 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { EMOJI_CELLS, TILE_GAP, TILE_H, TILE_W, blankRow, hitAt, layoutOffice, put, rowRuns, tileX, tilesPerRow, windowRows } from './office-layout'
+import { EMOJI_CELLS, HOVER_BG, NO_DECOR, TILE_GAP, TILE_H, TILE_W, WALK_CELLS, blankRow, hitAt, layoutOffice, put, rowCount, rowRuns, tileX, tilesPerRow, walkShift, windowRows } from './office-layout'
+import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
 function ag(id: string, i: number, over: Partial<OfficeAgent> = {}): OfficeAgent {
@@ -34,6 +35,15 @@ const text = (row: Cells): string => row.cells.map(c => c.ch).join('')
 /** The glyphs of cells [from, to): the right way to read a span (a string slice drifts after a BMP wide glyph such as ⏳). */
 const seg = (row: Cells, from: number, to: number): string => row.cells.slice(from, to).map(c => c.ch).join('')
 const LONE_SURROGATE = /^[\uD800-\uDFFF]$/
+const WIDE = /^\p{Extended_Pictographic}/u
+/** Every wide glyph keeps its empty second cell and every empty cell follows a wide glyph: the row draws exactly as wide as its cells. */
+function wellFormed(row: Cells): boolean {
+  return row.cells.every((c, i) => c.ch === ' ' || (WIDE.test(c.ch) ? row.cells[i + 1]?.ch === '' : c.ch !== '' || (i > 0 && WIDE.test(row.cells[i - 1]!.ch))))
+}
+/** A decor with the given hop ids, walk-in progresses and hover. */
+function decor(over: { hover?: string | null; hop?: string[]; entering?: Array<[string, number]> } = {}): OfficeDecor {
+  return { hover: over.hover ?? null, hop: new Set(over.hop ?? []), entering: new Map(over.entering ?? []) }
+}
 
 test('cells: put clips to the row and an emoji takes EMOJI_CELLS', () => {
   const row = blankRow('r', 6)
@@ -367,4 +377,128 @@ test('rooms: done agents hidden unless the room shows them; a blank gap row only
   expect(seg(wrapped.rows[1 + TILE_H]!, 0, TILE_W)).toBe('      🦉    4 ')
   expect(JSON.stringify(layoutOffice(props({ rooms: [a, b] })))).toBe(JSON.stringify(lay))
   expect(layoutOffice(props({ rooms: [] }))).toEqual({ rows: [], hits: [] })
+})
+
+test('decor: the walk-in shifts the head round((1 - p) × WALK_CELLS) cells toward the reading start; the hop draws ⭐ beside the head on its own row; the hover lays HOVER_BG on the head row', () => {
+  expect([walkShift(0), walkShift(1 / 3), walkShift(0.5), walkShift(0.9), walkShift(1)]).toEqual([WALK_CELLS, 2, 2, 0, 0])
+  expect([walkShift(-1), walkShift(2), walkShift(Number.NaN)]).toEqual([WALK_CELLS, 0, 0])   // out of range: clamped; nonsense: home
+  const ltr = props({ rtl: false })   // lead (💬, index 1) at x 0, a1 (index 2) at x 15
+  const rtl = props({ rtl: true })    // lead at x 31, a1 at x 16
+  const head = (p: OfficeProps, d: OfficeDecor, x: number) => seg(layoutOffice(p, d).rows[1]!, x, x + TILE_W)
+  // at home: no decor, and a walk-in that has arrived (p = 1)
+  expect(head(ltr, NO_DECOR, 15)).toBe('      🦉    2 ')
+  expect(head(ltr, decor({ entering: [['a1', 1]] }), 15)).toBe('      🦉    2 ')
+  // LTR: the head comes in from the left, 3 → 2 → 0 cells off home
+  expect(head(ltr, decor({ entering: [['a1', 0]] }), 15)).toBe('   🦉       2 ')
+  expect(head(ltr, decor({ entering: [['a1', 0.5]] }), 15)).toBe('    🦉      2 ')
+  expect(head(ltr, decor({ entering: [['lead', 0]] }), 0)).toBe('💬 🦉       1 ')        // the lead's 💬 is never covered
+  // RTL: from the right (the reading start)
+  expect(head(rtl, NO_DECOR, 16)).toBe('      🦉    2 ')
+  expect(head(rtl, decor({ entering: [['a1', 0]] }), 16)).toBe('         🦉 2 ')
+  expect(head(rtl, decor({ entering: [['a1', 0.5]] }), 16)).toBe('        🦉  2 ')
+  expect(head(rtl, decor({ entering: [['lead', 0]] }), 31)).toBe('💬       🦉 1 ')
+  // the hop: ⭐ beside the head, centred on the tile's own head row (the row above is the room head or another tile)
+  expect(head(ltr, decor({ hop: ['a1'] }), 15)).toBe('     ⭐🦉   2 ')
+  expect(head(ltr, decor({ hop: ['lead'] }), 0)).toBe('💬   ⭐🦉   1 ')
+  expect(head(rtl, decor({ hop: ['a1'] }), 16)).toBe('     ⭐🦉   2 ')
+  // both at once: the walk-in carries the ⭐ along and stops at the 💬 / the index
+  expect(head(ltr, decor({ hop: ['lead'], entering: [['lead', 0]] }), 0)).toBe('💬⭐🦉      1 ')
+  expect(head(rtl, decor({ hop: ['a1'], entering: [['a1', 0]] }), 16)).toBe('        ⭐🦉2 ')
+  // only the decorated tile's head row changes; the other rows, the other tile and the hits are the plain layout's
+  const plain = layoutOffice(ltr)
+  const moved = layoutOffice(ltr, decor({ hop: ['a1'], entering: [['lead', 0]] }))
+  expect(moved.hits).toEqual(plain.hits)
+  expect(moved.rows.map(r => r.id)).toEqual(plain.rows.map(r => r.id))
+  for (let y = 0; y < plain.rows.length; y++) if (y !== 1) expect(moved.rows[y]).toEqual(plain.rows[y])
+  expect(seg(moved.rows[1]!, 0, TILE_W)).toBe('💬 🦉       1 ')
+  expect(seg(moved.rows[1]!, 15, 15 + TILE_W)).toBe('     ⭐🦉   2 ')
+  // hover: HOVER_BG across the tile's head row only (the 💬 and the index too); the head stays home; a selected head keeps its frame
+  const hov = layoutOffice({ ...ltr, selected: 'a1' }, decor({ hover: 'a1' }))
+  expect(hov.rows[1]!.cells.map((c, i) => (c.bg === HOVER_BG ? i : -1)).filter(i => i >= 0)).toEqual(Array.from({ length: TILE_W }, (_, i) => 15 + i))
+  expect(hov.rows.filter(r => r.cells.some(c => c.bg === HOVER_BG))).toHaveLength(1)
+  expect(seg(hov.rows[1]!, 15, 15 + TILE_W)).toBe('      🦉    2 ')
+  expect(hov.rows[1]!.cells[21]).toEqual({ ch: '🦉', fg: '#ffffff', bold: true, bg: HOVER_BG })
+  expect(rowRuns(hov.rows[1]!.cells.slice(15, 15 + TILE_W)).every(r => r.bg === HOVER_BG)).toBe(true)
+  // an id the office does not hold decorates nothing
+  expect(layoutOffice(ltr, decor({ hover: 'ghost', hop: ['ghost'], entering: [['ghost', 0]] }))).toEqual(plain)
+})
+
+test('decor: a three-digit index leaves less room — the hop and the walk-in are clamped before it, never over it', () => {
+  const crowd = Array.from({ length: 100 }, (_, i) => ag(`x${i}`, i + 1))
+  for (const rtl of [true, false]) {
+    const p = props({ rtl, rooms: [{ ...props().rooms[0]!, agents: crowd }] })
+    const hit = layoutOffice(p).hits.find(r => r.id === 'x99')!
+    const lay = layoutOffice(p, decor({ hop: ['x99'], entering: [['x99', 0]] }))
+    const row = lay.rows[hit.y]!
+    expect(seg(row, hit.x, hit.x + TILE_W)).toBe(rtl ? '       ⭐🦉100' : '  ⭐🦉     100')
+    expect(wellFormed(row)).toBe(true)
+    expect(row.cells).toHaveLength(45)
+  }
+})
+
+/** A small office for the decor sweep: two rooms, the lead first, done agents shown in the second, three kinds of head glyph. */
+function smallOffice(): OfficeRoom[] {
+  const a = Array.from({ length: 7 }, (_, i) => ag(`a${i}`, i, { emoji: i % 2 ? '🦉' : '🕵️' }))
+  const b = Array.from({ length: 5 }, (_, i) => ag(`b${i}`, i + 1, { status: i % 2 ? 'done' : 'running', emoji: '👨‍💻' }))
+  return [{ ...props().rooms[0]!, id: 'ra', agents: a }, { ...props().rooms[0]!, id: 'rb', showDone: true, agents: b }]
+}
+
+test('decor sweep: at the sweep widths 24..200, both directions, every walk-in step, hops and a hover — each row is exactly `columns` cells, every wide glyph keeps its pair, the hits never move', { timeoutMs: 30_000 }, () => {
+  const rooms = smallOffice()
+  const ids = rooms.flatMap(r => r.agents.map(a => a.id))
+  const bad: string[] = []
+  for (const columns of sweepWidths()) {
+    for (const rtl of [true, false]) {
+      const p = props({ columns, rtl, rooms })
+      const plain = layoutOffice(p)
+      const plainHits = JSON.stringify(plain.hits)
+      const plainText = plain.rows.map(text)
+      for (const progress of [0, 0.4, 0.75]) {   // walkShift 3, 2, 1 (at 1 the head is home: the plain layout)
+        const d = decor({ hover: ids[columns % ids.length]!, hop: ids.filter((_, i) => i % 3 === 0), entering: ids.map((id): [string, number] => [id, progress]) })
+        const lay = layoutOffice(p, d)
+        const at = `${columns}${rtl ? ' rtl' : ''} p=${progress}`
+        if (lay.rows.length !== plain.rows.length || JSON.stringify(lay.hits) !== plainHits) bad.push(`${at}: rows or hits moved`)
+        for (let y = 0; y < lay.rows.length; y++) {
+          const row = lay.rows[y]!
+          if (row.cells.length !== columns) bad.push(`${at}: row ${y} has ${row.cells.length} cells`)
+          if (text(row) === plainText[y]) continue
+          if (!wellFormed(row)) bad.push(`${at}: row ${y} breaks a wide glyph`)
+          // a head never leaves its own tile: every changed cell lies inside the hit rectangle of a tile on that row
+          for (let x = 0; x < columns; x++) {
+            if (row.cells[x]!.ch === plain.rows[y]!.cells[x]!.ch) continue
+            if (!lay.hits.some(r => r.kind === 'agent' && r.y === y && x >= r.x && x < r.x + r.w)) bad.push(`${at}: cell ${x},${y} changed outside a tile`)
+          }
+        }
+      }
+    }
+  }
+  expect(bad).toEqual([])
+})
+
+test('rowCount: the number of layout rows without building a cell — equal to layoutOffice(...).rows.length across room shapes and the sweep widths 24..200', { timeoutMs: 30_000 }, () => {
+  const sizes = [0, 1, 2, 3, 4, 5, 8, 13, 14, 27]
+  const rooms: OfficeRoom[] = sizes.map((n, r) => ({
+    ...props().rooms[0]!, id: `r${r}`, showDone: r % 2 === 0,
+    agents: Array.from({ length: n }, (_, i) => ag(`r${r}-${i}`, i, { status: i % 4 === 3 ? 'done' : i % 5 === 4 ? 'stale' : 'running' })),
+  }))
+  const allDone: OfficeRoom = { ...props().rooms[0]!, id: 'gone', showDone: false, agents: [ag('d1', 1, { status: 'done' }), ag('d2', 2, { status: 'done' })] }
+  const shapes = [[], [rooms[1]!], rooms, [allDone], [allDone, ...rooms], [...rooms, allDone]]
+  const bad: string[] = []
+  // the count depends on the width only through tilesPerRow: both sides of each of its steps from 24 to 200
+  const steps = [24, 200]
+  for (let c = 25; c <= 200; c++) if (tilesPerRow(c) !== tilesPerRow(c - 1)) steps.push(c - 1, c)
+  for (const columns of steps) {
+    shapes.forEach((shape, k) => {
+      const p = props({ columns, rooms: shape, rtl: columns % 2 === 0 })
+      const n = layoutOffice(p).rows.length
+      if (rowCount(p) !== n) bad.push(`${columns} shape ${k}: ${rowCount(p)} ≠ ${n}`)
+    })
+  }
+  expect(bad).toEqual([])
+  for (const columns of [24, 31, 45, 200]) {
+    const p = props({ columns, rooms: tenByTen() })
+    expect(rowCount(p)).toBe(layoutOffice(p).rows.length)
+  }
+  expect(rowCount(props({ rooms: [] }))).toBe(0)
+  expect(rowCount(props())).toBe(1 + TILE_H)
 })

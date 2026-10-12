@@ -73,7 +73,7 @@ export type OfficeProps = {
 export type OfficeMessage =
   | { t: 'open'; id: string } | { t: 'close' } | { t: 'pin'; room: string } | { t: 'roomDone'; room: string }
   | { t: 'showDone' } | { t: 'mute' } | { t: 'lang' } | { t: 'help' } | { t: 'demo' } | { t: 'still' }
-  | { t: 'search'; q: string } | { t: 'focus'; id: string } | { t: 'content'; rows: number } | { t: 'pull'; seq: number }
+  | { t: 'search'; q: string } | { t: 'content'; rows: number } | { t: 'pull'; seq: number }
 
 /** What the builder reads: the office's state at `now` (ms), and the pane's geometry. */
 export type OfficePropsInput = {

@@ -28,10 +28,12 @@
 //            props from state (office-props.ts buildOfficeProps — the rooms, the
 //            drawer, the counts, the flags, the i18n strings, the usage meter) and
 //            size it to its FULL content (office-chrome.ts officeHeight: the
-//            chrome rows + the layout's rows), so the engine scrolls it natively
+//            chrome rows + office-layout.ts rowCount, the layout's rows counted
+//            without building a cell), so the engine scrolls it natively
 //            and hands the window back as e.props.scroll (offset → props.offset,
 //            bodyRows → props.rows). The module draws the chrome and the text-cell
-//            tiles (office-layout.ts), the hover/selection/fx overlays, and POSTS
+//            tiles (office-layout.ts), the hover and the fx motion (walk-in, hop),
+//            the selection/focus/status highlights, and POSTS
 //            what the person did (open / pin / roomDone / the toolbar / search —
 //            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
 //            applies each post as the text cards' press of the same name does
@@ -111,10 +113,10 @@ import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from 
 import { DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, REDRAW_LATCH_MS, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
 import { UNKNOWN_MODEL_PILL, WALK_IN_MS } from './office-svg'
-// the pure chrome maths (the Client's full content height) and the pure layout: never the surface
-// module itself (office-client.tsx is reached only through the literal `module` path below)
-import { COMPACT_BELOW, officeHeight } from './office-chrome'
-import { layoutOffice } from './office-layout'
+// the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
+// count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
+import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
+import { rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
@@ -149,6 +151,8 @@ const BURST_MS = 1050
  * with only the desktop open WAS the flicker. Set by the render hook.
  */
 let textSurfaceDrawnAt = -Infinity
+/** The engine clock's last answer in the render (its fallback when a host has no clock). */
+let clockSeen = 0
 /** How long a text surface's last draw keeps the tick running (it redraws on every tick, so a live one renews it). */
 export const TEXT_SURFACE_TTL_MS = 10_000
 /** Should the poll write the tick at `now`? */
@@ -558,7 +562,8 @@ const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen })
 /** The drawer on `id`; `focusIndex` is the card's place in the text cards' walk (officeView().order). */
 const openedOn = (id: string, focusIndex: number) => (v: View): View => ({ ...v, selected: id, helpOpen: false, focusIndex })
 const drawerClosed = (v: View): View => ({ ...v, selected: null, helpOpen: false })
-const searchedFor = (q: string) => (v: View): View => ({ ...v, search: q, focusIndex: -1 })
+/** The search set to `q`, cleaned (office-chrome.ts cleanSearch: SEARCH_MAX code points, no control character — an Input value holding one is refused, the text cards' as the Client's). */
+const searchedFor = (q: string) => (v: View): View => ({ ...v, search: cleanSearch(q), focusIndex: -1 })
 const otherLang = (lang: Lang): Lang => (lang === 'he' ? 'en' : 'he')
 
 /** THE REDRAW LATCH (model.ts REDRAW_LATCH_MS): true while a redraw is scheduled. */
@@ -598,9 +603,6 @@ async function officeOrder($: EngineInterface): Promise<Agent[]> {
   return officeView(office.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins).order
 }
 
-/** The longest search text a post sets, in code points (a pasted page must not swell the Client's props past their bound). */
-export const SEARCH_MAX = 200
-
 /**
  * THE OFFICE'S POSTS (desktop): `e.data` of a `ui.message` from the office
  * Client (office-client.tsx, OfficeMessage) — code's data, validated here,
@@ -608,13 +610,16 @@ export const SEARCH_MAX = 200
  * through the shared transitions above, ONE atom per message:
  *   showDone / mute / still / pin {room} → prefs (+ the $.store mirror)
  *   lang → prefs (+ mirror) and the pane retitled (setLang)
- *   help / close / open {id} / search {q} / demo → view (search: only when it
- *     differs, so an echo or a repeated Enter redraws nothing)
+ *   help / close / open {id} / search {q} / demo → view (search: cleaned and
+ *     capped, cleanSearch; only when it differs, so an echo or a repeated Enter
+ *     redraws nothing)
  *   roomDone {room} → the $.store override, the pane redrawn by the latch
- * Anything else changes nothing: `focus` (j / k move the module's own keyboard
- * focus; mirrored into view.focusIndex it would redraw — blink — the pane per
- * key), `content` / `pull` (dropped with the native scroll, spec §2 item 11),
- * an unknown `t`, a missing or mistyped field, a non-object.
+ * Anything else changes nothing: `focus` (no longer posted — j / k move the
+ * module's own keyboard focus, and a post per key could displace a click's
+ * `open` in the same frame; mirrored into view.focusIndex it would also redraw
+ * — blink — the pane per key), `content` / `pull` (dropped with the native
+ * scroll, spec §2 item 11), an unknown `t`, a missing or mistyped field, a
+ * non-object.
  */
 async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<void> {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) return
@@ -653,7 +658,7 @@ async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<vo
     }
     case 'search': {
       if (typeof m.q !== 'string') return
-      const q = Array.from(m.q).slice(0, SEARCH_MAX).join('') // (by code point: never half a surrogate pair)
+      const q = cleanSearch(m.q) // (by code point: never half a surrogate pair; control characters as spaces)
       if ((await read($, viewAtom)).search !== q) await update($, viewAtom, searchedFor(q))
       return
     }
@@ -701,8 +706,9 @@ export function registerUi(on: On): void {
     // (its tiles show minutes, and every redraw of it blinks — the tick must never reach it)
     if (!desktop) await read($, tickAtom)
     const roomDone = await loadRoomDone($)
-    // the clock is the engine's; a host without one (a bare test) falls back to the module's
-    const now = await $.clock.now().catch(() => Date.now())
+    // the clock is the engine's; a host without one (a bare test) falls back to the last time the clock answered,
+    // or the scan's own time (never the runtime's wall clock: the hooks keep the engine's one clock)
+    const now = await $.clock.now().then(t => (clockSeen = t)).catch(() => Math.max(clockSeen, payload.scanned_ms))
     if (!desktop) textSurfaceDrawnAt = now
     const lang = prefs.lang
     const L: Strings = I18N[lang]
@@ -728,7 +734,7 @@ export function registerUi(on: On): void {
         payload, prefs, view, roomDone, now, firstSeen, usage: USAGE.fiveHour, footer: footerBits.join(' · '),
         columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0,
       })
-      const height = officeHeight(props, layoutOffice(props).rows.length)
+      const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)
       return <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
     }
 

@@ -11,10 +11,11 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N } from './i18n'
-import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, RESULT_LINES, ROW_CHARS_PER_COLUMN, TASK_LINES, WINDOW_CHARS, chromeRows, drawerLines, officeHeight, windowOf } from './office-chrome'
+import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanSearch, drawerLines, officeHeight, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
-import { TILE_H, TILE_W, layoutOffice } from './office-layout'
+import { HOVER_BG, NO_DECOR, TILE_H, TILE_W, layoutOffice, walkShift } from './office-layout'
+import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
 
 const LABELS: Record<string, string> = Object.fromEntries(Object.entries(I18N.he).filter((kv): kv is [string, string] => typeof kv[1] === 'string'))
@@ -131,6 +132,16 @@ test('windowOf: the rows the engine shows, in layout coordinates, never shifted 
   expect(windowOf(3, 3, 80, 500, 45).count).toBe(80)
 })
 
+test('cleanSearch: the search text cut to SEARCH_MAX code points (never half an emoji) and freed of control characters (the surface refuses an Input value holding one)', () => {
+  expect(SEARCH_MAX).toBe(200)
+  expect(cleanSearch('triage')).toBe('triage')
+  expect(cleanSearch('x'.repeat(100_010))).toBe('x'.repeat(SEARCH_MAX))
+  expect(Array.from(cleanSearch('🔍'.repeat(SEARCH_MAX + 50)))).toEqual(Array.from('🔍'.repeat(SEARCH_MAX)))
+  expect(cleanSearch('a\u0007b\u001b[31mc\nd\te\u0000f\u007fg\u0085h')).toBe('a b [31mc d e f g h')
+  expect(cleanSearch('עברית \u200fok')).toBe('עברית \u200fok')   // a mark is not a control character: kept as typed
+  expect(cleanSearch(cleanSearch('🔍'.repeat(300) + '\u0007'))).toBe(cleanSearch('🔍'.repeat(300) + '\u0007'))
+})
+
 test('chromeRows / officeHeight: header, toolbar, search; then help | drawer, the footer line, the empty block', () => {
   const p = props()
   expect(chromeRows(p)).toBe(CHROME_ROWS)
@@ -214,63 +225,108 @@ test('render: equal props draw with no setState and no timer; the layout is memo
   expect(f.surface.state!.inst.layout).toBe(before)
   Office({ ...p, columns: 60 }, f.surface)
   expect(f.surface.state!.inst.layout).not.toBe(before)
+  // ... and by the decor: a hover laid out once, the same hover drawn from the memo, a cleared hover laid out again
+  const wide = f.surface.state!.inst.layout
+  Office({ ...p, columns: 60 }, f.surface)
+  expect(f.surface.state!.inst.layout).toBe(wide)
+  f.surface.setState({ ...f.surface.state!, hover: 'a1' })
+  Office({ ...p, columns: 60 }, f.surface)
+  const hovered = f.surface.state!.inst.layout
+  expect(hovered).not.toBe(wide)
+  expect(hovered).toEqual(layoutOffice({ ...p, columns: 60 }, { hover: 'a1', hop: new Set(), entering: new Map() }))
+  Office({ ...p, columns: 60 }, f.surface)
+  expect(f.surface.state!.inst.layout).toBe(hovered)
+  f.surface.setState({ ...f.surface.state!, hover: null })
+  Office({ ...p, columns: 60 }, f.surface)
+  expect(f.surface.state!.inst.layout).toEqual(layoutOffice({ ...p, columns: 60 }))
 })
 
-test('fx: enter / done / status start the frame clock only while active and stop it when the last ends; still disables them', () => {
+test('fx: a newcomer walks in (its head 3 → 2 → 1 cells off home from the reading start), a finisher hops with a ⭐ over the gold pulse, a status flashes the desk; the clock runs only while an fx does; still disables them', () => {
   const f = fake()
   // the first props prime the stamps: no fx for the agents already there, even with enteredAt set
   let p = withAgents(props(), [ag('lead', { enteredAt: 1000 }), ag('a1', { enteredAt: 2000 })])
   Office(p, f.surface)
   Office(p, f.surface)
   expect(f.timers).toHaveLength(0)
-  // a newcomer with a stamp → enter fx: the head row of its tile wears FX_BG.enter, the clock runs
+  /** The drawn head row of the first tile block (layout row 1), as its cells' glyphs. */
+  const headRow = (t: unknown) => texts((t as Node).children[CHROME_ROWS + 1]).replace(/\n/g, '')
+  const walk = (progress: number): OfficeDecor => ({ hover: null, hop: new Set(), entering: new Map([['n1', progress]]) })
+  const laid = (q: OfficeProps, d: OfficeDecor) => layoutOffice(q, d).rows[1]!.cells.map(c => c.ch).join('')
+  // a newcomer with a stamp → enter fx: n1 is the third tile, RTL → x 1, the leftmost (nothing wide before it on the row,
+  // so its head's cell is its index in the string); home is x + 6; it starts WALK_CELLS to the right (RTL reads from the right)
   p = withAgents(p, [...p.rooms[0]!.agents, ag('n1', { enteredAt: 5000 })])
+  const home = 1 + 6
   let tree = Office(p, f.surface)
-  expect(withBg(tree, FX_BG.enter).length).toBeGreaterThan(0)
+  expect(headRow(tree).indexOf('🦉')).toBe(home + 3)
+  expect(headRow(tree)).toBe(laid(p, walk(0)))
   expect(f.timers).toHaveLength(1)
   expect(f.timers[0]!.ms).toBe(FX_TICK_MS)
-  // the same props again: nothing new starts
+  // motion, no colour overlay: the only backgrounds drawn are the layout's own (the Opus pills, the desks, the screens)
+  expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string' && !['#7b5cf0', '#3a2a1a', '#111827'].includes(n.props.backgroundColor))).toBe(false)
+  // the same props again: nothing new starts, the head does not move without a tick
   Office(p, f.surface)
-  Office({ ...p }, f.surface)
+  tree = Office({ ...p }, f.surface)
   expect(f.timers).toHaveLength(1)
+  expect(headRow(tree).indexOf('🦉')).toBe(home + 3)
   const sets = f.setStates()
-  for (let i = 0; i < Math.ceil(FX_ENTER_MS / FX_TICK_MS) - 1; i++) f.tick()
-  expect(f.timers[0]!.stopped).toBe(false)
+  // each tick of the fx clock walks it a cell: progress 1 - left / FX_ENTER_MS → walkShift 2, then 1
+  const steps = Math.ceil(FX_ENTER_MS / FX_TICK_MS)
+  for (let i = 1; i < steps; i++) {
+    f.tick()
+    tree = Office(p, f.surface)
+    const progress = 1 - (FX_ENTER_MS - i * FX_TICK_MS) / FX_ENTER_MS
+    expect(headRow(tree).indexOf('🦉')).toBe(home + walkShift(progress))
+    expect(headRow(tree)).toBe(laid(p, walk(progress)))
+    expect(f.timers[0]!.stopped).toBe(false)
+  }
+  expect([1, 2].map(i => walkShift(1 - (FX_ENTER_MS - i * FX_TICK_MS) / FX_ENTER_MS))).toEqual([2, 1])
   f.tick()
   expect(f.timers[0]!.stopped).toBe(true)
-  expect(f.setStates()).toBe(sets + Math.ceil(FX_ENTER_MS / FX_TICK_MS))   // one redraw per tick, none besides
+  expect(f.setStates()).toBe(sets + steps)   // one redraw per tick, none besides
   tree = Office(p, f.surface)
-  expect(withBg(tree, FX_BG.enter)).toHaveLength(0)
-  // a star → done fx (FX_DONE_MS, the head row pulses done/doneAlt by frame parity), a new clock; the same agent's
-  // running → done is also a status flash (FX_STATUS_FRAMES on the desk row), which ends first while the hop goes on
+  expect(headRow(tree).indexOf('🦉')).toBe(home)
+  expect(headRow(tree)).toBe(laid(p, NO_DECOR))
+  // a star → done fx (FX_DONE_MS): ⭐ beside a1's head on its own row, the head row pulsing done/doneAlt by frame parity;
+  // the same agent's running → done is also a status flash (FX_STATUS_FRAMES on the desk row), which ends first
   p = withAgents(p, p.rooms[0]!.agents.map(a => a.id === 'a1' ? { ...a, status: 'done' as const, star: 7000 } : a))
   const shown = { ...p, rooms: [{ ...p.rooms[0]!, showDone: true }] }
+  const pulse = (t: unknown) => withBg(t, FX_BG.done).length + withBg(t, FX_BG.doneAlt).length
   tree = Office(shown, f.surface)
-  const hop = (t: unknown) => withBg(t, FX_BG.done).length + withBg(t, FX_BG.doneAlt).length
-  expect(hop(tree)).toBeGreaterThan(0)
+  expect(headRow(tree)).toContain('⭐🦉')
+  expect(headRow(tree)).toBe(laid(shown, { hover: null, hop: new Set(['a1']), entering: new Map() }))
+  expect(pulse(tree)).toBeGreaterThan(0)
   expect(withBg(tree, FX_BG.status).length).toBeGreaterThan(0)
   expect(f.timers).toHaveLength(2)
   for (let i = 0; i < FX_STATUS_FRAMES; i++) f.tick()
   expect(f.timers[1]!.stopped).toBe(false)         // the status flash is over, the hop still runs the clock
   tree = Office(shown, f.surface)
   expect(withBg(tree, FX_BG.status)).toHaveLength(0)
-  expect(hop(tree)).toBeGreaterThan(0)
-  for (let i = 0; i < Math.ceil(FX_DONE_MS / FX_TICK_MS) - FX_STATUS_FRAMES; i++) f.tick()
+  expect(headRow(tree)).toContain('⭐🦉')
+  expect(pulse(tree)).toBeGreaterThan(0)
+  // the hop does not change between ticks: its layout is drawn from the memo (only the pulse overlay alternates)
+  const hopLayout = f.surface.state!.inst.layout
+  f.tick()
+  Office(shown, f.surface)
+  expect(f.surface.state!.inst.layout).toBe(hopLayout)
+  for (let i = 0; i < Math.ceil(FX_DONE_MS / FX_TICK_MS) - FX_STATUS_FRAMES - 1; i++) f.tick()
   expect(f.timers[1]!.stopped).toBe(true)
   tree = Office(shown, f.surface)
-  expect(hop(tree)).toBe(0)
-  // a status change → FX_STATUS_FRAMES frames of the desk row
+  expect(headRow(tree)).not.toContain('⭐')
+  expect(pulse(tree)).toBe(0)
+  // a status change → FX_STATUS_FRAMES frames of the desk row (the head does not move)
   p = withAgents(p, p.rooms[0]!.agents.map(a => a.id === 'lead' ? { ...a, status: 'stale' as const } : a))
   tree = Office(p, f.surface)
   expect(withBg(tree, FX_BG.status).length).toBeGreaterThan(0)
+  expect(headRow(tree)).toBe(laid(p, NO_DECOR))
   expect(f.timers).toHaveLength(3)
   for (let i = 0; i < FX_STATUS_FRAMES; i++) f.tick()
   expect(f.timers[2]!.stopped).toBe(true)
   // still: a newcomer starts nothing, and a running fx is dropped
   p = withAgents(p, [...p.rooms[0]!.agents, ag('n2', { enteredAt: 9000 })])
-  tree = Office({ ...p, prefs: { ...p.prefs, still: true } }, f.surface)
+  const still = { ...p, prefs: { ...p.prefs, still: true } }
+  tree = Office(still, f.surface)
   expect(f.timers).toHaveLength(3)
-  expect(withBg(tree, FX_BG.enter)).toHaveLength(0)
+  expect(f.surface.state!.inst.layout).toEqual(layoutOffice(still))
   // and back from still, the stamps seen under still start nothing either
   Office(p, f.surface)
   expect(f.timers).toHaveLength(3)
@@ -299,7 +355,7 @@ test('pointer: down → hit → one post (open / pin / roomDone); move → hover
   f.pointer({ type: 'down', x: p.columns - TILE_W + 2, y: C + 1 + TILE_H + 5, button: 'left' })
   f.pointer({ type: 'down', x: p.columns - TILE_W + 2, y: C + 1 + 2, button: 'right' })
   expect(f.posts.length).toBe(4)
-  // hover: a move over the lead → setState with hover, the head row wears FX_BG.hover; a second move there changes nothing
+  // hover: a move over the lead → setState with hover, the layout lays HOVER_BG on its head row; a second move there changes nothing
   const sets = f.setStates()
   f.pointer({ type: 'move', x: p.columns - TILE_W + 2, y: C + 1 + 1 })
   expect(f.surface.state!.hover).toBe('lead')
@@ -307,7 +363,7 @@ test('pointer: down → hit → one post (open / pin / roomDone); move → hover
   f.pointer({ type: 'move', x: p.columns - TILE_W + 3, y: C + 1 + 1 })
   expect(f.setStates()).toBe(sets + 1)
   const tree = Office(p, f.surface)
-  expect(withBg(tree, FX_BG.hover).length).toBeGreaterThan(0)
+  expect(withBg(tree, HOVER_BG).length).toBeGreaterThan(0)
   f.pointer({ type: 'leave', x: 0, y: 0 })
   expect(f.surface.state!.hover).toBe(null)
   f.pointer({ type: 'leave', x: 0, y: 0 })
@@ -317,37 +373,84 @@ test('pointer: down → hit → one post (open / pin / roomDone); move → hover
   expect(f.surface.state!.focus).toBe('a1')
 })
 
-test('keys after a click: j/k walk the tiles and post focus, o/Enter open, x closes, f/m/l/h/d/s are the toolbar', () => {
+test('pointer: only the drawn window answers — a click or a hover on a row the byte budget left blank, or in the spacer above the window, hits nothing', () => {
+  // three rooms of 40 at 200 columns (13 tiles a row): 77 layout rows; an 80-row pane draws the first 50 (WINDOW_CHARS)
+  const crowd = Array.from({ length: 120 }, (_, i) => ag(`g${i}`))
+  const p = props({ columns: 200, rows: 80, offset: 0, rooms: [room('A', crowd.slice(0, 40)), room('B', crowd.slice(40, 80)), room('C', crowd.slice(80))] })
+  const f = fake(200, 0)
+  Office(p, f.surface)
+  const lay = layoutOffice(p)
+  const C = chromeRows(p)
+  const { from, count } = windowOf(C, p.offset, p.rows, lay.rows.length, p.columns)
+  expect([from, count]).toEqual([0, 50])
+  expect(lay.rows.length).toBe(77)
+  // room B's last block (layout rows 45..50) straddles the window's end: its rows 45..49 are drawn, row 50 is not
+  const straddle = lay.hits.find(r => r.kind === 'agent' && r.y === 45)!
+  const past = lay.hits.find(r => r.kind === 'agent' && r.y > from + count)!
+  f.pointer({ type: 'down', x: past.x + 2, y: C + past.y + 1, button: 'left' })
+  f.pointer({ type: 'down', x: straddle.x + 2, y: C + from + count, button: 'left' })   // y = chrome + from + count: the first row not drawn
+  expect(f.posts).toEqual([])
+  f.pointer({ type: 'move', x: past.x + 2, y: C + past.y + 1 })
+  expect(f.surface.state!.hover).toBeNull()
+  // the last drawn row still answers
+  f.pointer({ type: 'down', x: straddle.x + 2, y: C + from + count - 1, button: 'left' })
+  expect(f.posts).toEqual([{ t: 'open', id: straddle.id }])
+  f.pointer({ type: 'move', x: straddle.x + 2, y: C + from + count - 1 })
+  expect(f.surface.state!.hover).toBe(straddle.id)
+  // scrolled 20 rows down: the rows above the window are one blank spacer; a click there (a stale offset) hits nothing
+  Office({ ...p, offset: 20 }, f.surface)
+  const w2 = windowOf(C, 20, p.rows, lay.rows.length, p.columns)
+  expect(w2.from).toBe(20 - C)
+  const above = lay.hits.find(r => r.kind === 'agent')!
+  f.pointer({ type: 'down', x: above.x + 2, y: C + above.y + 1, button: 'left' })
+  expect(f.posts).toHaveLength(1)
+  f.pointer({ type: 'move', x: above.x + 2, y: C + above.y + 1 })
+  expect(f.surface.state!.hover).toBeNull()
+  const first = lay.hits.find(r => r.kind === 'agent' && r.y <= w2.from && r.y + r.h > w2.from)!
+  f.pointer({ type: 'down', x: first.x + 2, y: C + w2.from, button: 'left' })
+  expect(f.posts[1]).toEqual({ t: 'open', id: first.id })
+  // the empty office draws no rows: nothing answers
+  Office(props({ rooms: [], empty: { kind: 'office', msg: 'm', sub: '' } }), f.surface)
+  f.pointer({ type: 'down', x: 2, y: C + 1, button: 'left' })
+  expect(f.posts).toHaveLength(2)
+})
+
+test('keys after a click: j/k walk the tiles with no post (the keyboard focus is the module\'s own), o/Enter open, x closes, f/m/l/h/d/s are the toolbar', () => {
   const f = fake()
   const p = props({ rooms: [room('A', [ag('lead'), ag('a1')]), room('B', [ag('b1')])] })
   Office(p, f.surface)
   f.key({ key: 'j' })
-  expect(f.posts).toEqual([{ t: 'focus', id: 'lead' }])
+  expect(f.surface.state!.focus).toBe('lead')
   f.key({ key: 'j' })
   f.key({ key: 'down' })
-  expect(f.posts[2]).toEqual({ t: 'focus', id: 'b1' })
-  f.key({ key: 'j' })                       // clamps at the last
-  expect(f.posts.length).toBe(3)
   expect(f.surface.state!.focus).toBe('b1')
+  f.key({ key: 'j' })                       // clamps at the last
+  expect(f.surface.state!.focus).toBe('b1')
+  expect(f.posts).toEqual([])               // one post per frame: a focus post could displace a click's open
   const tree = Office(p, f.surface)
   expect(withBg(tree, FX_BG.focus).length).toBeGreaterThan(0)
   f.key({ key: 'k' })
-  expect(f.posts[3]).toEqual({ t: 'focus', id: 'a1' })
+  expect(f.surface.state!.focus).toBe('a1')
+  f.key({ key: 'up' })
+  expect(f.surface.state!.focus).toBe('lead')
+  f.key({ key: 'down' })
+  expect(f.posts).toEqual([])
   f.key({ key: 'return' })
-  expect(f.posts[4]).toEqual({ t: 'open', id: 'a1' })
+  expect(f.posts[0]).toEqual({ t: 'open', id: 'a1' })
   f.key({ key: 'o' })
-  expect(f.posts[5]).toEqual({ t: 'open', id: 'a1' })
+  expect(f.posts[1]).toEqual({ t: 'open', id: 'a1' })
   for (const [k, t] of [['x', 'close'], ['f', 'showDone'], ['m', 'mute'], ['l', 'lang'], ['h', 'help'], ['d', 'demo'], ['s', 'still']] as const) {
     f.key({ key: k })
     expect(f.posts[f.posts.length - 1]).toEqual({ t })
   }
   f.key({ key: 'q' })
   f.key({ key: 'f', ctrl: true })
-  expect(f.posts.length).toBe(13)
+  expect(f.posts.length).toBe(9)
+  expect(f.posts.some(m => (m as { t: string }).t === 'focus')).toBe(false)
   // a focused agent that leaves the office: the focus is dropped, no stale post
   Office(withAgents(p, [ag('lead')]), f.surface)
   f.key({ key: 'o' })
-  expect(f.posts.length).toBe(13)
+  expect(f.posts.length).toBe(9)
 })
 
 test('search: the Input draws the typed text (not props.search) across props updates; the post is debounced; an outside change is adopted', () => {
@@ -387,6 +490,25 @@ test('search: the Input draws the typed text (not props.search) across props upd
   expect(input().props.value).toBe('')
   // the placeholder is the label (without the trailing ellipsis), prefixed by the glass
   expect(input().props.placeholder).toBe('🔍 חיפוש סוכנים')
+  // a pasted page: the field and the post keep SEARCH_MAX code points (never half an emoji) — a post over the surface's
+  // bound would throw in the handler, and the Input's value would swell the tree past its bound (either unmounts the office)
+  ;(input().props.onSubmit as (v: string) => void)('🔍'.repeat(SEARCH_MAX + 50))
+  expect(f.posts[f.posts.length - 1]).toEqual({ t: 'search', q: '🔍'.repeat(SEARCH_MAX) })
+  tree = Office({ ...p, search: '' }, f.surface)
+  expect(input().props.value).toBe('🔍'.repeat(SEARCH_MAX))
+  ;(input().props.onInput as (v: string) => void)('x'.repeat(100_010))
+  tree = Office({ ...p, search: '🔍'.repeat(SEARCH_MAX) }, f.surface)
+  expect(input().props.value).toBe('x'.repeat(SEARCH_MAX))
+  f.tick()
+  expect(f.posts[f.posts.length - 1]).toEqual({ t: 'search', q: 'x'.repeat(SEARCH_MAX) })
+  // control characters (an escape sequence in a paste) become spaces: the surface refuses an Input value holding one
+  ;(input().props.onSubmit as (v: string) => void)('red\u001b[31m\u0007bug')
+  expect(f.posts[f.posts.length - 1]).toEqual({ t: 'search', q: 'red [31m bug' })
+  tree = Office({ ...p, search: 'red [31m bug' }, f.surface)
+  expect(input().props.value).toBe('red [31m bug')
+  // an outside value is cleaned too (the hooks clean what they store; the module never draws one it would be refused for)
+  tree = Office({ ...p, search: 'a\u0000b' }, f.surface)
+  expect(input().props.value).toBe('a b')
 })
 
 test('the drawer, the help and the empty office draw from props and labels; Buttons post; the selected tile is highlighted', () => {

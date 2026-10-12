@@ -32,6 +32,20 @@ export const HELP_ROWS = 2 + 1 + HELP.length
  */
 export const ROW_CHARS_PER_COLUMN = 7
 export const WINDOW_CHARS = 70_000
+/** The longest search text, in code points: what the module keeps and posts and the hooks store (a pasted page must not swell a post, the Input's value or the Client's props past their bounds). */
+export const SEARCH_MAX = 200
+/** C0 and C1 controls (an escape sequence in a paste): the surface refuses an Input value or a Text holding one. */
+const CONTROL_RE = /\p{Cc}/gu
+
+/**
+ * The search text as the office keeps it: every control character a space, then the first
+ * SEARCH_MAX code points (never half a surrogate pair). Idempotent. The surface module cleans
+ * what is typed before drawing or posting it; the hooks clean what they store (ui.tsx).
+ */
+export function cleanSearch(q: string): string {
+  // (the first SEARCH_MAX code points lie within the first 2 × SEARCH_MAX code units: a paste of a page is not walked whole)
+  return Array.from(q.slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
+}
 
 export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
 
@@ -136,7 +150,7 @@ export function chromeRows(p: OfficeProps): number {
   return n
 }
 
-/** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `layoutOffice(p).rows.length`). */
+/** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `rowCount(p)`, office-layout.ts: no cell is built for it). */
 export function officeHeight(p: OfficeProps, layoutRows: number): number {
   return chromeRows(p) + (p.empty ? emptyRows(p) : layoutRows)
 }

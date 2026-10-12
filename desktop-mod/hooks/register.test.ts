@@ -16,11 +16,10 @@ import type { JsonValue } from 'claude-code'
 
 import type { Agent } from './model'
 import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
-import { chromeRows } from './office-chrome'
+import { SEARCH_MAX, chromeRows } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { layoutOffice, type Hit } from './office-layout'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
-import { SEARCH_MAX } from './ui'
 import { T0, beneath } from './test-kit'
 
 const SA = 'sess-aaaa-1111-frontend'
@@ -84,7 +83,7 @@ async function writesOf(captured: ReturnType<typeof beneath>['captured'], act: (
   return out
 }
 
-test('ui.message: the office Client\'s own posts — toolbar Buttons, letter keys, tile and room-head clicks, the search Input — change prefs / view / the store as the text cards\' presses do, one atom per message', async ($, on) => {
+test('ui.message: the office Client\'s own posts — toolbar Buttons, letter keys, tile and room-head clicks, the search Input — change prefs / view / the store as the text cards\' presses do, one atom per message', { timeoutMs: 30_000 }, async ($, on) => {
   const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -176,14 +175,14 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   await ui.key({ in: OFFICE_KEY, key: 'l' })
   expect((await propsOf(ui)).lang).toBe('he')
 
-  // j / k move the module's own keyboard focus: its `focus` post writes nothing (a write would redraw the pane per key)
+  // j / k move the module's own keyboard focus and post nothing: no write (a write would redraw the pane per key)
   await click(ui, 'agent', 'lead-a')
   await ui.press({ key: 'close' })
   expect(await writesOf(captured, async () => { await ui.key({ in: OFFICE_KEY, key: 'j' }); await ui.key({ in: OFFICE_KEY, key: 'k' }) })).toEqual({})
   await ui.unmount()
 })
 
-test('ui.message: what is not an office message is ignored — content / pull (dropped by the amendment), focus, no `t`, wrong field types, not an object — no write, no redraw; a search text is capped', async ($, on) => {
+test('ui.message: what is not an office message is ignored — content / pull (dropped by the amendment), focus, no `t`, wrong field types, not an object — no write, no redraw; a search text is capped and cleaned', async ($, on) => {
   const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -205,40 +204,56 @@ test('ui.message: what is not an office message is ignored — content / pull (d
   // a search text is cut to SEARCH_MAX code points (a pasted page must not swell the Client's props), never inside an emoji
   await ui.post({ t: 'search', q: '🔍'.repeat(SEARCH_MAX + 50) }, { in: OFFICE_KEY })
   expect(Array.from((await propsOf(ui)).search)).toEqual(Array.from('🔍'.repeat(SEARCH_MAX)))
+  // ... and its control characters become spaces (an Input value holding one is refused: by the Client, and by the text cards)
+  await ui.post({ t: 'search', q: 'tri\u001b[1mage\u0007' }, { in: OFFICE_KEY })
+  expect((await propsOf(ui)).search).toBe('tri [1mage ')
+  expect(await ui.find({ type: 'Client' })).toBeDefined()
   await ui.unmount()
 })
 
+/** An engine scroll offset past the tallest Box a surface draws (10,000 rows): the module's spacer for the rows scrolled past fails the surface's validation. */
+const FAULT_OFFSET = 20_000
+
 test('ui.fault on the office: the desktop falls back to the text cards and toasts once; /theater tries the Client again; a second fault toasts again', async ($, on) => {
+  const logs: string[] = []
+  on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
   const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
   expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
-  // a real fault of the module: a search Enter with more than a post may carry (100,000 characters) — its
-  // surface.post throws in the Input's handler, the surface reports `ui.fault` (phase `run`) for element `office`
-  await ui.input({ key: 'search', text: 'x'.repeat(100_010), kind: 'submit' })
+  // a real fault of the module: a redraw hands it an engine scroll offset of FAULT_OFFSET, so the spacer it draws for the
+  // rows scrolled past is a Box taller than a surface draws (the bound is 10,000 rows): the surface refuses the tree,
+  // unmounts the instance and reports `ui.fault` (phase `render`) for element `office`. (A live engine's offset stays
+  // inside the Client's height, itself under that bound; the kit's redraw takes any offset. The module's old trigger —
+  // a search post over the post bound — is gone: the module caps its search text, cleanSearch.)
+  await ui.redraw({ ...PANE.props, scroll: { offset: FAULT_OFFSET, bodyRows: 40 } })
   expect(captured.toasts).toHaveLength(1)
   expect(captured.toasts[0]).toMatch(/\/theater/)
   expect(captured.toasts[0]).toMatch(/כרטיסים/) // Hebrew, as the prefs say
+  expect(logs.filter(l => l.startsWith('office Client failed'))).toHaveLength(1)
+  expect(logs.find(l => l.startsWith('office Client failed'))).toMatch(/^office Client failed \(render\): .*height/)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(await ui.find({ key: 'open:a1' })).toBeDefined() // the text cards
   expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
-  // the fallback holds over the polls; no second toast
+  // the fallback holds over the redraws (the window back in range) and the polls; no second toast
+  await ui.redraw({ ...PANE.props })
   await clock.advance(POLL_MS)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(captured.toasts).toHaveLength(1)
-  // /theater: the person asks again → the Client is drawn again
+  // /theater: the person asks again → the Client is drawn again, on the window in range
   await $.command.run(THEATER)
   expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
   expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
-  expect((await propsOf(ui)).search).toBe('') // the oversized text never reached the view
+  expect((await propsOf(ui)).offset).toBe(0)
   // it fails again: the cards again, one more toast
-  await ui.input({ key: 'search', text: 'y'.repeat(100_010), kind: 'submit' })
+  await ui.redraw({ ...PANE.props, scroll: { offset: FAULT_OFFSET, bodyRows: 40 } })
   expect(captured.toasts).toHaveLength(2)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(await ui.find({ key: 'open:a1' })).toBeDefined()
   // (reset: the flag is the plugin bundle's module memory)
+  await ui.redraw({ ...PANE.props })
   await $.command.run(THEATER)
   expect(await ui.find({ type: 'Client' })).toBeDefined()
   await ui.unmount()

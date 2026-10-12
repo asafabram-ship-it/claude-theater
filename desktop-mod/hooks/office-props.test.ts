@@ -26,6 +26,7 @@ test('modelFamily', () => {
   expect(modelFamily('claude-haiku-5-5')).toBe('haiku')
   expect(modelFamily('claude-fable-5-1')).toBe('fable')
   expect(modelFamily('')).toBe('other')
+  expect(modelFamily('claude-mystery-9')).toBe('other')
 })
 
 test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () => {

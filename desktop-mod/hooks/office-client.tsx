@@ -13,7 +13,14 @@
 // window shows (`windowOf`, capped by a byte budget), then nothing: the tree
 // is bounded by the window, not by the number of agents. Pointer rows are
 // Client rows, so a hit is `hitAt(layout, x, y - chromeRows)` on the full
-// layout.
+// layout — on the rows drawn only: a row the budget left blank, or the spacer
+// above the window, answers nothing.
+//
+// Motion (spec §7.4): the layout draws the hover, the hop and the walk-in
+// from a decor the module derives from its local state (office-layout.ts
+// OfficeDecor), memoised by the props AND the decor; the selection, the
+// keyboard focus, the gold pulse under a hop and the status flash are
+// background overlays laid on the layout's cells here.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while an fx is active and is stopped when the last one ends; the render
@@ -23,14 +30,16 @@
 // is called only from events (a tick, a pointer, a key). The search Input
 // draws the text typed, not `props.search`, so a publish between keystrokes
 // cannot reset it; the `search` post is debounced. The render is wrapped in
-// try/catch and draws a short red Text instead of throwing (spec §10).
+// try/catch and draws a short red Text instead of throwing (spec §10). The
+// search text is cleaned and capped (cleanSearch) before it is drawn or
+// posted; the keyboard focus (j / k) is local and never posted.
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, drawerLines, emptyLines, windowOf } from './office-chrome'
+import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { TILE_H, cut, hitAt, layoutOffice, rowRuns, windowRows } from './office-layout'
-import type { Cell, Hit, OfficeLayout } from './office-layout'
+import { NO_DECOR, TILE_H, cut, hitAt, layoutOffice, rowRuns, windowRows } from './office-layout'
+import type { Cell, Hit, OfficeDecor, OfficeLayout } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 
 /** The brief's contract: the chrome height constant is reachable from the module too (its home is office-chrome.ts). */
@@ -42,10 +51,14 @@ export const FX_DONE_MS = 1000
 /** A status change flashes the desk row for this many frames of the fx clock. */
 export const FX_STATUS_FRAMES = 2
 export const SEARCH_DEBOUNCE_MS = 150
-/** The background highlights the module lays over the layout's cells (the layout itself stays pure). */
+/**
+ * The background highlights the module lays over the layout's cells: the selection and the keyboard
+ * focus (the head row), the gold pulse under a hop (the head row, alternating by frame) and the status
+ * flash (the desk row). The hover and the motion are the layout's (office-layout.ts HOVER_BG, OfficeDecor).
+ */
 export const FX_BG = {
-  hover: '#2b3350', focus: '#3b4f8a', selected: '#4a3f8a',
-  enter: '#1f4d2a', done: '#8a6a10', doneAlt: '#5a4a10', status: '#4b5563',
+  focus: '#3b4f8a', selected: '#4a3f8a',
+  done: '#8a6a10', doneAlt: '#5a4a10', status: '#4b5563',
 } as const
 
 /** The letter keys that are the toolbar (spec §6.4). */
@@ -65,6 +78,8 @@ export type OfficeInst = {
   layout: OfficeLayout
   hitById: Map<string, Hit>
   order: string[]
+  /** The layout rows last drawn: [from, from + count). The pointer answers on these alone. */
+  win: { from: number; count: number }
   drawerKey: string
   drawer: DrawerLine[]
   fx: Fx[]
@@ -88,13 +103,28 @@ function send(surface: Surface, m: OfficeMessage): void {
 // the instance
 // ---------------------------------------------------------------------------
 
-function layoutKeyOf(p: OfficeProps): string {
-  return JSON.stringify([p.columns, p.rtl, p.selected, p.rooms])
+/** The layout's memo key: the props that shape it and the decor laid on it. */
+function layoutKeyOf(p: OfficeProps, d: OfficeDecor): string {
+  return JSON.stringify([p.columns, p.rtl, p.selected, p.rooms, d.hover, [...d.hop], [...d.entering]])
+}
+
+/**
+ * The decor from the local state: the hover, the tiles hopping (a `done` fx) and each walk-in's
+ * progress, 0 when its `enter` fx starts → 1 at FX_ENTER_MS (`1 - left / FX_ENTER_MS`).
+ */
+function decorOf(s: OfficeState): OfficeDecor {
+  const hop = new Set<string>()
+  const entering = new Map<string, number>()
+  for (const f of s.inst.fx) {
+    if (f.kind === 'done') hop.add(f.id)
+    else if (f.kind === 'enter') entering.set(f.id, 1 - f.left / FX_ENTER_MS)
+  }
+  return { hover: s.hover, hop, entering }
 }
 
 /** The layout memo: computed first, the key assigned last, so a throw never leaves a stale layout under a new key. */
-function setLayout(inst: OfficeInst, p: OfficeProps, key: string): void {
-  const layout = layoutOffice(p)
+function setLayout(inst: OfficeInst, p: OfficeProps, d: OfficeDecor, key: string): void {
+  const layout = layoutOffice(p, d)
   const hitById = new Map<string, Hit>()
   const order: string[] = []
   for (const hit of layout.hits) {
@@ -110,10 +140,10 @@ function setLayout(inst: OfficeInst, p: OfficeProps, key: string): void {
 
 function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
-    props: p, chrome: 0, layoutKey: '', layout: { rows: [], hits: [] }, hitById: new Map(), order: [], drawerKey: '', drawer: [],
-    fx: [], stop: null, seen: null, query: p.search, propsSearch: p.search, posted: null, debounce: null,
+    props: p, chrome: 0, layoutKey: '', layout: { rows: [], hits: [] }, hitById: new Map(), order: [], win: { from: 0, count: 0 }, drawerKey: '', drawer: [],
+    fx: [], stop: null, seen: null, query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
   }
-  setLayout(inst, p, layoutKeyOf(p))
+  setLayout(inst, p, NO_DECOR, layoutKeyOf(p, NO_DECOR))
   return inst
 }
 
@@ -183,7 +213,10 @@ function listen(surface: Surface): void {
       const cur = surface.state
       if (!cur) return
       const inst = cur.inst
-      const hit = hitAt(inst.layout, ev.x, ev.y - inst.chrome)
+      // only the rows drawn answer: not the chrome, not the spacer above the window, not a row past it
+      // (the byte budget leaves the rows past `from + count` blank, so `y >= chrome + from + count` is nothing)
+      const y = ev.y - inst.chrome
+      const hit = y >= inst.win.from && y < inst.win.from + inst.win.count ? hitAt(inst.layout, ev.x, y) : undefined
       if (ev.type === 'down') {
         if (ev.button !== 'left' || !hit) return
         if (hit.kind === 'agent') {
@@ -213,8 +246,8 @@ function listen(surface: Surface): void {
         const n = i < 0 ? (d > 0 ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, i + d))
         const id = order[n]!
         if (id === cur.focus) return
+        // local only: one post per frame, so a `focus` post could displace a meaningful one (a click's `open`)
         surface.setState({ ...cur, focus: id })
-        send(surface, { t: 'focus', id })
       } else if (k === 'o' || k === 'return') {
         if (cur.focus && inst.hitById.has(cur.focus)) send(surface, { t: 'open', id: cur.focus })
       } else {
@@ -233,8 +266,12 @@ function listen(surface: Surface): void {
 
 type Rect = { x: number; w: number; y: number; bg: string }
 
-/** The highlights over the layout: selection, keyboard focus, hover (the head row), and the fx (head, name or desk row). */
-function decor(s: OfficeState, p: OfficeProps): Rect[] {
+/**
+ * The highlights laid over the layout's cells: the selection and the keyboard focus (the head row),
+ * the gold pulse under a hop (the head row, by frame parity: the ⭐ itself is the layout's) and the
+ * status flash (the desk row). The walk-in is motion alone (the layout's), no colour.
+ */
+function overlays(s: OfficeState, p: OfficeProps): Rect[] {
   const inst = s.inst
   const rects: Rect[] = []
   const head = (id: string | null, bg: string) => {
@@ -243,13 +280,11 @@ function decor(s: OfficeState, p: OfficeProps): Rect[] {
   }
   head(p.selected, FX_BG.selected)
   head(s.focus, FX_BG.focus)
-  head(s.hover, FX_BG.hover)
   for (const f of inst.fx) {
     const hit = inst.hitById.get(f.id)
     if (!hit) continue
-    if (f.kind === 'enter') rects.push({ x: hit.x, w: hit.w, y: hit.y, bg: FX_BG.enter }, { x: hit.x, w: hit.w, y: hit.y + 2, bg: FX_BG.enter })
-    else if (f.kind === 'done') rects.push({ x: hit.x, w: hit.w, y: hit.y, bg: s.frame % 2 === 0 ? FX_BG.done : FX_BG.doneAlt })
-    else rects.push({ x: hit.x, w: hit.w, y: Math.min(hit.y + 1, hit.y + TILE_H - 1), bg: FX_BG.status })
+    if (f.kind === 'done') rects.push({ x: hit.x, w: hit.w, y: hit.y, bg: s.frame % 2 === 0 ? FX_BG.done : FX_BG.doneAlt })
+    else if (f.kind === 'status') rects.push({ x: hit.x, w: hit.w, y: Math.min(hit.y + 1, hit.y + TILE_H - 1), bg: FX_BG.status })
   }
   return rects
 }
@@ -277,9 +312,13 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const inst = s.inst
     inst.props = props
 
-    // --- the layout, memoised by the props that shape it ---
-    const key = layoutKeyOf(props)
-    if (key !== inst.layoutKey) setLayout(inst, props, key)
+    // --- event fx from the stamps (never on the first props; nothing under `still`): before the layout, which draws them ---
+    detectFx(surface, inst, props)
+
+    // --- the layout, memoised by the props that shape it and the decor laid on it (hover, hop, walk-in) ---
+    const decor = decorOf(s)
+    const key = layoutKeyOf(props, decor)
+    if (key !== inst.layoutKey) setLayout(inst, props, decor, key)
     const layout = inst.layout
 
     // --- the drawer's lines, memoised too (they decide the chrome's height); the key assigned after the lines ---
@@ -293,18 +332,15 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     }
     inst.chrome = CHROME_ROWS + (props.footer ? 1 : 0) + (props.helpOpen ? HELP_ROWS : props.drawer ? 2 + inst.drawer.length : 0)
 
-    // --- the search text: ours unless the hooks changed it from outside (not our own echo) ---
+    // --- the search text: ours unless the hooks changed it from outside (not our own echo); cleaned either way ---
     if (props.search !== inst.propsSearch) {
       const outside = props.search !== inst.posted && props.search !== inst.query
       inst.propsSearch = props.search
       if (outside) {
-        inst.query = props.search
+        inst.query = cleanSearch(props.search)
         if (inst.debounce) { inst.debounce(); inst.debounce = null }
       }
     }
-
-    // --- event fx from the stamps (never on the first props; nothing under `still`) ---
-    detectFx(surface, inst, props)
 
     const L = props.labels
     const lbl = (k: string) => L[k] ?? ''
@@ -338,8 +374,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       key: 'search',
       placeholder: cut(`🔍 ${placeholder.endsWith('…') ? placeholder.slice(0, -1) : placeholder}`, props.columns),
       value: inst.query,
-      onInput: (v: string) => { inst.query = v; queueSearch(surface, inst, v, false) },
-      onSubmit: (v: string) => { inst.query = v; queueSearch(surface, inst, v, true) },
+      // (cleaned and capped: a paste of a page or of an escape sequence would make the post or the value unmount the office)
+      onInput: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, false) },
+      onSubmit: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, true) },
     })]))
 
     // --- footer (scan notes): in the chrome, so it is seen without scrolling to the end ---
@@ -364,7 +401,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     }
 
     if (props.empty) {
-      // --- the empty office: 🏢, the message, the sub's sentences, the demo Button ---
+      // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no rows, so nothing to click ---
+      inst.win = { from: 0, count: 0 }
       const e = emptyLines(props)
       kids.push(Box({ key: 'empty', flexDirection: 'column', alignItems: 'center', marginTop: 1, children: [
         Text({ children: ['🏢'] }),
@@ -376,8 +414,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       // --- the rooms: a spacer for the rows scrolled past, then the window's rows, one Text per row, a Text per styled run ---
       const body = props.rows > 0 ? props.rows : 30
       const { from, count } = windowOf(inst.chrome, props.offset, body, layout.rows.length, props.columns)
+      inst.win = { from, count }
       if (from > 0) kids.push(Box({ height: from }))
-      const rects = decor(s, props)
+      const rects = overlays(s, props)
       const rows = windowRows(layout, from, count)
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i]!

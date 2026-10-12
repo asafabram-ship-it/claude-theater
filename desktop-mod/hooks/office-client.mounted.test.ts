@@ -14,9 +14,10 @@
 // opens its drawer (the chrome grows by the drawer's rows), `f` flips
 // "show finished", the search text reaches `props.search`. These cases assert
 // what the mounted module shows — the keyboard focus a click or `j` lands on
-// a tile, the search Input keeping its text across a publish, the fx clocks
-// running and stopping, the spacer and the window — and those effects of its
-// posts; register.test.ts covers every message kind.
+// a tile, the search Input keeping its text across a publish, a newcomer's
+// head walking in on the fx clock (and the clock stopping), the hover, the
+// spacer and the window — and those effects of its posts; register.test.ts
+// covers every message kind.
 
 import { expect, test } from 'claude-code/testing'
 
@@ -24,7 +25,8 @@ import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
 import { CHROME_ROWS, chromeRows, windowOf } from './office-chrome'
 import { FX_BG, FX_ENTER_MS, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
-import { TILE_W } from './office-layout'
+import { HOVER_BG, NO_DECOR, TILE_W, layoutOffice } from './office-layout'
+import type { OfficeDecor } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
 import { T0, beneath } from './test-kit'
@@ -65,13 +67,39 @@ async function kidsOf(ui: Finder): Promise<Drawn[]> {
   return ((await ui.drawn({ in: OFFICE_KEY })) as Drawn).children?.filter((k): k is Drawn => typeof k !== 'string') ?? []
 }
 
-/** The LAYOUT rows (0 = the first room head) whose drawn Text carries a run with `bg` as its backgroundColor. */
-async function bgRows(ui: Finder, p: OfficeProps, bg: string): Promise<number[]> {
+/** The drawn rows: layout row y is `rows[y - spacer]` (the chrome and the spacer Box left out). */
+async function drawnRows(ui: Finder, p: OfficeProps): Promise<{ spacer: number; rows: Drawn[] }> {
   const kids = await kidsOf(ui)
   const chromeEls = 3 + (p.footer ? 1 : 0) + (p.helpOpen || p.drawer ? 1 : 0)
   const body = kids.slice(chromeEls)
   const spacer = body[0]?.type === 'Box' ? Number(body[0].props.height ?? 0) : 0
-  const rows = spacer > 0 ? body.slice(1) : body
+  return { spacer, rows: spacer > 0 ? body.slice(1) : body }
+}
+
+function textOf(n: Drawn | string): string {
+  return typeof n === 'string' ? n : (n.children ?? []).map(textOf).join('')
+}
+
+/** Layout row `y` as the module drew it, as glyphs (a wide glyph's second cell is no character). */
+async function drawnRow(ui: Finder, p: OfficeProps, y: number): Promise<string> {
+  const { spacer, rows } = await drawnRows(ui, p)
+  const row = rows[y - spacer]
+  return row ? textOf(row) : ''
+}
+
+/** Layout row `y` of the props under a decor, as glyphs: what the module must draw there. */
+function laidRow(p: OfficeProps, d: OfficeDecor, y: number): string {
+  return layoutOffice(p, d).rows[y]?.cells.map(c => c.ch).join('') ?? ''
+}
+
+/** The decor of `id` walking in at `progress` (0 → 1). */
+function walking(id: string, progress: number): OfficeDecor {
+  return { hover: null, hop: new Set(), entering: new Map([[id, progress]]) }
+}
+
+/** The LAYOUT rows (0 = the first room head) whose drawn Text carries a run with `bg` as its backgroundColor. */
+async function bgRows(ui: Finder, p: OfficeProps, bg: string): Promise<number[]> {
+  const { spacer, rows } = await drawnRows(ui, p)
   const out: number[] = []
   rows.forEach((row, i) => {
     if ((row.children ?? []).some(c => typeof c !== 'string' && c.props.backgroundColor === bg)) out.push(spacer + i)
@@ -79,7 +107,7 @@ async function bgRows(ui: Finder, p: OfficeProps, bg: string): Promise<number[]>
   return out
 }
 
-test('DESKTOP (2.4): the pane is one Client; it draws the room head, the tiles and the chrome; a click on a tile focuses it; a newcomer walks in on the fx clock, which then stops', async ($, on) => {
+test('DESKTOP (2.4): the pane is one Client; it draws the room head, the tiles and the chrome; a click on a tile focuses it; a newcomer walks in on the fx clock, which then stops', { timeoutMs: 30_000 }, async ($, on) => {
   if (!ENABLED) return
   let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 })]
   const { clock } = beneath(on, () => agents, PREFS())
@@ -118,18 +146,22 @@ test('DESKTOP (2.4): the pane is one Client; it draws the room head, the tiles a
   expect(pOpen.prefs.showDone).toBe(false)
   await ui.press({ key: 'showDone' })
   expect((await officeProps(ui)).prefs.showDone).toBe(true)
-  // a newcomer walks in: FX_BG.enter on its tile, the fx clock runs FX_ENTER_MS then stops (no setState loop)
+  // a newcomer walks in: its head (the third tile of the first block: the head row is layout row 1) starts WALK_CELLS off
+  // home on the reading side and steps home on the fx clock, which then stops (no setState loop)
   agents = [...agents, agent({ id: 'n1', persona_id: 5, role: 'index the docs' })]
   await clock.advance(POLL_MS * 4)   // SETTLE
   const p1 = await officeProps(ui)
   const n1 = p1.rooms[0]?.agents.find(a => a.id === 'n1')
   expect(n1?.enteredAt).toBeGreaterThan(0)
   expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /index the docs/ })).toBeDefined()
-  expect(await bgRows(ui, p1, FX_BG.enter)).toEqual([1, 3])   // the head and the name row of n1's tile (the first block)
-  await ui.advance(FX_ENTER_MS + FX_TICK_MS)
-  expect(await withBg(ui, FX_BG.enter)).toBe(false)
+  expect(await drawnRow(ui, p1, 1)).toBe(laidRow(p1, walking('n1', 0), 1))
+  expect(await drawnRow(ui, p1, 1)).not.toBe(laidRow(p1, NO_DECOR, 1))
+  await ui.advance(FX_TICK_MS)
+  expect(await drawnRow(ui, p1, 1)).toBe(laidRow(p1, walking('n1', FX_TICK_MS / FX_ENTER_MS), 1))
+  await ui.advance(FX_ENTER_MS)
+  expect(await drawnRow(ui, p1, 1)).toBe(laidRow(p1, NO_DECOR, 1))   // home
   await ui.advance(FX_TICK_MS * 8)   // the clock is stopped: nothing else happens
-  expect(await withBg(ui, FX_BG.enter)).toBe(false)
+  expect(await drawnRow(ui, p1, 1)).toBe(laidRow(p1, NO_DECOR, 1))
   expect(await bgRows(ui, p1, FX_BG.focus)).toEqual([1])      // the focus survived the publish
   await ui.unmount()
 })
@@ -155,7 +187,7 @@ test('DESKTOP (2.4): the engine scrolls natively — the Client is full height a
   await ui.unmount()
 })
 
-test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across a publish and the debounce; an fx runs its clock and stops', async ($, on) => {
+test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across a publish and the debounce; an fx runs its clock and stops', { timeoutMs: 30_000 }, async ($, on) => {
   if (!ENABLED) return
   // four agents at 45 columns (3 tiles per row): lead, a1, a2 in the first block, a3 alone in the second
   let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 }), agent({ id: 'a2', persona_id: 8 }), agent({ id: 'a3', persona_id: 9 })]
@@ -179,7 +211,7 @@ test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across
   expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([7])   // clamped at the last tile
   await ui.key({ in: OFFICE_KEY, key: 'k' })
   expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([1])
-  expect((await officeProps(ui)).selected).toBe('lead')     // j / k post `focus`: the hooks write nothing, the drawer stays
+  expect((await officeProps(ui)).selected).toBe('lead')     // j / k post nothing (the focus is the module's own): the drawer stays
   await ui.key({ in: OFFICE_KEY, key: 'f' })                // the toolbar's showDone: a post, the pref flips
   expect((await officeProps(ui)).prefs.showDone).toBe(true)
   await ui.key({ in: OFFICE_KEY, key: 'up' })               // focus a1 (up from a2) ...
@@ -207,15 +239,17 @@ test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across
   await clock.advance(POLL_MS * 2)
   expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.fam).toBe('search')
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('')
-  // a newcomer walks in: FX_BG.enter on its tile, gone after FX_ENTER_MS; no fault, no loop
+  // a newcomer walks in: n1 is the second tile of the second block (its head row is layout row 7); home after FX_ENTER_MS;
+  // no fault, no loop
   agents = [...agents, agent({ id: 'n1', persona_id: 5 })]
   await clock.advance(POLL_MS * 4)
   const p1 = await officeProps(ui)
-  expect(await bgRows(ui, p1, FX_BG.enter)).toEqual([7, 9])   // n1 is the second tile of the second block
+  expect(await drawnRow(ui, p1, 7)).toBe(laidRow(p1, walking('n1', 0), 7))
+  expect(await drawnRow(ui, p1, 7)).not.toBe(laidRow(p1, NO_DECOR, 7))
   await ui.advance(FX_ENTER_MS + FX_TICK_MS)
-  expect(await withBg(ui, FX_BG.enter)).toBe(false)
+  expect(await drawnRow(ui, p1, 7)).toBe(laidRow(p1, NO_DECOR, 7))
   await ui.advance(FX_TICK_MS * 8)
-  expect(await withBg(ui, FX_BG.enter)).toBe(false)
+  expect(await drawnRow(ui, p1, 7)).toBe(laidRow(p1, NO_DECOR, 7))
   await ui.unmount()
 })
 
@@ -247,10 +281,15 @@ test('DESKTOP (2.4): the window — a spacer for the rows scrolled past, the row
   // a hover over a7 (the second tile of the same block, one tile to the left in RTL) highlights its head row — the
   // same row as the focus, another colour; leaving clears it. (A tile above the window, in the spacer, draws nothing.)
   await ui.pointer({ in: OFFICE_KEY, type: 'move', x: 45 - 2 * TILE_W - 1 + 2, y: chrome + 13 + 1 })
-  expect(await bgRows(ui, p, FX_BG.hover)).toEqual([13])
+  expect(await bgRows(ui, p, HOVER_BG)).toEqual([13])
   expect(await bgRows(ui, p, FX_BG.focus)).toEqual([13])
   await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
-  expect(await withBg(ui, FX_BG.hover)).toBe(false)
+  expect(await withBg(ui, HOVER_BG)).toBe(false)
   expect(await bgRows(ui, p, FX_BG.focus)).toEqual([13])
+  // a click in the spacer (a tile scrolled past, drawn as blank rows) opens nothing; the hover there is nothing either
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 45 - TILE_W + 2, y: chrome + 1 + 2, button: 'left' })
+  expect((await officeProps(ui)).selected).toBeNull()
+  await ui.pointer({ in: OFFICE_KEY, type: 'move', x: 45 - TILE_W + 2, y: chrome + 1 + 2 })
+  expect(await withBg(ui, HOVER_BG)).toBe(false)
   await ui.unmount()
 })

@@ -6,8 +6,13 @@
 // takes EMOJI_CELLS. Every row is exactly `columns` wide by construction: the
 // desktop does not enforce `wrap: 'truncate'`, so `put` clips and never lets a
 // glyph spill past the last column. No clock here: minutes come in the props.
+//
+// The decor (the hover, the hop, the walk-in) is the surface module's local
+// state handed in as plain data: the layout stays a pure function of
+// (props, decor), so the module memoises it by both and the hooks, which only
+// need the height, count the rows without building a cell (`rowCount`).
 
-import type { OfficeAgent, OfficeProps } from './office-props'
+import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
 export const TILE_W = 14
 export const TILE_H = 6
@@ -19,6 +24,28 @@ export type CellRow = { id: string; cells: Cell[] }
 export type Run = { text: string; fg?: string; bg?: string; bold?: true; dim?: true }
 export type Hit = { kind: 'agent' | 'pin' | 'roomDone'; id: string; x: number; y: number; w: number; h: number }
 export type OfficeLayout = { rows: CellRow[]; hits: Hit[] }
+
+/**
+ * What the surface module lays on the tiles from its local state (spec §7.4), by agent id:
+ *   hover    the tile under the pointer: HOVER_BG across its head row;
+ *   hop      a `done` fx: ⭐ beside the head, on the tile's own head row (the row above
+ *            is the room head or another tile's, so the head cannot leave its row);
+ *   entering an `enter` fx and its progress 0 → 1: the head walks in from the reading
+ *            start (the left in LTR, the right in RTL), `walkShift(p)` cells off home.
+ */
+export type OfficeDecor = { hover: string | null; hop: ReadonlySet<string>; entering: ReadonlyMap<string, number> }
+export const NO_DECOR: OfficeDecor = { hover: null, hop: new Set(), entering: new Map() }
+/** The hover highlight: a background bar across the tile's head row (a coloured "frame" around a colour emoji does not show). */
+export const HOVER_BG = '#2b3350'
+/** How far off home a walk-in starts, in cells. */
+export const WALK_CELLS = 3
+const HOP_STAR = '⭐'
+
+/** The walk-in's distance from home at progress `p` (0 → 1): round((1 - p) × WALK_CELLS); out of range clamped, nonsense home. */
+export function walkShift(p: number): number {
+  if (!Number.isFinite(p)) return 0
+  return Math.round((1 - Math.max(0, Math.min(1, p))) * WALK_CELLS)
+}
 
 export const MODEL_BG: Record<OfficeAgent['modelFam'], string> = { opus: '#7b5cf0', sonnet: '#2f7fe8', haiku: '#1fa876', fable: '#d9872b', other: '#3a4470' }
 export const STATUS_FG: Record<OfficeAgent['status'], string> = { running: '#7ee29a', stale: '#e6c07e', done: '#9fb0e6' }
@@ -106,15 +133,28 @@ function centred(x: number, w: number, text: string): number {
   return x + Math.max(0, Math.floor((w - width(text)) / 2))
 }
 
-/** One agent tile into rows[y..y+TILE_H) at x. */
-function tile(rows: CellRow[], y: number, x: number, a: OfficeAgent, index: number, selected: boolean): void {
+/**
+ * One agent tile into rows[y..y+TILE_H) at x. The head row: the 💬 of the lead at the tile's
+ * start, the head (with the hop's ⭐) centred and shifted by the walk-in, the index at the end;
+ * the head is clamped between the two, so it never covers them and never leaves the tile.
+ */
+function tile(rows: CellRow[], y: number, x: number, a: OfficeAgent, index: number, selected: boolean, rtl: boolean, decor: OfficeDecor): void {
   const fg = STATUS_FG[a.status]
   const frame = selected ? { fg: '#ffffff', bold: true as const } : {}
   const head = rows[y]!
-  put(head, centred(x, TILE_W, a.emoji), a.emoji, frame)
-  if (a.isLead) put(head, x, '💬')
   const idx = String(index)
-  put(head, x + TILE_W - Math.max(2, width(idx)), idx, { dim: true })
+  const idxAt = x + TILE_W - Math.max(2, width(idx))
+  const glyph = decor.hop.has(a.id) ? `${HOP_STAR}${a.emoji}` : a.emoji
+  const p = decor.entering.get(a.id)
+  const shift = p === undefined ? 0 : (rtl ? 1 : -1) * walkShift(p)
+  const lo = x + (a.isLead ? EMOJI_CELLS : 0)
+  const hi = idxAt - width(glyph)
+  put(head, Math.max(lo, Math.min(hi, centred(x, TILE_W, glyph) + shift)), glyph, frame)
+  if (a.isLead) put(head, x, '💬')
+  put(head, idxAt, idx, { dim: true })
+  if (decor.hover === a.id) {
+    for (let i = Math.max(0, x); i < Math.min(head.cells.length, x + TILE_W); i++) head.cells[i] = { ...head.cells[i]!, bg: HOVER_BG }
+  }
   const desk = rows[y + 1]!
   put(desk, x + 2, '▀'.repeat(TILE_W - 4), { fg: DESK, bg: '#3a2a1a' })
   put(desk, x + 6, '▀▀', { fg: SCREEN[a.status], bg: '#111827' })
@@ -130,12 +170,35 @@ function tile(rows: CellRow[], y: number, x: number, a: OfficeAgent, index: numb
   put(rows[y + 5]!, centred(x, TILE_W, line), line, { dim: true })
 }
 
+/** Whether a room draws an agent: a finished one only while the room shows the finished. */
+function drawn(room: OfficeRoom, a: OfficeAgent): boolean {
+  return a.status !== 'done' || room.showDone
+}
+
+/**
+ * The number of rows `layoutOffice(props)` lays out, without building a cell: what the hooks
+ * need for the Client's height on every render (a head per room, TILE_H rows per row of tiles,
+ * a gap between rooms). The decor never changes it.
+ */
+export function rowCount(props: OfficeProps): number {
+  const perRow = tilesPerRow(props.columns)
+  let n = 0
+  for (let r = 0; r < props.rooms.length; r++) {
+    const room = props.rooms[r]!
+    let shown = 0
+    for (const a of room.agents) if (drawn(room, a)) shown++
+    n += (r > 0 ? 1 : 0) + 1 + Math.ceil(shown / perRow) * TILE_H
+  }
+  return n
+}
+
 /**
  * The rows and hit rectangles of the whole office: per room a head row (pin, title, counts;
  * the pin first, so at the right edge in RTL), then blocks of TILE_H rows of tiles, with one
  * blank row between rooms. Rows ids: `room:<id>:head`, `room:<id>:row:<n>:<k>`, `room:<id>:gap`.
+ * The decor changes only the head rows of the tiles it names; never a hit, never a row's width.
  */
-export function layoutOffice(props: OfficeProps): OfficeLayout {
+export function layoutOffice(props: OfficeProps, decor: OfficeDecor = NO_DECOR): OfficeLayout {
   const rows: CellRow[] = []
   const hits: Hit[] = []
   const perRow = tilesPerRow(props.columns)
@@ -164,13 +227,13 @@ export function layoutOffice(props: OfficeProps): OfficeLayout {
       if (room.done) hits.push({ kind: 'roomDone', id: room.id, x: cx, y, w: cw, h: 1 })
     }
     rows.push(head)
-    const shown = room.agents.filter(a => a.status !== 'done' || room.showDone)
+    const shown = room.agents.filter(a => drawn(room, a))
     for (let i = 0; i < shown.length; i += perRow) {
       const top = rows.length
       for (let k = 0; k < TILE_H; k++) rows.push(blankRow(`room:${room.id}:row:${i / perRow}:${k}`, props.columns))
       shown.slice(i, i + perRow).forEach((a, j) => {
         const x = tileX(i + j, perRow, props.columns, props.rtl)
-        tile(rows, top, x, a, i + j + 1, props.selected === a.id)
+        tile(rows, top, x, a, i + j + 1, props.selected === a.id, props.rtl, decor)
         hits.push({ kind: 'agent', id: a.id, x, y: top, w: TILE_W, h: TILE_H })
       })
     }

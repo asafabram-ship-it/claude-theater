@@ -483,6 +483,9 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
     expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
     await ui.input({ key: 'search', text: 'zzz-nothing' })
     expect(await messageOf(ui, surface, /אין סוכנים שתואמים/)).toBe(true)
+    // a pasted escape sequence: stored with its control characters as spaces (an Input value holding one is refused)
+    await ui.input({ key: 'search', text: 'tri\u001b[1mage', kind: 'change' })
+    expect((await ui.find({ key: 'search' }))?.props.value).toBe('tri [1mage')
     await ui.input({ key: 'search', text: '', kind: 'change' })
     expect(await ui.find({ key: 'open:a1' })).toBeDefined()
     // help popover

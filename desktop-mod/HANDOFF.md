@@ -1,6 +1,26 @@
 # HANDOFF — תיאטרון הסוכנים כמוד לאפליקציית הדסקטופ
 
-עודכן: 2026-10-11 06:00 · ענף: `feat/desktop-mod` · ריפו: `C:\Users\asafa\agent-theater` (GitHub: asafabram-ship-it/claude-theater)
+עודכן: 2026-10-12 10:40 · ענף: `feat/desktop-mod` · ריפו: `C:\Users\asafa\agent-theater` (GitHub: asafabram-ship-it/claude-theater)
+
+## נקודת שמירה 2026-10-12 10:40 - קוד שלב 2 הושלם (עד 2.7b); עוצרים לפני Task 2.8 (בדיקה בעין עם אסף) (גובר על כל מה שמתחתיו)
+
+**סשן:** מבצע, אותו סשן (Remote Control פעיל). **מ-12.10 08:17 הסשן והסוכנים רצים על Opus 5.5** - מכסת Fable השבועית ב-98% (איפוס 16.10 21:00); קומיטים חתומים `Claude Opus 5.5`. המוד הראשי עדיין **כבוי**.
+
+**מצב (נכון ל-10:40; HEAD = `8d9ff14`, עץ נקי לפני קומיט זה):**
+- **Task 2.5** (`319061c`, סקירה נקייה): hook `ui.message{element=office}` ו-`applyOfficeMessage` ב-`ui.tsx` (`registerUi`) - קבוצת מעברים אחת לכרטיסי הטקסט ולפוסטים של ה-Client; `ui.fault{element=office}` ב-`register.tsx` → `DESKTOP.clientFailed` + toast אחד + invalidate, `/theater` מאפס; latch לציור מחדש (רק `roomDone`); `focus` לא מטופל; `pressVia` נמחק; בדיקת `'Client' in els` הוחזרה.
+- **Task 2.6** (`93bb63f`, סקירה נקייה): נמחקו מסלול ה-SVG של הדסקטופ ובדיקותיו (~1,400 שורות; `office-svg.ts` נשאר עם `toolFamily`, `WALK_IN_MS`, `UNKNOWN_MODEL_PILL` בלבד); `hooks/test-kit.ts` משותף לבדיקות. VS Code/מובייל מעולם לא ציירו Svg (אפיון §5/§7.5 תוקן, `586e06f`).
+- **Task 2.7** (`39fb404` + `8e0d5ee`, סבב תיקון אחד): הנפשה באירועים בתוך שורות המשרד - כניסה מהצד (3→2→1 תאים), ⭐ ליד הראש בסיום, הדגשת hover; `rowCount` לגובה ה-Client; הגנת לחיצה מחוץ לחלון; חיפוש מנוקה מתווי בקרה ותווי כיוון ומוגבל ל-200 (`SEARCH_MAX`/`cleanSearch` ב-`office-chrome.ts`); אין יותר פוסט `focus`; `Date.now()` נעלם מקוד ה-hooks. פרופיל ציור (200×80, 100 סוכנים, מגירה פתוחה): קר ~30ms חציון / 57ms מקסימום, חם/hover 1-9ms - רחוק מתקציב השנייה.
+- **Task 2.7b** (`8d9ff14`, סקירה נקייה; נוסף לתוכנית ב-`a9aa3a9`): `cleanAgentText` ב-`office-chrome.ts` (מהגדרה אחת של התווים שהמשטחים דוחים; רצפי CSI/OSC נמחקים שלמים) מופעל פעם אחת בכל poll אחרי `mergeLive` (`register.tsx:358`) על כל שדות הטקסט של הסוכנים - אחרת קוד צבע ANSI או RLM בפרומפט/תוצאה היה מפיל את כל החלונית בכל משטח.
+- **מנוע:** אפליקציית הדסקטופ רצה עכשיו על **2.1.295** (`C:/Users/asafa/AppData/Roaming/Claude/claude-code/2.1.295/d2e29494ec83/claude.exe`); הבדיקות רצות על 2.1.293 ו-2.1.295 - 122 עוברות בשניהם, validate ✔. פרויקט ה-tsc (`AppData/Local/Temp/theater-tsc`) עודכן להצהרות 2.1.293 (גיבוי `claude-code.d.ts.bak-2.1.288`).
+- לדג'ר SDD: `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` - Tasks 0.1-0.2, 1.1-1.4, 1.4b, 2.1-2.7, 2.7b complete; כל הממצאים הקטנים שנדחו רשומים שם (minor deferred / Carry → 2.8).
+
+**Task 2.8 - מה צריך מאסף (הבא):**
+1. אישור מפורש להפעיל את המוד: להחזיר `"CLAUDE_CODE_PLUGIN_DIRS": "C:\\Users\\asafa\\agent-theater\\desktop-mod"` תחת `env` ב-`~/.claude/settings.json` (יש גיבוי `settings.json.bak-2026-10-08-theater-off`).
+2. שיחה חדשה, `/theater`, ומשימה עם כמה סוכנים.
+3. בדיקה בעין (שתי דקות): אין הבהוב כשסוכנים נכנסים ויוצאים; גלילה חלקה; לחיצה על דמות פותחת מגירה; ☑ 🔔 EN עובדים; שמות בעברית קריאים; ההקלדה בחיפוש לא מהבהבת ולא קופצת; ובנוסף מהלדג'ר: מקשים כפולים (hotkey + onKey) ברוחב ≥60; pointer אחרי גלילה; גובהי Box והרווח בזמן גלילה עד הפרסום; ⭐ ברוחב 2 תאים; הודעת ה-toast בעברית עם `/theater`; השהיה של 100ms בלחיצת ✅; ה-mm:ss לא מתקתק בנפילה לכרטיסים; צילום מסך ל-`docs/screenshots/`.
+4. CPU במנהל המשימות (Task 1.5 יכול לרוץ באותה הפעלה).
+
+**אחרי 2.8:** Task 1.5 (מדידה; אם מעל היעד → 1.2b) → שלב 3 (מד 5 השעות: `usage.ts`, `session.measure`, `$.ui.status` בשורה התחתונה + כותרת + toasts ב-80/95) → 4.1 (ניקוי שיבוטים ו-`dev-mods/*/theater-probe`, מיזוג לפי הכרעת אסף).
 
 ## נקודת שמירה 2026-10-11 06:00 - שלב 2: Tasks 2.3-2.4 הושלמו; 2.5 נעצר לפני שהתחיל (אסף יצא) (גובר על כל מה שמתחתיו)
 

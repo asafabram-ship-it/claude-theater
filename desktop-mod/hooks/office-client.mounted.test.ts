@@ -8,15 +8,15 @@
 // a full-height Client, `props.offset` is the engine's window); the others
 // are Task 2.3's drafts against the mounted module.
 //
-// What the module POSTS cannot be seen from here: a `ui.message` reaches only
-// the posting plugin's own hooks (never a test hook beneath), and that hook
-// is Task 2.5's. So these cases assert what the mounted module shows of its
-// own — the keyboard focus a click or `j` lands on a tile, the search Input
-// keeping its text across a publish, the fx clocks running and stopping, the
-// spacer and the window — and Task 2.5's tests assert the posts' effects
-// (the drawer opening, `showDone` flipping in the store, `props.search`).
-// Until then the engine's core answers `{}` to every post: heard, nothing
-// changes.
+// What the module POSTS reaches the plugin's own `ui.message` hook (ui.tsx,
+// Task 2.5; never a test hook beneath), which applies it to prefs / view /
+// the store, so the next draw hands the module new props: a click on a tile
+// opens its drawer (the chrome grows by the drawer's rows), `f` flips
+// "show finished", the search text reaches `props.search`. These cases assert
+// what the mounted module shows — the keyboard focus a click or `j` lands on
+// a tile, the search Input keeping its text across a publish, the fx clocks
+// running and stopping, the spacer and the window — and those effects of its
+// posts; register.test.ts covers every message kind.
 
 import { expect, mock, test } from 'claude-code/testing'
 
@@ -124,13 +124,18 @@ test('DESKTOP (2.4): the pane is one Client; it draws the room head, the tiles a
   const x = 45 - TILE_W + 2
   const y = CHROME_ROWS + 1 + 2
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x, y, button: 'left' })
-  // the click gave the tile the keyboard focus (its head row is highlighted) and posted `open` (Task 2.5's hook opens the drawer)
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])
+  // the click gave the tile the keyboard focus (its head row is highlighted) and posted `open`: the hook opened its drawer
+  const pOpen = await officeProps(ui)
+  expect(pOpen.selected).toBe('lead')
+  expect(pOpen.drawer?.id).toBe('lead')
+  expect(await bgRows(ui, pOpen, FX_BG.focus)).toEqual([1])
   // the chrome is dead: a click on the toolbar row moves no focus
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 2, y: 1, button: 'left' })
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])
-  // toolbar: ☐ is pressable by key (its post is Task 2.5's)
+  expect(await bgRows(ui, pOpen, FX_BG.focus)).toEqual([1])
+  // toolbar: ☐ pressed by key → its post flips the pref → the next props carry it
+  expect(pOpen.prefs.showDone).toBe(false)
   await ui.press({ key: 'showDone' })
+  expect((await officeProps(ui)).prefs.showDone).toBe(true)
   // a newcomer walks in: FX_BG.enter on its tile, the fx clock runs FX_ENTER_MS then stops (no setState loop)
   agents = [...agents, agent({ id: 'n1', persona_id: 5, role: 'index the docs' })]
   await clock.advance(POLL_MS * 4)   // SETTLE
@@ -180,32 +185,42 @@ test('DESKTOP (2.4): keys walk the tiles; the search Input keeps its text across
   const p0 = await officeProps(ui)
   // a click gives the Client the focus (on the lead); `j` walks it tile by tile — into the second block (layout row 7)
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 45 - TILE_W + 2, y: CHROME_ROWS + 1 + 2, button: 'left' })
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])
+  const pSel = await officeProps(ui)                        // the click's `open` opened the lead's drawer (the chrome grew)
+  expect(pSel.selected).toBe('lead')
+  expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([1])
   await ui.key({ in: OFFICE_KEY, key: 'j' })
   await ui.key({ in: OFFICE_KEY, key: 'j' })
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])   // a2: still the first block
+  expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([1])   // a2: still the first block
   await ui.key({ in: OFFICE_KEY, key: 'j' })
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([7])   // a3: the second block
+  expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([7])   // a3: the second block
   await ui.key({ in: OFFICE_KEY, key: 'j' })
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([7])   // clamped at the last tile
+  expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([7])   // clamped at the last tile
   await ui.key({ in: OFFICE_KEY, key: 'k' })
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])
-  await ui.key({ in: OFFICE_KEY, key: 'f' })                // the toolbar's showDone: a post (Task 2.5's), nothing local
-  await ui.key({ in: OFFICE_KEY, key: 'return' })           // open the focused tile: a post (Task 2.5's)
-  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])
+  expect(await bgRows(ui, pSel, FX_BG.focus)).toEqual([1])
+  expect((await officeProps(ui)).selected).toBe('lead')     // j / k post `focus`: the hooks write nothing, the drawer stays
+  await ui.key({ in: OFFICE_KEY, key: 'f' })                // the toolbar's showDone: a post, the pref flips
+  expect((await officeProps(ui)).prefs.showDone).toBe(true)
+  await ui.key({ in: OFFICE_KEY, key: 'up' })               // focus a1 (up from a2) ...
+  await ui.key({ in: OFFICE_KEY, key: 'return' })           // ... and open it: its drawer replaces the lead's
+  expect((await officeProps(ui)).drawer?.id).toBe('a1')
+  await ui.key({ in: OFFICE_KEY, key: 'x' })                // x closes it
+  expect((await officeProps(ui)).drawer).toBeNull()
+  expect(await bgRows(ui, p0, FX_BG.focus)).toEqual([1])    // (no drawer: the chrome is p0's again)
   // typing while a publish lands (a1 moves to Write): the field keeps 'ab' through the redraw and the debounce
   await ui.input({ key: 'search', text: 'ab', kind: 'change' })
   agents = agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
   await clock.advance(POLL_MS * 2)
   expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a1')?.fam).toBe('write')   // the publish redrew the Client
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('ab')
-  await ui.advance(SEARCH_DEBOUNCE_MS)                      // the search post goes out (Task 2.5 echoes it into props.search)
+  expect((await officeProps(ui)).search).toBe('')           // not yet: the module waits SEARCH_DEBOUNCE_MS of quiet
+  await ui.advance(SEARCH_DEBOUNCE_MS)                      // the search post goes out: the hook writes view.search, the pane redraws
+  expect((await officeProps(ui)).search).toBe('ab')
+  expect((await officeProps(ui)).empty?.kind).toBe('nomatch') // nobody matches "ab"
   await ui.advance(SEARCH_DEBOUNCE_MS * 4)
-  expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('ab')
-  expect((await officeProps(ui)).search).toBe('')           // no hook answered: the hooks' search is still empty, the field keeps the text
-  // Enter with an empty field: the module posts at once and keeps '' as its text — drawn as the Input's value on its
-  // next render (a keystroke never redraws: the engine's field is live; here the next publish is that render)
+  expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('ab') // the echo keeps the typed text
+  // Enter with an empty field: the module posts at once and keeps '' as its text; the hook clears view.search
   await ui.input({ key: 'search', text: '', kind: 'submit' })
+  expect((await officeProps(ui)).search).toBe('')
   agents = agents.map(a => (a.id === 'a2' ? { ...a, tool: 'Grep' } : a))
   await clock.advance(POLL_MS * 2)
   expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.fam).toBe('search')
@@ -243,6 +258,9 @@ test('DESKTOP (2.4): the window — a spacer for the rows scrolled past, the row
   expect(kids.length).toBe(chromeElements + 1 + count)
   // a6's tile is the third block (layout rows 13..18), inside the window: the click lands on it (its head row is highlighted)
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 45 - TILE_W + 2, y: chrome + 13 + 2, button: 'left' })
+  expect((await officeProps(ui)).selected).toBe('a6')          // the click's `open` reached the hooks: a6's drawer
+  await ui.press({ key: 'close' })                              // closed again: the chrome is the window's three lines
+  expect((await officeProps(ui)).drawer).toBeNull()
   expect(await bgRows(ui, p, FX_BG.focus)).toEqual([13])
   // a hover over a7 (the second tile of the same block, one tile to the left in RTL) highlights its head row — the
   // same row as the focus, another colour; leaving clears it. (A tile above the window, in the spacer, draws nothing.)

@@ -183,6 +183,15 @@ export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | nul
 /**
  * The desktop office's fallback switch: while `clientFailed` the desktop draws
  * the text cards instead of the office Client. Set by register.tsx on a
- * `ui.fault` of the office module (Task 2.5); read by ui.tsx's render.
+ * `ui.fault` of the office module, cleared by /theater (the Client is tried
+ * again); read by ui.tsx's render. Module memory: a hot reload clears it too.
  */
 export const DESKTOP = { clientFailed: false }
+
+/**
+ * THE REDRAW LATCH: a change the pane must show that is not a $.state write (a
+ * room's "show finished" override lives in $.store) redraws it through
+ * `$.ui.invalidate`, at most once per this many ms whoever asks (ui.tsx
+ * requestRedraw), so a burst of clicks is one redraw.
+ */
+export const REDRAW_LATCH_MS = 100

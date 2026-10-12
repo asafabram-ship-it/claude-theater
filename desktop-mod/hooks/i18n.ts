@@ -32,7 +32,7 @@ export type Strings = {
   scSearch: string; scFinished: string; scMove: string; scOpen: string; scClose: string
   scMute: string; scLang: string; scDemo: string; scHelp: string; scPrev: string; scNext: string
   resultTruncated: string; searchPlaceholder: string; emptyNoMatch: string
-  mute: string; unmute: string; finishedToast: string
+  mute: string; unmute: string; finishedToast: string; officeFailed: string
   srResults: (n: number) => string; srNoMatch: string; srCleared: string; pin: string; unpin: string
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
@@ -59,6 +59,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     resultTruncated: 'Result shortened — open the terminal for the full output',
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
     mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished',
+    officeFailed: 'the office could not be drawn; showing the cards (/theater to retry)',
     srResults: n => `${n} agent${n === 1 ? '' : 's'} match`, srNoMatch: 'No agents match', srCleared: 'Search cleared',
     pin: 'Pin to top', unpin: 'Unpin',
     emptyNoActive: 'No active agents. Tick "Show finished" to see history.',
@@ -87,6 +88,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש.',
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',
+    officeFailed: 'לא ניתן היה לצייר את המשרד; מוצגים כרטיסים (/theater לניסיון נוסף)',
     srResults: n => `${n} סוכנים תואמים`, srNoMatch: 'אין סוכנים תואמים', srCleared: 'החיפוש נוקה',
     pin: 'נעץ למעלה', unpin: 'בטל נעיצה',
     emptyNoActive: 'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',

@@ -179,7 +179,8 @@ test('bounds: 100 agents in 10 rooms at 45 and 200 columns stay small', () => {
   }
 })
 
-test('sweep: 100 agents at every width 24..200 — rows fit the columns, hits stay inside, a 40-row window is under the tree limits', () => {
+// (CPU-bound: 354 layouts of 100 agents; ~5-7 s while the other test files run beside it, so it gets the limits test's budget)
+test('sweep: 100 agents at every width 24..200 — rows fit the columns, hits stay inside, a 40-row window is under the tree limits', { timeoutMs: 30_000 }, () => {
   const rooms = tenByTen()
   for (let columns = 24; columns <= 200; columns++) {
     for (const rtl of [true, false]) {

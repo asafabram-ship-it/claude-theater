@@ -71,7 +71,12 @@
 //   tool.call       in a live agent's loop: liveToolStarted / liveToolReturned;
 //                   the main loop's Agent (or Task, the older alias) call:
 //                   liveAgentReturned (its result).
-//   command.run     /theater → $.ui.open (always, asked by the person).
+//   command.run     /theater → $.ui.open (always, asked by the person); clears
+//                   DESKTOP.clientFailed first, so a failed office Client is tried again.
+//   ui.fault        the desktop office Client (OFFICE_KEY) failed → DESKTOP.clientFailed:
+//                   the desktop pane draws the text cards; one toast; a redraw.
+//   (ui.message     the office Client's posts: ui.tsx registerUi, beside the press
+//                   handlers it shares with the text cards.)
 // Every hook: wrapped in try/catch AND `.catch` so the office never blocks Claude.
 // An event is hooked at most ONCE without a matcher per module (validate rule),
 // which is why the agent.spawn and tool.call hooks are here and live.ts is pure.
@@ -81,7 +86,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { I18N } from './i18n'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
-import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs, type TheaterStatus } from './model'
+import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, type Payload, type Prefs, type TheaterStatus } from './model'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
 import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
 
@@ -478,6 +483,15 @@ export const register: Register = on => {
 
   on('command.run', { command: 'theater' }, async $ => {
     try {
+      // the person asks for the office again: a desktop office Client that failed (ui.fault below) is tried again
+      if (DESKTOP.clientFailed) {
+        DESKTOP.clientFailed = false
+        try {
+          $.ui.invalidate('ui.render')
+        } catch {
+          // nothing draws the pane now: its next draw is the Client's
+        }
+      }
       ensurePolling($)
       await openPane($)
       const prefs = await read($, prefsAtom)
@@ -485,6 +499,27 @@ export const register: Register = on => {
     } catch (err) {
       return { text: `agent-theater: ${err instanceof Error ? err.message : String(err)}` }
     }
+  }).catch(($, e, next) => next(e))
+
+  // THE OFFICE'S FALLBACK (spec §5): the desktop office Client (key OFFICE_KEY, office-client.tsx) failed — its
+  // module did not load, its drawing failed, or its code threw after it drew. From now on the desktop pane draws
+  // the text cards (DESKTOP.clientFailed, read by ui.tsx's render) and the person is told ONCE; /theater (above)
+  // clears the flag and the Client is tried again. Observe only: core answers `{}`. The engine redraws the site
+  // itself after a fault; the invalidate is for a fault it would not redraw for (a Client born in that redraw).
+  // `e.reason` is the surface's untrusted text: logged to the debug log, never parsed.
+  on('ui.fault', { element: 'office' }, async ($, e, next) => { // OFFICE_KEY, as a literal: validate reads a matcher statically
+    try {
+      if (!DESKTOP.clientFailed) {
+        DESKTOP.clientFailed = true
+        $.ui.log(`office Client failed (${e.phase}): ${e.reason}`, { to: 'debug' })
+        const prefs = await read($, prefsAtom)
+        $.ui.toast(`🎭 ${I18N[prefs.lang].officeFailed}`)
+        $.ui.invalidate('ui.render')
+      }
+    } catch {
+      // the flag is set: the redraw after the fault draws the cards
+    }
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   // A subagent started: record it (after next, when agentId/model are known)

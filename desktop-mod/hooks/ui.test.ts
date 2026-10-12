@@ -8,7 +8,7 @@
 // (and drawn on mobile/vscode, which lack Input / Client).
 
 import type { Agent, Payload, View } from './model'
-import { DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
+import { DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS, RUNNING_STALE_SEC } from './model'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { SETTLE_MS } from './register'
@@ -23,9 +23,9 @@ import {
   splitSentence, starsOf,
 } from './ui'
 import { ROOM_COLS, ROW_H, ROW_H_TITLED, roomWidth } from './office-svg'
-import { officeHeight } from './office-chrome'
+import { chromeRows, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
-import { layoutOffice } from './office-layout'
+import { layoutOffice, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 
@@ -238,18 +238,16 @@ async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Pro
 const SVG_DESKTOP = false
 
 /**
- * A press on the pane while it is mounted on the DESKTOP: the desktop pane is the office Client,
- * whose Buttons and tiles POST their messages (`ui.message`) — the hook that turns a post into the
- * prefs / view write is Task 2.5's. Until then a press reaches the same handlers through the text
- * cards of a terminal drawing of the pane, mounted for the press alone. (Its draw starts the text
- * surfaces' tick for TEXT_SURFACE_TTL_MS — two polls — which redraws nothing once it is unmounted:
- * the desktop never reads the tick.) Task 2.5 replaces these with `ui.press({ key })` on the Client
- * and `ui.pointer` on its tiles.
+ * DESKTOP (the Client office): a left click inside the office Client on the layout hit `kind`/`id` — a
+ * tile (`open`), a room head's pin (`pin`) or its ✅ counts (`roomDone`) — where the module draws it:
+ * the module hit-tests it and POSTS the message, the plugin's `ui.message` hook (ui.tsx) applies it.
+ * (A toolbar Button of the module is pressed by its key: `ui.press({ key })`.)
  */
-async function pressVia($: { ui: { mount(target: typeof PANE & { surface: 'terminal' }): Promise<{ press(target: { key: string }): Promise<unknown>; unmount(): Promise<void> }> } }, key: string): Promise<void> {
-  const t = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await t.press({ key })
-  await t.unmount()
+async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Record<string, unknown> } | undefined>; pointer: (ev: { in?: string; type: 'down'; x: number; y: number; button: 'left' }) => Promise<void> }, kind: Hit['kind'], id: string): Promise<void> {
+  const p = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
+  const hit = layoutOffice(p).hits.find(h => h.kind === kind && h.id === id)
+  expect(hit).toBeDefined()
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
 }
 
 /** DESKTOP (the Client office): whether the module draws the finish hop (the FX_BG.done / doneAlt pulse on a tile's head row). */
@@ -591,7 +589,7 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
-  // (the terminal alone: the desktop's presses are the office Client's posts, which Task 2.5 wires and tests)
+  // (the terminal alone: the desktop's presses are the office Client's posts — register.test.ts)
   for (const surface of ['terminal'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     // show finished → a2 appears, mirrored to the store
@@ -719,10 +717,10 @@ async function cardOf(ui: { find: (q: { type: string }) => Promise<{ props: Reco
   return (await officePropsOf(ui))?.rooms.flatMap(r => r.agents).find(a => a.id === id)
 }
 
-// (The text FALLBACK — `DESKTOP.clientFailed` in model.ts, read by the render — is set only by a plugin hook on a
-// `ui.fault` of the office module, Task 2.5's; a test file's import of `DESKTOP` is another module instance than
-// the plugin bundle's, so a test cannot flip it from outside. Task 2.5's `$.ui.fault(...)` test covers that branch:
-// no Client, the text cards' `open:a1` back.)
+// (The text FALLBACK — `DESKTOP.clientFailed` in model.ts, read by the render — is set only by the plugin's hook on a
+// `ui.fault` of the office module (register.tsx); a test file's import of `DESKTOP` is another module instance than
+// the plugin bundle's, so a test cannot flip it from outside. register.test.ts drives a real fault of the module:
+// no Client, the text cards' `open:a1` back, and `/theater` brings the Client again.)
 test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON props v1, the engine\'s scroll window, the full content height), no Svg; a republish of the same office hands it the same props; a resize follows the width', async ($, on) => {
   const agents = fixture()
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
@@ -987,7 +985,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   // ONE PUBLISH PER POLL: a finish is ONE write that redraws — the ⭐ rides the payload (`stars`), nothing writes
   // `view` (no deferred beat), and the retitle (2 → 1 working) goes out in the same tick BEFORE the write.
   // (A finish is celebrated only on a card the office shows: finished shown first — a press, one redraw.)
-  await pressVia($, 'showDone')
+  await ui.press({ key: 'showDone' }) // the office Client's toolbar Button: its post → the pref
   const writes1 = { ...captured.writes }
   const opens1 = captured.opens.length
   const desktop2 = renders()
@@ -1018,11 +1016,11 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect((await cardOf(ui, 'q1'))?.star).toBeGreaterThan(0)
   // a redraw inside the window (the help popover, opened and closed: two view writes, two redraws, no
   // publish) keeps the ⭐ (static) and replays no hop — the stamp did not change, so the module starts no fx
-  await pressVia($, 'help')
+  await ui.press({ key: 'help' })
   expect((await officePropsOf(ui))?.helpOpen).toBe(true)
   expect((await cardOf(ui, 'q1'))?.star).toBeGreaterThan(0)
   expect(await hopShown(ui)).toBe(false)
-  await pressVia($, 'help')
+  await ui.press({ key: 'help' })
   expect((await officePropsOf(ui))?.helpOpen).toBe(false)
   expect(captured.writes.payload).toBe(writes1.payload + 1)
   expect(captured.writes.view).toBe(writes1.view + 2)
@@ -1052,13 +1050,13 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect(captured.writes.payload).toBe(1)
   expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 התיאטרון')
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  // (the desktop pane is the office Client: room 2's head carries its pin and its ✅ toggle as pointer hits, the
-  // drawer is `props.drawer`; until Task 2.5 wires the Client's posts the presses below go through `pressVia`)
+  // (the desktop pane is the office Client: room 2's head carries its pin and its ✅ toggle as pointer hits, a tile
+  // opens the drawer (`props.drawer`) — each a click inside the Client, posted to the plugin's `ui.message` hook)
   expect((await officePropsOf(ui))?.rooms.find(r => r.id === QSESS2)).toMatchObject({ done: 1, pinned: false })
   // (1) the drawer open on q1, then q1's transcript ages out of the office: the next structure publish
   //     resets the selection — ONE extra view write, after the payload write, in the same tick — and the
   //     drawer is closed; no prefs / store write (no room vanished)
-  await pressVia($, 'open:q1')
+  await clickIn(ui, 'agent', 'q1')
   expect((await officePropsOf(ui))?.drawer?.id).toBe('q1')
   expect(captured.view?.selected).toBe('q1')
   const w1 = { ...captured.writes }
@@ -1087,8 +1085,9 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   // (2) room 2 pinned and its "show finished" overridden, then the whole room ages out: the next structure
   //     publish drops the pin (one prefs write + its store mirror) and the override (one store write), after
   //     the payload write in the same tick; no view write (nothing selected)
-  await pressVia($, 'pin:' + QSESS2)
-  await pressVia($, 'rdone:' + QSESS2)
+  await clickIn(ui, 'pin', QSESS2)
+  await clickIn(ui, 'roomDone', QSESS2)
+  await clock.advance(REDRAW_LATCH_MS) // the override lives in $.store: the pane is redrawn by the redraw latch
   expect((await officePropsOf(ui))?.rooms.find(r => r.id === QSESS2)).toMatchObject({ pinned: true, showDone: true })
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS2])
   expect(captured.store.roomDone).toEqual({ [QSESS2]: true })
@@ -1116,20 +1115,20 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect(captured.prefsReads).toBe(reads4)
   // the render's own copy of the overrides followed the prune: a toggle on room 1 writes room 1 alone
   // (a stale copy would resurrect room 2's pruned entry)
-  await pressVia($, 'rdone:' + QSESS)
+  await clickIn(ui, 'roomDone', QSESS)
   expect(captured.store.roomDone).toEqual({ [QSESS]: true })
   // (4) never in the demo, never on an empty office: room 1 pinned, then the demo cast (other rooms) and an
   //     office with no agent at all are published — the pin and the override stay
-  await pressVia($, 'pin:' + QSESS)
+  await clickIn(ui, 'pin', QSESS)
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS])
   const w5 = { ...captured.writes }
   const s5 = { ...captured.storeWrites }
-  await pressVia($, 'demo')
+  await ui.press({ key: 'demo' })
   await clock.advance(POLL_MS)
   expect(captured.payload?.demo).toBe(true)
   expect((await officePropsOf(ui))?.demo).toBe(true)
   expect(captured.writes.payload).toBeGreaterThan(w5.payload)
-  await pressVia($, 'demo')
+  await ui.press({ key: 'demo' })
   ageOut(files, `${QPROJ}/${QSESS}.jsonl`, clock.now())
   ageOut(files, Q2, clock.now())
   await clock.advance(POLL_MS)
@@ -1286,15 +1285,21 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   await term.unmount()
 })
 
-test('DESKTOP 🎞/🖼: the still toggle is the office Client\'s toolbar Button (the pref reaches the module as props.prefs.still); desktop only', async ($, on) => {
-  const { clock } = beneath(on, () => fixture(), { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+test('DESKTOP 🎞/🖼: the still toggle is the office Client\'s toolbar Button (its post writes prefs.still, which reaches the module as props.prefs.still); desktop only', async ($, on) => {
+  const { captured, clock } = beneath(on, () => fixture(), { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  // (its press posts `still`, which Task 2.5 turns into the pref; here the Button and the flag it draws from)
   expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('🎞')
   expect((await officePropsOf(ui))?.prefs.still).toBe(false)
   expect(await ui.find({ key: 'still' })).toBeUndefined() // not in the plugin's own tree: the toggle is the Client's
+  // its press posts `still`: the hook writes the pref (+ its store mirror), the next props carry it, the Button draws 🖼
+  await ui.press({ key: 'still' })
+  expect((await officePropsOf(ui))?.prefs.still).toBe(true)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('🖼')
+  expect((captured.store.prefs as { still?: boolean }).still).toBe(true)
+  await ui.press({ key: 'still' })
+  expect((await officePropsOf(ui))?.prefs.still).toBe(false)
   await ui.unmount()
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
   expect(await term.find({ key: 'still' })).toBeUndefined()

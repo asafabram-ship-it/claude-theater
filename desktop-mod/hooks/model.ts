@@ -172,6 +172,7 @@ export const STORE_PREFS_KEY = 'prefs'
  * $.store key of the last five-hour usage toast, `{ resetsAt, at }` (usage.ts ToastMark): the window it was
  * for and the threshold (80 | 95) it reached. Kept across sessions and hot reloads so a window toasts each
  * threshold once, whichever conversation sees it first; written by register.tsx only when a toast fires.
+ * `resetsAt` is never '' here: a window reported without a reset time is never toasted.
  */
 export const STORE_USAGE_TOAST_KEY = 'usageToast'
 
@@ -186,8 +187,10 @@ export const STORE_USAGE_TOAST_KEY = 'usageToast'
  * no subscription, before the first reading). Written by register.tsx alone (the
  * first reading at session.start, then session.measure), which also puts the
  * footer label ($.ui.status) up and redraws the pane when it changes; ui.tsx
- * reads it on every draw. Module memory, never $.state: a hot reload empties it
- * until the next measurement.
+ * reads it on every draw. Module memory, never $.state: a reload of the module
+ * empties it, and the session.start that fresh load fires again refills it at
+ * once from the engine's last reading ($.session.usage(), which outlives the
+ * module). Only what is drawn counts as a change: the rounded percent, the reset.
  */
 export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | null }
 

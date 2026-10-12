@@ -81,15 +81,19 @@ test('usageLabel: one short line — no newline, no bidi controls, same text in 
 
 // --- The pure pieces the hooks use: the comparison, the thresholds, the toast mark, the reset clock.
 
-test('sameFiveHour: the percentage to one decimal and the window; null equals null only', () => {
+test('sameFiveHour: what is drawn — the rounded percent and the window; null equals null only', () => {
   const R = '2026-10-10T11:30:00Z'
   expect(sameFiveHour(null, null)).toBe(true)
   expect(sameFiveHour(null, { pct: 0, resetsAt: R })).toBe(false)
   expect(sameFiveHour({ pct: 0, resetsAt: R }, null)).toBe(false)
-  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.0, resetsAt: R })).toBe(true)
-  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.04, resetsAt: R })).toBe(true)
-  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.1, resetsAt: R })).toBe(false)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.4, resetsAt: R })).toBe(true)
+  expect(sameFiveHour({ pct: 42.4, resetsAt: R }, { pct: 41.6, resetsAt: R })).toBe(true)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42.5, resetsAt: R })).toBe(false)
+  expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 43, resetsAt: R })).toBe(false)
   expect(sameFiveHour({ pct: 42, resetsAt: R }, { pct: 42, resetsAt: '2026-10-10T16:30:00Z' })).toBe(false)
+  // ... because the label is a function of exactly that: the same rounded percent draws the same bar too
+  expect(usageLabel({ pct: 44.6, resetsAt: R }, 'he', 0)).toBe(usageLabel({ pct: 45, resetsAt: R }, 'he', 0))
+  expect(usageLabel({ pct: 44.6, resetsAt: '' }, 'en', 0)).toBe('⏳ 5h ▰▰▰▰▰▱▱▱▱▱ 45%')
 })
 
 test('usageThreshold: 95, 80 or 0 on the rounded percent', () => {
@@ -123,7 +127,8 @@ test('resetClock: the local HH:MM of the reset, empty when there is none', () =>
 // mocked clock, the in-memory $.store, the toasts); usageBeneath adds what the kit does not answer:
 // $.session.usage (the reading session.start asks for) and taps on $.ui.status and $.ui.invalidate. What
 // the hooks keep in module memory (USAGE, the last line, the last toast) outlives a test inside the plugin's
-// bundle, so each test draws its own windows (resetsAt) and ends on a reading without a five_hour window.
+// bundle, so no two tests share a window (resetsAt: 13:20 / 09:00 / 14:30, 19:30, 23:45 / 11:15, 16:15 /
+// 10:10 / 08:50 and none / 12:40) and each ends on a reading without a five_hour window.
 
 const START = { cwd: 'C:/x', surface: 'desktop', isInteractive: true } as const
 const CONTEXT = { tokens: 1, window: 200_000, percent: 0 }
@@ -173,17 +178,17 @@ test('session.measure: the footer line ($.ui.status) is the five-hour label, and
   await $.session.start(START)
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount(PANE)
-  const R = local(14, 30)
+  const R = local(13, 20)
   const s0 = seen.statuses.length
   const i0 = seen.invalidates
   await measure($, limits(42, R))
-  expect(seen.statuses.slice(s0)).toEqual(['⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30'])
+  expect(seen.statuses.slice(s0)).toEqual(['⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 13:20'])
   expect(seen.statuses.at(-1)).toBe(usageLabel({ pct: 42, resetsAt: R }, 'he', 0))
   expect(seen.invalidates - i0).toBe(1)
   expect(await usageProp(ui)).toEqual({ pct: 42, resetsAt: R })
   // the window moved: a new line, a new redraw (⚠ from 80)
   await measure($, limits(80.4, R))
-  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▱▱ 80% · 14:30')
+  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▱▱ 80% · 13:20')
   expect(seen.invalidates - i0).toBe(2)
   expect(await usageProp(ui)).toEqual({ pct: 80.4, resetsAt: R })
   await measure($, []) // (leave no reading behind)
@@ -264,7 +269,7 @@ test('toasts: once per window when the rounded percent reaches 80, once more at 
   await measure($, [])
 })
 
-test('the first reading at session.start: the line at once; a toast only when this window was never toasted (a new conversation, a hot reload)', async ($, on) => {
+test('the first reading at session.start (a new conversation, or a reload of the module: session.start fires on every fresh load): the line at once; a toast only when this window was never toasted', async ($, on) => {
   // another conversation already toasted the 80 of window R1 (the $.store mark outlives it)
   const R1 = local(11, 15)
   const { captured } = beneath(on, () => [], { ...prefs('en'), usageToast: { resetsAt: R1, at: 80 } })
@@ -292,7 +297,7 @@ test('the first reading at session.start: the line at once; a toast only when th
   await measure($, [])
 })
 
-test('an unchanged reading does nothing: no line, no redraw, no store, no state; a measure of the context alone is not read', async ($, on) => {
+test('a reading that draws the same does nothing, whatever the measurement says changed: no line, no redraw, no store, no state; a new rounded percent is one redraw and one line', async ($, on) => {
   const { captured, clock } = beneath(on, () => [], prefs('he'))
   const seen = usageBeneath(on)
   await $.session.start(START)
@@ -304,26 +309,47 @@ test('an unchanged reading does nothing: no line, no redraw, no store, no state;
   const w0 = JSON.stringify(captured.writes)
   const sw0 = JSON.stringify(captured.storeWrites)
   const p0 = captured.prefsReads
+  // the same reading; moves the person cannot see (42.4, 41.6: still 42%); the seven_day window moving;
+  // measurements of the context or the cost alone
   await measure($, limits(42, R))
-  await measure($, limits(42.0, R), ['rateLimits', 'context'])
-  // the seven_day window moved (rateLimits changed), the five-hour one did not
-  await measure($, [{ kind: 'seven_day', percentUsed: 13, resetsAt: '2026-10-15T00:00:00Z' }, { kind: 'five_hour', percentUsed: 42, resetsAt: R }])
-  // only the context moved: the rate limits are not read at all (even if they differ)
-  await measure($, limits(50, R), ['context'])
-  await measure($, limits(50, R), ['cost'])
+  await measure($, limits(42.4, R), ['context'])
+  await measure($, limits(41.6, R), ['rateLimits', 'context'])
+  await measure($, [{ kind: 'seven_day', percentUsed: 13, resetsAt: '2026-10-15T00:00:00Z' }, { kind: 'five_hour', percentUsed: 42.2, resetsAt: R }])
+  await measure($, limits(42, R), ['cost'])
   expect(seen.statuses.length, 'status calls').toBe(s0)
   expect(seen.invalidates, 'redraw requests').toBe(i0)
   expect(JSON.stringify(captured.writes), '$.state writes').toBe(w0)
   expect(JSON.stringify(captured.storeWrites), '$.store writes').toBe(sw0)
   expect(captured.prefsReads, 'prefs reads').toBe(p0)
-  // one decimal is a new reading: the pane is redrawn (its header gets the new USAGE), while the line,
-  // whose text rounds to the same 42%, is not set again
-  await measure($, limits(42.1, R))
+  // a new rounded percent is read whatever `changed` names: one redraw, one line
+  await measure($, limits(43, R), ['context'])
   expect(seen.invalidates, 'redraw requests').toBe(i0 + 1)
-  expect(seen.statuses.length, 'status calls').toBe(s0)
-  await measure($, limits(43, R))
-  expect(seen.invalidates, 'redraw requests').toBe(i0 + 2)
-  expect(seen.statuses.length, 'status calls').toBe(s0 + 1)
+  expect(seen.statuses.slice(s0)).toEqual(['⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 43% · 10:10'])
+  await measure($, [])
+})
+
+test('a window reported without a reset time is never toasted (no store read or write) — the ⚠ label still warns — and a window with one toasts as usual', async ($, on) => {
+  let markReads = 0
+  // (beneath the plugin, above the kit's in-memory store: the reads of the toast mark)
+  on('store.get', { key: 'usageToast' }, ($, e, next) => { markReads += 1; return next(e) })
+  const { captured } = beneath(on, () => [], prefs('he'))
+  const seen = usageBeneath(on)
+  await $.session.start(START)
+  const noReset = (pct: number): SessionRateLimit[] => [{ kind: 'five_hour', percentUsed: pct }]
+  await measure($, noReset(85))
+  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85%')
+  await measure($, noReset(97))
+  expect(seen.statuses.at(-1)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▰▰ 97%')
+  expect(captured.toasts).toEqual([])
+  expect(markReads).toBe(0)
+  expect(captured.storeWrites.usageToast).toBeUndefined()
+  expect(captured.store.usageToast).toBeUndefined()
+  // a window with a reset time: its 80 toasts (nothing was ever keyed '')
+  const R = local(8, 50)
+  await measure($, limits(85, R))
+  expect(captured.toasts).toEqual(['מכסת 5 השעות: 85% · איפוס 08:50'])
+  expect(markReads).toBe(1)
+  expect(captured.store.usageToast).toEqual({ resetsAt: R, at: 80 })
   await measure($, [])
 })
 
@@ -335,8 +361,8 @@ test('SessionMode: the plugin adds no label there — the terminal and the deskt
     return Text({ children: [e.props.modes.join(' & ')] })
   })
   await $.session.start(START)
-  await measure($, limits(42, local(14, 30)))
-  expect(seen.statuses.at(-1)).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30')
+  await measure($, limits(42, local(12, 40)))
+  expect(seen.statuses.at(-1)).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 12:40')
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'agent-theater', component: 'SessionMode', requestId: 'session-mode', surface, props: { modes: ['focus'] } })
     expect((await ui.find({ type: 'Text' }))?.text).toBe('focus')

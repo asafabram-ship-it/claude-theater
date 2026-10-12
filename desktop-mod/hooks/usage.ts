@@ -27,23 +27,28 @@ export function resetClock(resetsAt: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** `⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30` — the reset hour in the machine's local time; `⚠` from 80%. */
+/**
+ * `⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30` — the reset hour in the machine's local time; `⚠` from 80%.
+ * Everything in it follows the ROUNDED percent (the bar too), so the label is a function of what
+ * sameFiveHour compares: 44.6 and 45 draw the same `45%` and the same bar.
+ */
 export function usageLabel(u: FiveHour, _lang: 'he' | 'en', _now: number): string {
   const pct = Math.round(u.pct)
   const head = pct >= 80 ? '⚠' : '⏳'
   const clock = resetClock(u.resetsAt)
   const when = clock ? ` · ${clock}` : ''
-  return `${head} 5h ${usageBar(u.pct)} ${pct}%${when}`
+  return `${head} 5h ${usageBar(pct)} ${pct}%${when}`
 }
 
 /**
- * Is `b` the same reading as `a`, as far as anything drawn goes? The percentage
- * to one decimal (the engine's own precision) and the window (`resetsAt`);
- * null (no five_hour window) equals null only.
+ * Is `b` the same reading as `a`, as far as anything drawn goes? The rounded
+ * percent (the label, its bar and the office header all draw that) and the
+ * window (`resetsAt`); null (no five_hour window) equals null only. A move the
+ * person cannot see (42 → 42.4) is no change: no line, no redraw.
  */
 export function sameFiveHour(a: FiveHour | null, b: FiveHour | null): boolean {
   if (a === null || b === null) return a === b
-  return Math.round(a.pct * 10) === Math.round(b.pct * 10) && a.resetsAt === b.resetsAt
+  return Math.round(a.pct) === Math.round(b.pct) && a.resetsAt === b.resetsAt
 }
 
 /** The toast thresholds, by the rounded percent (the label's `⚠` starts at the first). */

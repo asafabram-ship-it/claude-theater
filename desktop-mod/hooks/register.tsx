@@ -20,14 +20,16 @@
 //                   (nothing answers it in a test harness, or a name clash)
 //                   never stops the office from scanning.
 //   session.measure THE FIVE-HOUR METER (spec §2 item 12): the engine pushes its
-//                   usage after each turn; when the five_hour rate-limit window
-//                   changed, USAGE (model.ts) takes it, the footer line follows
+//                   usage after each turn; when what the meter draws changed
+//                   (the five_hour window's rounded percent, its reset time),
+//                   USAGE (model.ts) takes it, the footer line follows
 //                   ($.ui.status — the desktop draws it on its footer, the
 //                   terminal under the prompt; no SessionMode label: one label
 //                   per surface), the pane is redrawn (its header draws USAGE)
 //                   and a toast fires at 80% and at 95%, once per window (the
-//                   mark in $.store 'usageToast'). No $.state write; an
-//                   unchanged reading does nothing at all.
+//                   mark in $.store 'usageToast'; a window without a reset
+//                   time never toasts). No $.state write; an unchanged reading
+//                   does nothing at all.
 //   poll            while the pane is up: scanAll(scanIo($)) → liveAged
 //                   ($.agent.list()) → mergeLive → cleanOffice (THE TEXT GATE:
 //                   every agent text freed of what a surface refuses, once, here;
@@ -518,12 +520,6 @@ function ensurePolling($: EngineInterface, restart = false): void {
 // an unchanged reading must cost nothing (no line, no redraw, no store).
 // ---------------------------------------------------------------------------
 
-/**
- * True once this environment took a reading (session.start's, or a measurement's). Until then a
- * measurement is read whatever its `changed` says: a hot reload empties the module (USAGE back to
- * null) and session.start does not fire again.
- */
-let usageRead = false
 /** The text last handed to $.ui.status; null until this environment set one (so its first call always goes out, clearing a label an earlier environment left). */
 let statusText: string | undefined | null = null
 /** The last toast this environment made or found in $.store (the store holds it across environments; this closes the gap between a store read and its write). */
@@ -540,13 +536,20 @@ function setStatus($: EngineInterface, text: string | undefined): void {
   }
 }
 
-/** The 80 / 95 toast for this reading: once per window per threshold, the higher one only on a jump past both. Never rejects. */
+/**
+ * The 80 / 95 toast for this reading: once per window per threshold, the higher one only on a jump past
+ * both. A window is known by its `resetsAt`; one reported without it is never toasted (every such window
+ * would share the key '' — "once per window" would become "once ever" — and a window seen once without it
+ * and later with it would toast the same threshold twice): no store read or write, the label's `⚠` still
+ * warns. Never rejects.
+ */
 async function usageToast($: EngineInterface, u: FiveHour, lang: Prefs['lang']): Promise<void> {
+  if (u.resetsAt === '') return
   const at = usageThreshold(u.pct)
   if (at === 0 || !toastDue(toastMark, u.resetsAt, at)) return
   const stored = parseToastMark(await $.store.get(STORE_USAGE_TOAST_KEY).catch(() => undefined))
   if (!toastDue(stored, u.resetsAt, at)) {
-    toastMark = stored // another conversation (or this one before a reload) toasted this window already
+    toastMark = stored // another conversation (or this one before a reload of the module) toasted this window already
     return
   }
   if (!toastDue(toastMark, u.resetsAt, at)) return // a reading that landed during the store read toasted it
@@ -560,11 +563,11 @@ async function usageToast($: EngineInterface, u: FiveHour, lang: Prefs['lang']):
 }
 
 /**
- * Takes one five-hour reading (null: no five_hour window). A reading equal to the last (usage.ts
- * sameFiveHour: the percent to one decimal, the window) does nothing, unless `first` (a session's or this
- * environment's first reading: the line is set and the toast checked even then). A new one: USAGE takes
- * it, the pane is redrawn once (its header draws USAGE), the line follows (cleared without a reading) and
- * the toast check runs. `lang` when the caller holds the prefs (session.start); else read here, only for a
+ * Takes one five-hour reading (null: no five_hour window). A reading equal to the last as drawn (usage.ts
+ * sameFiveHour: the rounded percent, the window) does nothing, unless `first` (session.start's reading:
+ * the line is set and the toast checked even then). A new one: USAGE takes it, the pane is redrawn once
+ * (its header draws USAGE), the line follows (cleared without a reading) and the toast check runs.
+ * `lang` when the caller holds the prefs (session.start); else read here, only for a
  * reading to show. Never rejects.
  */
 async function takeUsage($: EngineInterface, u: FiveHour | null, first: boolean, lang?: Prefs['lang']): Promise<void> {
@@ -639,29 +642,26 @@ export const register: Register = on => {
     ensurePolling($, true)
     // THE FIVE-HOUR METER's first reading (session.measure keeps it after; the poll is already started, so a
     // slow reading never holds the office back): the line at once, the toast if this window never had one;
-    // no five_hour window — or no reading at all — clears the line
+    // no five_hour window — or no reading at all — clears the line. session.start fires again on a fresh load
+    // of this module (a reload), and $.session.usage() answers the engine's last reading, which outlives the
+    // module: a reload refills the meter here, at once.
     let fiveHour: FiveHour | null = null
     try {
       fiveHour = pickFiveHour((await $.session.usage()).rateLimits)
-      usageRead = true
     } catch {
-      usageRead = false // the next measurement is read whatever it says changed
+      // no reading on this host: no meter until a measurement brings one
     }
     await takeUsage($, fiveHour, true, prefs.lang)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   // THE FIVE-HOUR METER: the engine's measurement after each main-thread turn (and when a rate-limit window
-  // moves a whole point). Read only when the rate limits are among what changed, or nothing was read yet in
-  // this environment; an unchanged five-hour reading then does nothing (takeUsage). Observe: next(e) as is.
+  // moves a whole point). Every measurement carries the rate limits and is read, whatever `changed` names;
+  // a five-hour reading that draws the same (takeUsage: the rounded percent, the window) does nothing at
+  // all — no line, no redraw, no store. Observe: next(e) as is.
   on('session.measure', async ($, e, next) => {
     try {
-      if (!usageRead || (Array.isArray(e.changed) && e.changed.includes('rateLimits'))) {
-        const first = !usageRead
-        const fiveHour = pickFiveHour(e.rateLimits ?? [])
-        usageRead = true
-        await takeUsage($, fiveHour, first)
-      }
+      await takeUsage($, pickFiveHour(e.rateLimits ?? []), false)
     } catch {
       // decoration: never blocks the measurement
     }

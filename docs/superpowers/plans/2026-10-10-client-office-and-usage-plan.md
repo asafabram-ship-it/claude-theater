@@ -1392,6 +1392,18 @@ Hooks:
 - [ ] **Step 2: Implement** in `tile(...)` (three `if`s), and in the module compute `entering` progress as `1 - left / FX_ENTER_MS`; the layout memo key appends `JSON.stringify([hover, [...hop], [...entering])`. Remove the status line of Task 2.3.
 - [ ] **Step 3:** validate + test + tsc. Commit `feat(mod): tile walk-in, hop and hover inside the office rows`.
 
+### Task 2.7b: Sanitize agent text where it enters the payload
+
+Added 2026-10-12 after Task 2.7's review (risk confirmed real). Agent text comes from transcripts unsanitized: `scanner.ts` (`task` = the transcript's first text, `role` = the parent's description, `result` = the last text) and `live.ts` (`a.description`, `spawn.prompt`). `shortTask` only collapses `\s`. The engine refuses control characters in a Text string except tab and newline, and the desktop refuses bidi controls; one ANSI colour code (`\x1b[…m`) or a pasted RLM in a prompt or result therefore refuses the WHOLE pane — the text cards' Button labels on every surface, and the Client faults into those same refused cards.
+
+**Files:**
+- Modify: `desktop-mod/hooks/register.tsx` (the poll, after `mergeLive`, before `renderKey` / `$.state`), or `scanner.ts` + `live.ts` at agent construction — one choke point, whichever covers every agent text field with one call; a pure `cleanAgentText` helper in a pure module (e.g. `model.ts` or `office-chrome.ts`, reusing the search-strip character set from Task 2.7 so there is ONE definition of "characters the surfaces refuse").
+- Test: `desktop-mod/hooks/register.test.ts` or `ui.test.ts` (kit), plus a pure unit test.
+
+- [ ] **Step 1: Failing tests.** (a) Pure: `cleanAgentText` turns `\x1b[31mred\x1b[0m` into `red` (strip CSI sequences whole, not just the ESC), other C0/C1 controls into a space, removes U+061C/U+200E/U+200F/U+202A–U+202E/U+2066–U+2069, keeps `\n`/`\t` only for fields drawn multi-line (task, result) and turns them into spaces elsewhere, keeps Hebrew, emoji, ZWJ, VS16. (b) Kit: a transcript whose first prompt contains an ANSI code and an RLM, and a live spawn whose description contains a BEL — the terminal pane AND the desktop Client both render (no refusal, no `ui.fault`), and the drawn text has no control characters.
+- [ ] **Step 2: Implement** the helper and apply it at the choke point to every agent text field the payload carries (`role`, `task`, `task_short`, `result`, `subagent_type`, `tool`, session titles, and the footer/scanError text). Idempotent; cheap (one regex pass per changed field; unchanged agents are not re-cleaned if the poll already skips them).
+- [ ] **Step 3:** validate + test (0 fail) + tsc, on engine 2.1.293 AND 2.1.295 (the desktop app now runs 2.1.295). Commit `fix(mod): strip control and bidi characters from agent text before it reaches any surface`.
+
 ### Task 2.8: Re-enable the mod, verify by eye, update docs
 
 **Files:**

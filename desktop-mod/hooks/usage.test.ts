@@ -144,10 +144,14 @@ test('resetClock: the local HH:MM of the reset, empty when there is none', () =>
 // --- The hooks (register.tsx): session.measure, the first reading at session.start, the footer line
 // ($.ui.status), the toasts at 80 / 95. Driven through the engine with the kit beneath (test-kit.ts: the
 // mocked clock, the in-memory $.store, the toasts); usageBeneath adds what the kit does not answer:
-// $.session.usage (the reading session.start asks for) and taps on $.ui.status and $.ui.invalidate. What
-// the hooks keep in module memory (USAGE, the last line, the last toast) outlives a test inside the plugin's
-// bundle, so no two tests share a window (resetsAt: 13:20 / 09:00 / 14:30, 19:30, 23:45 / 11:15, 16:15 /
-// 10:10 / 08:50 and none / 12:40) and each ends on a reading without a five_hour window.
+// $.session.usage (the reading session.start asks for) and taps on $.ui.status and $.ui.invalidate. Each
+// test gets a fresh plugin environment: what the hooks keep in module memory (USAGE, the last line, the last
+// toast) starts empty in every test (a probe on 2.1.295: three tests in a row with the same reading each set
+// the line, redrew and toasted again). Within ONE test that memory is shared: a second $.session.start there is
+// the same environment, not a new conversation or a reload (only the $.store mark carries a window across
+// environments, which the tests seed). The tests still use a window of their own each (resetsAt: 13:20 /
+// 09:00 / 14:30, 19:30, 23:45 / 11:15, 16:15 / 10:10 / 08:50 and none / 12:40) and end on a reading without a
+// five_hour window, which costs nothing and reads plainly.
 
 const START = { cwd: 'C:/x', surface: 'desktop', isInteractive: true } as const
 const CONTEXT = { tokens: 1, window: 200_000, percent: 0 }
@@ -300,7 +304,8 @@ test('the first reading at session.start (a new conversation, or a reload of the
   // ... its 95 was not: that one toasts, in English as the prefs say
   await measure($, limits(95, R1))
   expect(captured.toasts).toEqual(['5-hour limit: 95% · resets 11:15'])
-  // a new conversation in the same window: no toast again
+  // session.start again in the same window: no toast again (in this test's one environment the 95 mark in module memory
+  // answers before $.store is read; a fresh environment reading the stored mark is the case above, at 80)
   seen.usage = limits(96, R1)
   await $.session.start(START)
   expect(captured.toasts).toHaveLength(1)

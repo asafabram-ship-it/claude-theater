@@ -11,7 +11,7 @@ import type { Agent } from './model'
 import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS, RUNNING_STALE_SEC } from './model'
 import { expect, test } from 'claude-code/testing'
 
-import { SETTLE_MS, cleanOffice } from './register'
+import { SETTLE_MS, SETTLE_SLACK_MS, cleanOffice } from './register'
 
 import { activityLabel } from './i18n'
 import { assignDistinctPersonas, personaName } from './personas'
@@ -21,7 +21,7 @@ import {
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   minuteClock, renderKey, starsOf,
 } from './ui'
-import { REFUSED_RE, chromeRows, emptyLines, officeHeight } from './office-chrome'
+import { CHROME_ROWS, REFUSED_RE, chromeRows, emptyLines, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
 import { layoutOffice, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
@@ -34,6 +34,8 @@ const PANE = {
   plugin: 'agent-theater', component: 'Pane', requestId: 'agent-theater',
   props: { title: 'T', isFocused: true, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
 } as const
+/** The person typing /theater: the pane opened (or raised) and a poll at once. */
+const THEATER = { command: 'theater', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } } as const
 
 function agent(over: Partial<Agent> & { id: string }): Agent {
   const task = over.task ?? `Task of ${over.id}. More words.`
@@ -359,8 +361,8 @@ function quietOffice(now: number): MemFiles {
   return files
 }
 
-test('the office draws rooms, cards, counts and the footer on every surface', async ($, on) => {
-  let agents = fixture()
+test('the office draws rooms, cards and counts on every text surface (the footer: THE FOOTER below)', async ($, on) => {
+  const agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -384,9 +386,6 @@ test('the office draws rooms, cards, counts and the footer on every surface', as
     else expect(await ui.find({ key: 'search' })).toBeDefined()
     await ui.unmount()
   }
-  // the scan error and the oversized count reach the footer
-  agents = fixture()
-  await clock.advance(POLL_MS)
 })
 
 test('the pane fits narrow, medium and wide bodies: cards, keys, the compact header/toolbar and the 🧠 model tag', async ($, on) => {
@@ -947,6 +946,118 @@ test('a FAILED scan never touches user state: the first scan after a hot reload 
   await ui.unmount()
 })
 
+test('THE FOOTER: an oversized transcript\'s count and the scan error reach the desktop office\'s footer line (props.footer, one chrome row, drawn by the module) and the text cards\' dim footer', async ($, on) => {
+  const files = quietOffice(T0)
+  // a subagent transcript over 4 MiB ($.fs.read's limit) whose tail helper fails: skipped and counted (payload.oversized)
+  files.set(`${QPROJ}/${QSESS}/subagents/agent-big.jsonl`, { text: '', mtimeMs: T0 - 2000, size: 5 * 1024 * 1024 })
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: 'no helper process in this test', isStdoutTruncated: false, isStderrTruncated: false } }))
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'en', muted: false, showDone: false, pins: [] } }, files)
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.oversized).toBe(1)
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 90 } })
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
+  let p = (await officePropsOf(desk))!
+  expect(p.footer).toBe('1 transcript over 4 MiB skipped')
+  expect(chromeRows(p)).toBe(CHROME_ROWS + 1)
+  expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^1 transcript over 4 MiB skipped$/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /^1 transcript over 4 MiB skipped$/ })).toBeDefined()
+  // the scan fails: its error joins the footer (the last good office stays drawn, its oversized count with it) — still one line
+  captured.envDown = true
+  await clock.advance(POLL_MS)
+  p = (await officePropsOf(desk))!
+  // (the kit's env.get refuses: what the engine says then is the scan error)
+  expect(p.footer).toMatch(/^1 transcript over 4 MiB skipped · .*env\.get/)
+  expect(chromeRows(p)).toBe(CHROME_ROWS + 1)
+  expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /env\.get/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /^1 transcript over 4 MiB skipped · .*env\.get/ })).toBeDefined()
+  // the scan works again: the error leaves the footer
+  captured.envDown = false
+  await clock.advance(POLL_MS)
+  expect((await officePropsOf(desk))?.footer).toBe('1 transcript over 4 MiB skipped')
+  await term.unmount()
+  await desk.unmount()
+})
+
+test('a poll that throws past the scan, poll after poll, reports it ONCE (the stored scanError compared first, as the scan\'s own error is): no write and no redraw per failing poll; the error clears once the poll works again', async ($, on) => {
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, quietOffice(T0))
+  on('agent.spawn', ($, e) => ({ model: 'haiku', agentId: `live-${e.tool_use_id}` }))
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  // a subagent of this session: the poll ages the live map from $.agent.list every tick
+  await $.agent.spawn({ tool_use_id: 't1', prompt: 'Read it.', description: 'desc t1', subagentType: 'Explore', parentModel: 'opus' } as Parameters<typeof $.agent.spawn>[0])
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const w0 = captured.writes.scanError
+  const reads0 = captured.prefsReads
+  // every poll now throws after its scan (the engine's agent list comes back as no list): one scanError write, one
+  // redraw, however many polls
+  captured.agentListBroken = true
+  for (let i = 0; i < 3; i++) await clock.advance(POLL_MS)
+  expect(captured.writes.scanError).toBe(w0 + 1)
+  expect(captured.prefsReads).toBe(reads0 + 1) // the one redraw that draws the error
+  expect((await officePropsOf(ui))?.footer).not.toBe('')
+  // the poll works again: the error is cleared (one write) and stays cleared
+  captured.agentListBroken = false
+  for (let i = 0; i < 2; i++) await clock.advance(POLL_MS)
+  expect(captured.writes.scanError).toBe(w0 + 2)
+  expect((await officePropsOf(ui))?.footer).toBe('')
+  await ui.unmount()
+})
+
+test('SETTLE_MS holds through a poll\'s jitter: a structure change seen by a poll a hair short of SETTLE_MS after the last publish (a /theater poll SETTLE_MS - 200 ms after it) publishes on that poll; well inside SETTLE_MS it still waits for the next tick', async ($, on) => {
+  const files = quietOffice(T0)
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: true, showDone: true, pins: [] } }, files)
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.settle() // the first poll (T0) scans and publishes
+  // q1 finishes: the tick at T0 + POLL_MS publishes it — the publish the rest is timed from
+  finishIn(files, Q1, clock.now(), 'Found 12 TODOs.')
+  await clock.advance(POLL_MS)
+  const w0 = captured.writes.payload
+  expect(w0).toBe(2)
+  // q2 finishes, and a poll sees it SETTLE_MS - 200 ms after that publish (a /theater press polls at once; a tick a hair
+  // early is the same): inside SETTLE_SLACK_MS, so it publishes now, not a poll later
+  expect(SETTLE_SLACK_MS).toBeGreaterThanOrEqual(200)
+  await clock.advance(SETTLE_MS - 200)
+  finishIn(files, Q2, clock.now(), 'All green.')
+  await $.command.run(THEATER)
+  await clock.settle()
+  expect(captured.writes.payload).toBe(w0 + 1)
+  // a newcomer 1 s after that publish waits: a burst inside SETTLE_MS is still one redraw (the tick crossed meanwhile is quiet)
+  await clock.advance(1000)
+  files.set(Q3, subagentMidTool('q3', 'Count the tests.', clock.now()))
+  await $.command.run(THEATER)
+  await clock.settle()
+  expect(captured.writes.payload).toBe(w0 + 1)
+  // ... until the next tick, SETTLE_MS on
+  await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(w0 + 2)
+})
+
+test('THE RETITLE never reopens a closed pane: the person closes the pane while the scan runs, and the publish after it (a working count that moved) makes no $.ui.open; with the pane open again the next publish retitles', async ($, on) => {
+  const files = quietOffice(T0)
+  const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: true, showDone: false, pins: [] } }, files)
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.settle() // the first poll (T0) scans and publishes
+  expect(captured.opens.length).toBe(1) // the first publish retitled the pane with the working count
+  const opens0 = captured.opens.length
+  const w0 = captured.writes.payload
+  // q1 finishes (the working count moves) and the person closes the pane after the poll found it up, while it scans
+  finishIn(files, Q1, clock.now(), 'Found 12 TODOs.')
+  captured.onScan = () => { captured.paneOpen = false }
+  await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(w0 + 1) // published ...
+  expect(captured.opens.length).toBe(opens0) // ... and no $.ui.open, which would have opened the closed pane again
+  // the pane is open again (the person's /theater would retitle it itself; here the engine just lists it): the next
+  // publish retitles, the count still owed
+  captured.paneOpen = true
+  finishIn(files, Q2, clock.now(), 'All green.')
+  await clock.advance(POLL_MS)
+  expect(captured.writes.payload).toBe(w0 + 2)
+  expect(captured.opens.length).toBe(opens0 + 1)
+  expect(captured.opens[captured.opens.length - 1]).toMatch(/🎭 התיאטרון$/)
+})
+
 test('AGENT TEXT reaches every surface clean: an ANSI colour code and an RLM in a transcript\'s prompt and a conversation\'s first line, a BEL in a live spawn\'s description — the terminal cards and the desktop office Client both draw (no refusal, no fault), no drawn text holds a refused character, the Hebrew stays; quiet polls publish nothing', async ($, on) => {
   const ESC = String.fromCharCode(0x1b)
   const BEL = String.fromCharCode(0x07)
@@ -1040,9 +1151,18 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   expect(captured.toasts.some(t => t.startsWith('summarize the security review'))).toBe(true)
   expect(captured.plays).toBeGreaterThanOrEqual(1)
   expect(await ui.find({ key: 'open:demo-newcomer-hh' })).toBeDefined()
-  // exit restores the real (empty) office
+  // exit restores the real (empty) office AT ONCE, even right after a demo publish: the redraw after the press polls at
+  // once (register.tsx's render kick) and that poll publishes the switch whatever SETTLE_MS / CALM_MS say. (The kit keeps
+  // a demo publish whole in state, as a live engine does: without the switch publish the demo cast would stay drawn, frozen.)
+  const w = captured.writes.payload
+  for (let i = 0; i < 30 && captured.writes.payload === w; i++) await clock.advance(1000)
+  expect(captured.writes.payload).toBe(w + 1) // a demo publish just landed (under a second ago)
+  expect(captured.payload?.demo).toBe(true)
   await ui.press({ key: 'demo' })
+  await clock.settle()
+  expect(captured.payload?.demo).toBe(false)
   expect(await messageOf(ui, 'terminal', /The office is empty/)).toBe(true)
+  expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeUndefined()
   await ui.unmount()
 })
 

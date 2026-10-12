@@ -61,13 +61,19 @@
 //                   demo cast (ui.tsx draws demoPayload(now) on every redraw so
 //                   the demo clock advances between polls).
 //   reload safety   a hot reload runs `register` again in a fresh environment and
-//                   drops the old one's timers, while session.start fires once
-//                   per session. So the timer lives in module scope and
+//                   drops the old one's timers; session.start fires again on that
+//                   fresh load (once per process, then once per fresh load of a
+//                   changed module — types/index.d.ts), which restarts the poll
+//                   and refills the meter. The pane can redraw before it lands,
+//                   though, so the timer lives in module scope and
 //                   ensurePolling($) (re)starts it lazily from every hook that
 //                   has a `$` — session.start, /theater, agent.spawn, tool.call
 //                   — and from the pane's next redraw (a render hook of this
 //                   file ahead of ui.tsx's, through $.clock.after(0): a render
-//                   may not write state).
+//                   may not write state). That redraw also kicks a poll at once
+//                   when the demo was switched (view.demo ≠ the payload's): the
+//                   switch publishes without waiting for SETTLE_MS / CALM_MS,
+//                   so leaving the demo never leaves its cast frozen on screen.
 //   poll guards     one poll at a time (a helper process may take seconds; an
 //                   overlapping tick would race the caches) and a publish never
 //                   rolls the office back to an older scan.
@@ -121,6 +127,15 @@ const tickAtom = atom({ plugin: 'agent-theater', key: 'tick' } as const, 0)
 async function paneIsUp($: EngineInterface): Promise<boolean> {
   try {
     return (await $.ui.panes()).some(p => p.id === PANE_ID && p.isShown !== false)
+  } catch {
+    return false
+  }
+}
+
+/** Is the office pane still open (listed, shown or not)? What the poll's retitle asks: `$.ui.open` on an id no longer open opens it again. False when unanswerable. */
+async function paneIsOpen($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.ui.panes()).some(p => p.id === PANE_ID)
   } catch {
     return false
   }
@@ -313,6 +328,12 @@ let lastPublishAt = -Infinity
 export const CALM_MS = 8_000
 /** Even an arrival or a finish waits this long after the previous publish, so a burst of them is ONE redraw. */
 export const SETTLE_MS = 5_000
+/**
+ * SETTLE_MS equals POLL_MS: the poll after a publish measures `since` between two clock reads about one timer period
+ * apart, which lands a few ms either side of SETTLE_MS. Within this slack it counts as settled, so whether a structure
+ * change publishes on the poll that sees it never hangs on that jitter (a burst inside SETTLE_MS is still one redraw).
+ */
+export const SETTLE_SLACK_MS = 250
 
 // The finish beat's memory (PAGE updateWS; a hot reload only loses a beat, as PAGE's reload does).
 /** PAGE prevStatus: agent id → last status seen (starsOf keeps it). */
@@ -418,15 +439,23 @@ export async function poll($: EngineInterface): Promise<void> {
     // coarse key and publishes once SETTLE_MS has passed since the previous publish (a burst = one redraw).
     const coarse = renderKey(office, now, true)
     const since = now - lastPublishAt
-    const due = (coarse !== lastCoarse && since >= SETTLE_MS) || since >= CALM_MS
+    // (settled within SETTLE_SLACK_MS: the poll after a publish comes about SETTLE_MS later, a few ms either side)
+    const settled = since >= SETTLE_MS - SETTLE_SLACK_MS
+    // THE DEMO SWITCH publishes at once, whatever SETTLE_MS / CALM_MS say: the render draws the demo from the flag
+    // (effectivePayload), so on leaving it the stored payload — the demo cast, frozen — would be drawn until a later publish
+    const switched = published.demo !== office.demo
+    const due = (coarse !== lastCoarse && settled) || since >= CALM_MS || switched
     // (the second test, held to the same SETTLE_MS: what is IN state differs in substance — a reload, a hook beneath)
-    if ((key !== lastKey && due) || ((lastCoarse === undefined || since >= SETTLE_MS) && renderKey(published, now, true) !== coarse)) {
+    if ((key !== lastKey && due) || ((lastCoarse === undefined || settled) && renderKey(published, now, true) !== coarse)) {
       // THE RETITLE first, in the same tick (spec §6.1): the title follows what the pane is about to show
       // (PAGE: document.title = (run ? "🟢 N · " : "") + docTitle), and the engine coalesces the redraws of
       // one tick, so the $.ui.open and the write below are ONE redraw — and the title never changes between
-      // two calm publishes. An open id is retitled in place (never a second instance); no `focus`.
+      // two calm publishes. An open id is retitled in place (never a second instance); no `focus`. The pane may
+      // have been closed while the scan ran (`up` was read before it, and a scan can take seconds): `$.ui.open`
+      // on an id no longer open would open it again, unasked — so it is asked again here, and a closed pane is
+      // not retitled (lastRun kept: the next publish with the pane open retitles it).
       const run = workingCount(office)
-      if (run !== lastRun) {
+      if (run !== lastRun && (await paneIsOpen($))) {
         lastRun = run
         prefs ??= await read($, prefsAtom)
         await $.ui.open({ id: PANE_ID, title: paneTitle(prefs.lang, run) }).catch(() => undefined)
@@ -483,7 +512,14 @@ export async function poll($: EngineInterface): Promise<void> {
       await update($, tickAtom, () => now)
     }
   } catch (err) {
-    await update($, scanErrorAtom, () => cleanAgentText(err instanceof Error ? err.message : String(err))).catch(() => undefined)
+    // a poll that throws every tick (a step past the scan failing) reports it ONCE: compared clean with what is stored,
+    // as the scan's own error is — a write per failing poll would redraw the pane every POLL_MS
+    try {
+      const msg = cleanAgentText(err instanceof Error ? err.message : String(err))
+      if ((await read($, scanErrorAtom)) !== msg) await update($, scanErrorAtom, () => msg)
+    } catch {
+      // nothing more to do: the office stays as it was
+    }
   } finally {
     polling = false
   }
@@ -491,6 +527,8 @@ export async function poll($: EngineInterface): Promise<void> {
 
 /** The poll timer of this environment (a hot reload drops it with the environment; ensurePolling restarts it). */
 let ticker: Timer | undefined
+/** THE DEMO SWITCH: the view.demo the render kick last polled for while the published payload disagreed (undefined once they agree). */
+let demoKicked: boolean | undefined
 
 /**
  * Starts the poll timer unless this environment already runs one; `restart`
@@ -779,9 +817,26 @@ export const register: Register = on => {
   // the chain, schedules ensurePolling through $.clock.after(0) — outside the
   // render, so poll's state writes are allowed — and passes the draw on with
   // next(e). (`$` may not be handed to a callback across files: validate rule.)
-  on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, ($, e, next) => {
+  // THE DEMO SWITCH: the redraw that follows a demo press (view.demo no longer
+  // the published payload's) also polls at once, and that poll publishes the
+  // switch whatever SETTLE_MS / CALM_MS say (poll's `switched`): leaving the demo
+  // shows the real office now, not the demo cast frozen at the last publish. A
+  // read only (two atoms the pane's render reads anyway), and ONE kick per
+  // switch (demoKicked): every redraw until the switch is published — a text
+  // surface's tick among them — must not poll again, or a poll that publishes
+  // nothing would loop through its own tick. Once the two agree the kick is the
+  // plain ensurePolling again.
+  on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, async ($, e, next) => {
     try {
-      $.clock.after(0, () => ensurePolling($))
+      const demo = (await read($, viewAtom)).demo
+      const switched = demo !== (await read($, payloadAtom)).demo
+      const kick = switched && demoKicked !== demo
+      demoKicked = switched ? demo : undefined
+      $.clock.after(0, () => {
+        ensurePolling($)
+        // (a poll already running skips this one: then the next tick's poll publishes the switch)
+        if (kick) void poll($)
+      })
     } catch {
       // the hooks with a `$` kick the poll too
     }

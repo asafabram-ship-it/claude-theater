@@ -7,8 +7,9 @@
 // clock from T0, an in-memory $.store, the environment, an empty ~/.claude (or
 // the in-memory `files`), the pane shown — and rewrites every `payload` publish
 // into the fixture of the moment, `current()` (unless `files` is given: then
-// the scanner reads them and its own payload is published). It counts what
-// the plugin writes, reads back and calls, in `captured`.
+// the scanner reads them and its own payload is published; a demo publish is
+// never rewritten either: state holds the demo cast, as on a live engine). It
+// counts what the plugin writes, reads back and calls, in `captured`.
 
 import type { On } from 'claude-code'
 import { mock } from 'claude-code/testing'
@@ -19,8 +20,8 @@ import type { Agent, Payload, View } from './model'
 /** The tests' wall clock: `beneath` starts its mocked clock here, and the fixtures date their agents from it. */
 export const T0 = 1_700_000_000_000
 
-/** An in-memory ~/.claude for `beneath`: path → text + mtime (sizes are the text's length). */
-export type MemFiles = Map<string, { text: string; mtimeMs: number }>
+/** An in-memory ~/.claude for `beneath`: path → text + mtime (the size is the text's length unless `size` says otherwise: an oversized transcript). */
+export type MemFiles = Map<string, { text: string; mtimeMs: number; size?: number }>
 
 /** The $.state writes of the plugin, by key: the five the flicker guard budgets always present, any other key once written. */
 export type Writes = { payload: number; scanError: number; view: number; tick: number; prefs: number } & Record<string, number>
@@ -46,6 +47,12 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
     envDown: false,
     /** Non-null → every `view` the plugin reads carries this `selected` (what $.state kept over a hot reload, which this harness cannot replay). */
     selectedBeneath: null as string | null,
+    /** False → $.ui.panes lists no pane: the person closed it. */
+    paneOpen: true,
+    /** Non-null → run once at the next scan's first step (its $.env.get of HOME): what the person does while a scan runs. */
+    onScan: null as (() => void) | null,
+    /** True → $.agent.list answers no list at all: the poll's ageing of the live map (a step past the scan, the poll's alone) throws. */
+    agentListBroken: false,
   }
   const clock = mock.clock(on, { now: T0 })
   // an in-memory store the test can read back (mock.store would hook store.set
@@ -62,6 +69,11 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
   // the environment beneath (what mock.env would hook), with a failure switch for the failed-scan test
   const env: Record<string, string> = { HOME: 'C:/Users/test', USERPROFILE: 'C:/Users/test' }
   on('env.get', ($, e) => {
+    if (e.name === 'HOME' && captured.onScan) {
+      const during = captured.onScan
+      captured.onScan = null
+      during()
+    }
     if (captured.envDown) throw new Error('env down')
     return { value: env[e.name] }
   })
@@ -70,7 +82,8 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
   // nothing beneath the plugins answers command.register: without this the plugin's
   // session.start would abort before starting the poll
   on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('agent.list', () => ({ value: [] }))
+  // (a hook that throws is skipped, so a broken answer is how a test makes a step of the poll throw)
+  on('agent.list', () => ({ value: captured.agentListBroken ? (null as unknown as []) : [] }))
   // the file system beneath: an empty ~/.claude, or the in-memory `files` (then the scanner's own payload is published, unrewritten)
   const dirsOf = () => {
     const dirs = new Set<string>()
@@ -98,7 +111,7 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
       if (!p.startsWith(dir + '/')) continue
       const rest = p.slice(dir.length + 1)
       const slash = rest.indexOf('/')
-      if (slash < 0) out.push({ name: rest, kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })
+      if (slash < 0) out.push({ name: rest, kind: 'file', size: f.size ?? f.text.length, mtimeMs: f.mtimeMs, isLink: false })
       else sub.add(rest.slice(0, slash))
     }
     for (const d of sub) out.push({ name: d, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })
@@ -106,7 +119,7 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
   })
   on('fs.stat', ($, e) => {
     const f = files?.get(norm(e.path))
-    if (f) return { value: { kind: 'file' as const, size: f.text.length, mtimeMs: f.mtimeMs, isLink: false } }
+    if (f) return { value: { kind: 'file' as const, size: f.size ?? f.text.length, mtimeMs: f.mtimeMs, isLink: false } }
     if (files && dirsOf().has(norm(e.path))) return { value: { kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false } }
     throw new Error(`ENOENT: ${e.path}`)
   })
@@ -119,13 +132,14 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
   on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
   on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); captured.seq.push('open'); return { value: { isPlaced: true as const } } })
-  // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible)
-  on('ui.panes', () => ({ value: [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] }))
+  // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible); `paneOpen` false: closed
+  on('ui.panes', () => ({ value: captured.paneOpen ? [{ id: 'agent-theater', title: 'T', isShown: true, isFocused: false, isPlaced: true }] : [] }))
   on('ui.focus', () => ({}))
-  // the poll's payload write becomes the fixture of the moment (unless the scanner reads `files`: then it is kept)
+  // the poll's payload write becomes the fixture of the moment (unless the scanner reads `files`: then it is kept; and a
+  // demo publish is kept whole, so leaving the demo is drawn from the demo cast state really holds)
   // (the ⭐ stars the poll stamped ride the payload: the rewrite keeps them)
   on('state.set', { plugin: 'agent-theater', key: 'payload' }, ($, e, next) =>
-    files ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now(), stars: (e.value as Payload).stars } }))
+    files || (e.value as Payload).demo ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now(), stars: (e.value as Payload).stars } }))
   // every $.state write of the plugin, counted by key; the ones that redraw the pane are sequenced
   on('state.set', { plugin: 'agent-theater' }, ($, e, next) => {
     captured.writes[e.key] = (captured.writes[e.key] ?? 0) + 1

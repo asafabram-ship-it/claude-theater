@@ -429,6 +429,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     }
     return Box({ flexDirection: 'column', children: kids })
   } catch (err) {
+    // nothing of the office is drawn now: the pointer must not hit-test the window of the last good render
+    const st = surface.state
+    if (st) st.inst.win = { from: 0, count: 0 }
     return Text({ color: 'red', children: [`office: ${err instanceof Error ? err.message : String(err)}`] })
   }
 }

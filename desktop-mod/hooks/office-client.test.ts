@@ -138,7 +138,12 @@ test('cleanSearch: the search text cut to SEARCH_MAX code points (never half an 
   expect(cleanSearch('x'.repeat(100_010))).toBe('x'.repeat(SEARCH_MAX))
   expect(Array.from(cleanSearch('🔍'.repeat(SEARCH_MAX + 50)))).toEqual(Array.from('🔍'.repeat(SEARCH_MAX)))
   expect(cleanSearch('a\u0007b\u001b[31mc\nd\te\u0000f\u007fg\u0085h')).toBe('a b [31mc d e f g h')
-  expect(cleanSearch('עברית \u200fok')).toBe('עברית \u200fok')   // a mark is not a control character: kept as typed
+  // the bidi controls are removed (the desktop refuses them in a Text; a mark in a query would never match a name);
+  // Hebrew, emoji, a ZWJ sequence and a variation selector are kept as typed
+  expect(cleanSearch('עברית \u200fok')).toBe('עברית ok')
+  expect(cleanSearch('\u202bשלום\u202c \u2067x\u2069 \u200eA\u061cB\u202aC\u202dD\u202eE\u2066F\u2068G')).toBe('שלום x ABCDEFG')
+  expect(cleanSearch('👨\u200d💻 ✏\ufe0f 🦉 קוד')).toBe('👨\u200d💻 ✏\ufe0f 🦉 קוד')
+  expect(cleanSearch('\u200f'.repeat(5000) + 'x'.repeat(300))).toBe('x'.repeat(SEARCH_MAX))   // marks do not eat the cap
   expect(cleanSearch(cleanSearch('🔍'.repeat(300) + '\u0007'))).toBe(cleanSearch('🔍'.repeat(300) + '\u0007'))
 })
 
@@ -506,6 +511,11 @@ test('search: the Input draws the typed text (not props.search) across props upd
   expect(f.posts[f.posts.length - 1]).toEqual({ t: 'search', q: 'red [31m bug' })
   tree = Office({ ...p, search: 'red [31m bug' }, f.surface)
   expect(input().props.value).toBe('red [31m bug')
+  // a paste from a Hebrew source carries bidi marks: removed from the field and the post
+  ;(input().props.onSubmit as (v: string) => void)('\u202bבדיקה\u202c\u200f')
+  expect(f.posts[f.posts.length - 1]).toEqual({ t: 'search', q: 'בדיקה' })
+  tree = Office({ ...p, search: 'בדיקה' }, f.surface)
+  expect(input().props.value).toBe('בדיקה')
   // an outside value is cleaned too (the hooks clean what they store; the module never draws one it would be refused for)
   tree = Office({ ...p, search: 'a\u0000b' }, f.surface)
   expect(input().props.value).toBe('a b')
@@ -566,13 +576,24 @@ test('never throws: a broken props object draws a short red Text', () => {
   expect(texts(tree)).toMatch(/^office: /)
   // and the next good props draw the office again
   expect(texts(Office(props(), f.surface))).toMatch(/🟢 2/)
+  // a throw after a good render drops the drawn window: the pointer hits nothing the office no longer draws
+  const C = chromeRows(props())
+  f.pointer({ type: 'down', x: props().columns - TILE_W + 2, y: C + 1 + 2, button: 'left' })
+  expect(f.posts).toEqual([{ t: 'open', id: 'lead' }])
+  Office(broken, f.surface)
+  expect(f.surface.state!.inst.win).toEqual({ from: 0, count: 0 })
+  f.pointer({ type: 'down', x: props().columns - TILE_W + 2, y: C + 1 + 2, button: 'left' })
+  f.pointer({ type: 'move', x: props().columns - TILE_W + 2, y: C + 1 + 2 })
+  expect(f.posts).toHaveLength(1)
+  expect(f.surface.state!.hover).toBeNull()
 })
 
 test('limits: 100 agents with the drawer open at every width 24..200 stay under 20,000 nodes, 32 deep, 100,000 characters, with no bidi marks', { timeoutMs: 30_000 }, () => {
   const agents = Array.from({ length: 100 }, (_, i) => ag(`agent-${i}`, { name: `סוכן ${i}`, act: i % 3 ? '📖 קורא' : '✍️ כותב', star: i % 7 === 0 ? 1 : 0, failed: i % 11 === 0, longRunning: i % 5 === 0, modelFam: (['opus', 'sonnet', 'haiku', 'fable', 'other'] as const)[i % 5]! }))
   const rooms = [room('A', agents.slice(0, 40)), room('B', agents.slice(40, 70)), room('C', agents.slice(70))]
   const d = drawer({ task: 'x'.repeat(4000), result: 'y'.repeat(4000), truncated: true })
-  let slowest = 0
+  /** Each size's first render on a fresh instance: the init, the layout and the tree, no memo. */
+  const cold: number[] = []
   let maxJson = 0
   // 40-row windows at ten widths, then the tall + wide panes a maximized window reaches (200 \u00d7 80, 250 \u00d7 80)
   const sizes = [[24, 40], [25, 40], [31, 40], [45, 40], [60, 40], [72, 40], [100, 40], [120, 40], [160, 40], [200, 40], [200, 80], [250, 80]] as const
@@ -580,9 +601,9 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
     for (const offset of [0, 20]) {
       const f = fake(columns, 0)
       const p = props({ columns, rows, offset, rooms, selected: 'agent-3', drawer: d, helpOpen: false })
-      const t0 = Date.now()
+      const t0 = performance.now()
       const tree = Office(p, f.surface)
-      slowest = Math.max(slowest, Date.now() - t0)
+      cold.push(performance.now() - t0)
       const all = nodes(tree)
       expect(all.length).toBeLessThan(20_000)
       expect(depth(tree)).toBeLessThanOrEqual(32)
@@ -609,7 +630,29 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
     expect(json.length).toBeLessThan(100_000)
     expect(nodes(tree).length).toBeLessThan(20_000)
   }
-  expect(slowest).toBeLessThan(1000)
+  // THE RENDER'S COST against the engine's budget (a second per call on the drawing thread). Measured in isolation on
+  // 2026-10-12, 200 x 80 with 100 agents and the drawer open, 20 runs each, on engines 2.1.293 and 2.1.295: a cold
+  // render (fresh instance) median 28-31 ms, max 44-57 ms; a hover relayout median 4 ms, max 9-12 ms. A single call
+  // timed here also counts what this test process does not control (a full suite's parallel files on a loaded machine
+  // stalled one render past 1 s while the median stayed in tens of ms), so the guards are the MEDIANS, an order of
+  // magnitude above the measures and far under the budget; the single slowest cold render only has to stay clear of
+  // a pathological cost (three budgets).
+  const median = (xs: readonly number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!
+  expect(median(cold)).toBeLessThan(250)
+  expect(Math.max(...cold)).toBeLessThan(3000)
+  // warm: a hover moving between two tiles changes the decor, so each render lays the whole office out again
+  const hf = fake(200, 0)
+  const hp = props({ columns: 200, rows: 80, rooms, selected: 'agent-3', drawer: d })
+  Office(hp, hf.surface)
+  const hover: number[] = []
+  for (let i = 0; i < 20; i++) {
+    hf.surface.setState({ ...hf.surface.state!, hover: i % 2 ? 'agent-1' : 'agent-2' })
+    const t0 = performance.now()
+    Office(hp, hf.surface)
+    hover.push(performance.now() - t0)
+  }
+  expect(hf.surface.state!.inst.layout).toEqual(layoutOffice(hp, { hover: 'agent-1', hop: new Set(), entering: new Map() }))
+  expect(median(hover)).toBeLessThan(100)
   // the widest 40-row window with the drawer open serialized to 57,033 characters on 2026-10-11; with the byte budget a
   // 200 × 80 or 250 × 80 pane draws WINDOW_CHARS of rows plus the chrome and the drawer: a regression guard under the bound
   expect(maxJson).toBeLessThan(80_000)

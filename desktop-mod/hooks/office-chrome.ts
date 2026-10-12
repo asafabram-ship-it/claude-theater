@@ -36,15 +36,23 @@ export const WINDOW_CHARS = 70_000
 export const SEARCH_MAX = 200
 /** C0 and C1 controls (an escape sequence in a paste): the surface refuses an Input value or a Text holding one. */
 const CONTROL_RE = /\p{Cc}/gu
+/**
+ * The bidi controls (ALM, LRM, RLM, LRE..RLO, LRI..PDI): the desktop refuses them in a Text, and a paste
+ * from a Hebrew source often carries them. Named one by one, not \p{Cf}: that class also holds the
+ * zero-width joiner of emoji sequences (man + ZWJ + laptop), which must stay.
+ */
+const BIDI_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
 
 /**
- * The search text as the office keeps it: every control character a space, then the first
- * SEARCH_MAX code points (never half a surrogate pair). Idempotent. The surface module cleans
- * what is typed before drawing or posting it; the hooks clean what they store (ui.tsx).
+ * The search text as the office keeps it: the bidi controls removed, every other control character
+ * a space, then the first SEARCH_MAX code points (never half a surrogate pair). Idempotent. The
+ * surface module cleans what is typed before drawing or posting it; the hooks clean what they store
+ * (ui.tsx).
  */
 export function cleanSearch(q: string): string {
-  // (the first SEARCH_MAX code points lie within the first 2 × SEARCH_MAX code units: a paste of a page is not walked whole)
-  return Array.from(q.slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
+  // (the marks go first: they shorten the text. Then the first SEARCH_MAX code points lie within the first
+  // 2 × SEARCH_MAX code units, so the rest of a pasted page is never split into code points)
+  return Array.from(q.replace(BIDI_RE, '').slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
 }
 
 export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }

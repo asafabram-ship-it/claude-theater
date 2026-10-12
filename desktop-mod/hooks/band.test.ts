@@ -8,7 +8,9 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 80, scroll: { offset: 0, bodyRows: 3 }, view: {} },
 } as const
 
-test('the band shows only while this conversation has working subagents and the pane is closed', async ($, on) => {
+// (0.4-0.6 s alone; a full suite's parallel files on a loaded machine stretched it past the default 5 s on the unchanged
+// code too, so the budget is load headroom, not a cost of the band)
+test('the band shows only while this conversation has working subagents and the pane is closed', { timeoutMs: 20_000 }, async ($, on) => {
   let paneShown = false
   mock.clock(on, { now: 1_000_000 })
   const opened: string[] = []

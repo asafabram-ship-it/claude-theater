@@ -3,6 +3,7 @@
 // `now` is an input and the reset hour is read through the machine's local
 // getters. The label is one short line: no newline, no bidi control characters,
 // readable after the plugin-name prefix the desktop footer puts in front of it.
+// `usageShort` is its narrow twin (`⏳ 5h 42%`) for the pane header.
 // Beside it, the pure pieces of register.tsx's usage hooks: when a reading is
 // new (sameFiveHour), which threshold it reached (usageThreshold), and the toast
 // mark kept in $.store (ToastMark, parseToastMark, toastDue).
@@ -34,10 +35,23 @@ export function resetClock(resetsAt: string): string {
  */
 export function usageLabel(u: FiveHour, _lang: 'he' | 'en', _now: number): string {
   const pct = Math.round(u.pct)
-  const head = pct >= 80 ? '⚠' : '⏳'
   const clock = resetClock(u.resetsAt)
   const when = clock ? ` · ${clock}` : ''
-  return `${head} 5h ${usageBar(pct)} ${pct}%${when}`
+  return `${usageHead(pct)} 5h ${usageBar(pct)} ${pct}%${when}`
+}
+
+/** The mark before `5h`: `⚠` from a rounded 80%, else `⏳`. */
+function usageHead(roundedPct: number): string {
+  return roundedPct >= 80 ? '⚠' : '⏳'
+}
+
+/**
+ * `⏳ 5h 42%` — the label without its bar and clock, for a narrow header (the office's under COMPACT_BELOW
+ * columns, the text cards' counts line). It keeps `5h` so it is never taken for the idle count (`⏳ 2 idle`).
+ */
+export function usageShort(u: FiveHour): string {
+  const pct = Math.round(u.pct)
+  return `${usageHead(pct)} 5h ${pct}%`
 }
 
 /**

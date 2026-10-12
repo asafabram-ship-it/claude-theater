@@ -6,7 +6,8 @@
 // Then the hooks that drive it (register.tsx, Task 3.2): session.measure and
 // the first reading at session.start put the label on the plugin's status line
 // ($.ui.status), hand the reading to the office header and toast at 80 / 95
-// once per window, driven through the engine with the kit beneath.
+// once per window, driven through the engine with the kit beneath. Last, the pane header (Task 3.3): the
+// desktop office Client's first line and the text cards' counts line draw the same reading.
 
 import type { On, SessionRateLimit, UsageUnit } from 'claude-code'
 import { expect, test, type Engine } from 'claude-code/testing'
@@ -14,7 +15,7 @@ import { expect, test, type Engine } from 'claude-code/testing'
 import { POLL_MS } from './model'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { beneath } from './test-kit'
-import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageBar, usageLabel, usageThreshold } from './usage'
+import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageBar, usageLabel, usageShort, usageThreshold } from './usage'
 
 test('pickFiveHour takes the five_hour window only', () => {
   expect(pickFiveHour([])).toBeNull()
@@ -77,6 +78,23 @@ test('usageLabel: one short line — no newline, no bidi controls, same text in 
   expect(he).toBe(en)
   expect(he).not.toMatch(/[\r\n\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/)
   expect(he.length).toBeLessThanOrEqual(32)
+})
+
+test('usageShort: the label without the bar and the clock — `⏳ 5h 42%`, ⚠ from 80 on the rounded percent', () => {
+  const R = '2026-10-10T11:30:00Z'
+  expect(usageShort({ pct: 42.4, resetsAt: R })).toBe('⏳ 5h 42%')
+  expect(usageShort({ pct: 42.4, resetsAt: '' })).toBe('⏳ 5h 42%')
+  expect(usageShort({ pct: 79.4, resetsAt: R })).toBe('⏳ 5h 79%')
+  expect(usageShort({ pct: 79.6, resetsAt: R })).toBe('⚠ 5h 80%')
+  expect(usageShort({ pct: 0, resetsAt: R })).toBe('⏳ 5h 0%')
+  // the full label starts with it (head, `5h`), then the bar, then the same percent
+  for (const pct of [0, 12.5, 42.4, 79.6, 100]) {
+    const u = { pct, resetsAt: R }
+    const short = usageShort(u)
+    expect(usageLabel(u, 'en', 0).startsWith(short.slice(0, 4))).toBe(true)
+    expect(usageLabel(u, 'en', 0)).toContain(short.slice(5))
+  }
+  expect(usageShort({ pct: 88.8, resetsAt: R })).not.toMatch(/[\r\n\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/)
 })
 
 // --- The pure pieces the hooks use: the comparison, the thresholds, the toast mark, the reset clock.
@@ -369,4 +387,93 @@ test('SessionMode: the plugin adds no label there — the terminal and the deskt
     await ui.unmount()
   }
   await measure($, [])
+})
+
+// --- The pane header (Task 3.3): the desktop office Client's first line and the text surfaces' card header
+// draw the reading the hooks keep (USAGE). The Client rides the kit mounted (the engine draws the module off
+// the literal path in ui.tsx); a surface other than the desktop gets the text cards.
+
+/** What the header helpers need of a mounted pane (structural: the kit's own type is generic over the surface and component). */
+type Mounted = { find: (q: { type: string; text?: RegExp; in?: string }) => Promise<{ text?: string } | undefined> }
+
+/** The office header line the desktop Client drew (the first Text of the module: `🎭 …`). */
+async function officeHeader(ui: Mounted): Promise<string> {
+  return (await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^🎭/ }))?.text ?? ''
+}
+
+/** The text-card header's counts line (`🟢 0 … · ✅ 0 …`, or `🟢0 ✅0` when narrow). */
+async function cardHeader(ui: Mounted): Promise<string> {
+  return (await ui.find({ type: 'Text', text: /^🟢/ }))?.text ?? ''
+}
+
+/** Any Text on the pane that names the five-hour window. */
+async function names5h(ui: Mounted) {
+  return ui.find({ type: 'Text', text: /5h/ })
+}
+
+const NO_BIDI = /[\r\n\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/
+
+test('desktop header: the Client gets the reading; a wide pane draws the full label, a narrow one the short form, ⚠ from 80, nothing without a reading', async ($, on) => {
+  const { clock } = beneath(on, () => [], prefs('he'))
+  usageBeneath(on)
+  await $.session.start(START)
+  await clock.advance(POLL_MS)
+  const R = local(15, 45)
+  const wide = await $.ui.mount(PANE) // bodyColumns 90
+  expect(await officeHeader(wide)).toMatch(/^🎭 🟢 0/)
+  expect(await officeHeader(wide)).not.toContain('5h')
+  await measure($, limits(42, R))
+  expect((await usageProp(wide))?.pct).toBe(42)
+  const label = usageLabel({ pct: 42, resetsAt: R }, 'he', 0)
+  expect(label).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 15:45')
+  expect((await officeHeader(wide)).slice(-label.length - 3)).toBe(` · ${label}`)
+  await measure($, limits(85, R))
+  expect(await officeHeader(wide)).toContain(' · ⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 15:45')
+  expect(await officeHeader(wide)).not.toMatch(NO_BIDI)
+  await measure($, [])
+  expect(await officeHeader(wide)).not.toContain('5h')
+  await wide.unmount()
+  // narrow (under COMPACT_BELOW = 60): the short form, no bar, no clock
+  const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 45 } })
+  expect(await officeHeader(narrow)).not.toContain('5h')
+  await measure($, limits(42, R))
+  expect((await usageProp(narrow))?.pct).toBe(42)
+  expect(await officeHeader(narrow)).toMatch(/ · ⏳ 5h 42%$/)
+  expect(await officeHeader(narrow)).not.toContain('▰')
+  await measure($, limits(97, R))
+  expect(await officeHeader(narrow)).toMatch(/ · ⚠ 5h 97%$/)
+  await measure($, [])
+  expect(await officeHeader(narrow)).not.toContain('5h')
+  await narrow.unmount()
+})
+
+test('terminal header: the card header ends with the short meter (wide and narrow), ⚠ from 80, nothing without a reading', async ($, on) => {
+  const { clock } = beneath(on, () => [], prefs('he'))
+  usageBeneath(on)
+  await $.session.start({ ...START, surface: 'terminal' })
+  await clock.advance(POLL_MS)
+  const R = local(17, 5)
+  const TERMINAL = { ...PANE, surface: 'terminal' } as const
+  const wide = await $.ui.mount(TERMINAL) // bodyColumns 90
+  expect(await cardHeader(wide)).toMatch(/^🟢 0 /)
+  expect(await names5h(wide)).toBeUndefined()
+  await measure($, limits(42, R))
+  expect(await cardHeader(wide)).toMatch(/^🟢 0 .* · ⏳ 5h 42%$/)
+  await measure($, limits(85, R))
+  expect(await cardHeader(wide)).toMatch(/ · ⚠ 5h 85%$/)
+  expect(await cardHeader(wide)).not.toMatch(NO_BIDI)
+  await measure($, [])
+  expect(await names5h(wide)).toBeUndefined()
+  expect(await cardHeader(wide)).not.toContain('5h')
+  await wide.unmount()
+  const narrow = await $.ui.mount({ ...TERMINAL, props: { ...PANE.props, bodyColumns: 45 } })
+  expect(await cardHeader(narrow)).toMatch(/^🟢0 /)
+  expect(await names5h(narrow)).toBeUndefined()
+  await measure($, limits(42, R))
+  expect(await cardHeader(narrow)).toMatch(/^🟢0 .* · ⏳ 5h 42%$/)
+  await measure($, limits(91, R))
+  expect(await cardHeader(narrow)).toMatch(/ · ⚠ 5h 91%$/)
+  await measure($, [])
+  expect(await names5h(narrow)).toBeUndefined()
+  await narrow.unmount()
 })

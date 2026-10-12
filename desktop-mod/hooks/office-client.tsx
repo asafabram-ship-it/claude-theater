@@ -38,9 +38,10 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { NO_DECOR, TILE_H, cut, hitAt, layoutOffice, rowRuns, windowRows } from './office-layout'
+import { NO_DECOR, TILE_H, cut, hitAt, layoutOffice, rowRuns, textWidth, windowRows } from './office-layout'
 import type { Cell, Hit, OfficeDecor, OfficeLayout } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
+import { usageLabel, usageShort } from './usage'
 
 /** The brief's contract: the chrome height constant is reachable from the module too (its home is office-chrome.ts). */
 export { CHROME_ROWS } from './office-chrome'
@@ -350,13 +351,17 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const line = (children: RenderElement[], extra: Record<string, unknown> = {}) => Box({ flexDirection: row, columnGap: 1, flexWrap: 'nowrap', height: 1, overflow: 'hidden', ...extra, children })
     const kids: RenderElement[] = []
 
-    // --- header: the counts, the 5-hour meter ---
+    // --- header: the counts, the 5-hour meter. The meter is the full label (bar and reset clock, usage.ts) from
+    //     COMPACT_BELOW columns when the whole line fits, else the short `⏳ 5h 42%` (it keeps `5h`: the idle count
+    //     is a `⏳` too): a bar cut in half would hide the percent, so the label is never the part that is cut ---
     const c = props.counts
-    const usage = props.usage ? ` · ${Math.round(props.usage.pct) >= 80 ? '⚠' : '⏳'} 5h ${Math.round(props.usage.pct)}%` : ''
     const counts = wide
       ? `🟢 ${c.run} ${lbl('working')}${c.idle ? ` · ⏳ ${c.idle} ${lbl('idleN')}` : ''} · ✅ ${c.done} ${lbl('finished')}`
       : `🟢 ${c.run}${c.idle ? ` · ⏳ ${c.idle}` : ''} · ✅ ${c.done}`
-    kids.push(line([Text({ bold: true, wrap: 'truncate', children: [cut(`🎭 ${counts}${usage}`, props.columns)] })]))
+    const head = `🎭 ${counts}`
+    const full = props.usage ? ` · ${usageLabel(props.usage, props.lang, props.nowMin)}` : ''
+    const meter = props.usage ? (wide && textWidth(head + full) <= props.columns ? full : ` · ${usageShort(props.usage)}`) : ''
+    kids.push(line([Text({ bold: true, wrap: 'truncate', children: [cut(head + meter, props.columns)] })]))
 
     // --- toolbar: the same keys as today's pane ---
     kids.push(line([

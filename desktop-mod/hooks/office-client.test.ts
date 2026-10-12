@@ -14,9 +14,10 @@ import { I18N } from './i18n'
 import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
-import { HOVER_BG, NO_DECOR, TILE_H, TILE_W, layoutOffice, walkShift } from './office-layout'
+import { HOVER_BG, NO_DECOR, TILE_H, TILE_W, layoutOffice, textWidth, walkShift } from './office-layout'
 import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
+import { usageLabel, usageShort } from './usage'
 
 const LABELS: Record<string, string> = Object.fromEntries(Object.entries(I18N.he).filter((kv): kv is [string, string] => typeof kv[1] === 'string'))
 const LABELS_EN: Record<string, string> = Object.fromEntries(Object.entries(I18N.en).filter((kv): kv is [string, string] => typeof kv[1] === 'string'))
@@ -602,6 +603,61 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   expect(texts(Office({ ...p, usage: { pct: 85, resetsAt: '' } }, fake().surface))).toMatch(/⚠ 5h 85%/)
 })
 
+test('header: the five-hour meter is the full label (bar and reset clock) where the whole line fits from COMPACT_BELOW columns, else the short form — never cut mid-bar', () => {
+  const R = new Date(2026, 9, 10, 14, 30).toISOString() // (a local wall-clock time: reads back as 14:30 in any zone)
+  const u = { pct: 42.4, resetsAt: R }
+  /** The header line the module drew: the first Text of the tree. */
+  const header = (columns: number, over: Partial<OfficeProps> = {}): string => {
+    const first = nodes(Office(props({ columns, ...over }), fake(columns).surface)).find(n => n.type === 'Text')!
+    return (first.children as string[]).join('')
+  }
+  /** The last `tail.length` characters of `line` (a failed match shows what the line ended with). */
+  const endOf = (line: string, tail: string) => line.slice(-tail.length)
+  const full = usageLabel(u, 'he', 100)
+  const short = usageShort(u)
+  // a wide pane: the full label, the bar included, the clock last
+  const wide = header(120, { usage: u })
+  expect(endOf(wide, ` · ${full}`)).toBe(` · ${full}`)
+  expect(wide).toContain('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30')
+  const warn = header(120, { usage: { pct: 85, resetsAt: R }, lang: 'en', labels: LABELS_EN })
+  expect(endOf(warn, ' · ⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 14:30')).toBe(' · ⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 14:30')
+  // no reset time: the label without its clock part
+  const noClock = header(120, { usage: { pct: 42, resetsAt: '' } })
+  expect(endOf(noClock, ' · ⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42%')).toBe(' · ⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42%')
+  // narrow (under COMPACT_BELOW): the short form, no bar, no clock
+  const narrow = header(COMPACT_BELOW - 1, { usage: u })
+  expect(endOf(narrow, ` · ${short}`)).toBe(` · ${short}`)
+  expect(narrow).not.toContain('▰')
+  expect(endOf(header(45, { usage: { pct: 80, resetsAt: R } }), ' · ⚠ 5h 80%')).toBe(' · ⚠ 5h 80%')
+  // no reading: no meter at any width
+  for (const columns of [24, 45, 59, 60, 90, 200]) expect(header(columns, { usage: null })).not.toContain('5h')
+  // every width: the line fits, holds no refused character, and shows the meter whole or not at all — the full label
+  // only from COMPACT_BELOW and only when it fits whole, the short form otherwise (a bar cut in half hides the percent)
+  let fullFrom = Infinity
+  for (let columns = 24; columns <= 200; columns++) {
+    const line = header(columns, { usage: u })
+    expect(textWidth(line), `${columns} columns`).toBeLessThanOrEqual(columns)
+    expect(line).not.toMatch(REFUSED_RE)
+    if (line.includes('▰') || line.includes('▱')) {
+      expect(columns, `${columns} columns: the bar`).toBeGreaterThanOrEqual(COMPACT_BELOW)
+      expect(endOf(line, full), `${columns} columns: the whole label`).toBe(full)
+      fullFrom = Math.min(fullFrom, columns)
+    } else if (columns >= 40) {
+      expect(endOf(line, short), `${columns} columns: the short form`).toBe(short)
+    }
+  }
+  // the full label takes over where the whole line fits, and not before COMPACT_BELOW: the short Hebrew counts leave room for it at
+  // 60 (the line is 58 cells), while the English ones with an idle count need more — one column fewer, the short form
+  expect(fullFrom).toBe(Math.max(COMPACT_BELOW, textWidth(`${header(200, { usage: null })} · ${full}`)))
+  const en = { counts: { run: 2, idle: 3, done: 12 }, lang: 'en', labels: LABELS_EN } as const
+  const needs = textWidth(`${header(200, { ...en, usage: null })} · ${full}`)
+  expect(needs).toBeGreaterThan(COMPACT_BELOW)
+  expect(endOf(header(COMPACT_BELOW, { ...en, usage: u }), short)).toBe(short)
+  expect(endOf(header(needs - 1, { ...en, usage: u }), short)).toBe(short)
+  expect(endOf(header(needs, { ...en, usage: u }), full)).toBe(full)
+  expect(header(needs, { ...en, usage: u })).toContain('⏳ 3 idle')
+})
+
 test('never throws: a broken props object draws a short red Text', () => {
   const f = fake()
   const broken = { ...props(), rooms: null } as unknown as OfficeProps
@@ -635,7 +691,7 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
   for (const [columns, rows] of sizes) {
     for (const offset of [0, 20]) {
       const f = fake(columns, 0)
-      const p = props({ columns, rows, offset, rooms, selected: 'agent-3', drawer: d, helpOpen: false })
+      const p = props({ columns, rows, offset, rooms, selected: 'agent-3', drawer: d, helpOpen: false, usage: { pct: 88.8, resetsAt: new Date(2026, 9, 10, 23, 59).toISOString() } })
       const t0 = performance.now()
       const tree = Office(p, f.surface)
       cold.push(performance.now() - t0)

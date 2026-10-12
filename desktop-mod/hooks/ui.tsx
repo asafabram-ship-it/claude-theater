@@ -16,7 +16,8 @@
 // What it draws (spec "עובר כמו שהוא"), top to bottom — every line budgeted
 // from e.props.bodyColumns (gridFor / clip / cellWidth), nothing fixed-width:
 //   header   one line: title · "🟢 N working · ⏳ M idle · ✅ K finished" (PAGE
-//            #counts); under COMPACT_BELOW columns "🎭 · 🟢N ⏳M ✅K" alone
+//            #counts); under COMPACT_BELOW columns "🎭 · 🟢N ⏳M ✅K" alone; with a
+//            five-hour reading (USAGE) it ends "· ⏳ 5h 42%" when that fits whole
 //   toolbar  one row: [f] show finished · [m] 🔔/🔕 · [l] language · [h] help ·
 //            [d] demo (+ exit); compact → icons only and no hotkey chips
 //   search   an Input (not on mobile, which has none), the 🔍 in its placeholder
@@ -120,6 +121,7 @@ import { rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
+import { usageShort } from './usage'
 
 // $.state atoms (validate: declared as consts in the file that reads them;
 // the same keys register.tsx writes — see ../types/index.d.ts).
@@ -785,10 +787,14 @@ export function registerUi(on: On): void {
     const countsText = compact
       ? `🟢${counts.run}` + (counts.idle ? ` ⏳${counts.idle}` : '') + ` ✅${counts.done}`
       : `🟢 ${counts.run} ${L.working}` + (counts.idle ? ` · ⏳ ${counts.idle} ${L.idleN}` : '') + ` · ✅ ${counts.done} ${L.finished}`
+    // the five-hour meter ends the counts (`· ⏳ 5h 42%`, usage.ts) when it fits whole: a percent cut in half is worse than none
+    // (the footer line under the prompt carries the full label on this surface)
+    const countsBudget = width - (compact ? 3 : cellWidth(L.appTitle) + 1)
+    const countsMeter = USAGE.fiveHour ? `${countsText} · ${usageShort(USAGE.fiveHour)}` : countsText
     const header = (
       <Box flexDirection={row} justifyContent="space-between" gap={1}>
         {compact ? <Text bold>🎭</Text> : <Text bold>{L.appTitle}</Text>}
-        <Text dimColor>{clip(countsText, width - (compact ? 3 : cellWidth(L.appTitle) + 1))}</Text>
+        <Text dimColor>{clip(cellWidth(countsMeter) <= countsBudget ? countsMeter : countsText, countsBudget)}</Text>
       </Box>
     )
     // --- toolbar: one row; icons alone when narrow, worded when there is room ---

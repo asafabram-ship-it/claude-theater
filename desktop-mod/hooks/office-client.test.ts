@@ -11,7 +11,7 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N } from './i18n'
-import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, windowOf } from './office-chrome'
+import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
 import { HOVER_BG, NO_DECOR, TILE_H, TILE_W, layoutOffice, textWidth, walkShift } from './office-layout'
@@ -39,7 +39,7 @@ function props(over: Partial<OfficeProps> = {}): OfficeProps {
   }
 }
 function drawer(over: Partial<OfficeDrawer> = {}): OfficeDrawer {
-  return { id: 'lead', name: '💼 המנהל', chips: ['עובד', 'Explore'], model: 'Opus 5.5', act: '🧠 חושב', task: 'map the docs', result: '', truncated: false, elapsedMin: 3, sub: 'map the docs', ...over }
+  return { id: 'lead', name: '💼 המנהל', chips: ['עובד', 'Explore'], model: 'Opus 5.5', act: '🧠 חושב', task: 'map the docs', result: '', truncated: false, elapsedMin: 3, sub: 'map the docs', done: false, ...over }
 }
 function withAgents(p: OfficeProps, agents: OfficeAgent[]): OfficeProps {
   return { ...p, rooms: [room('A', agents)] }
@@ -133,6 +133,28 @@ test('windowOf: the rows the engine shows, in layout coordinates, never shifted 
   expect(windowOf(3, 3, 80, 500, 45).count).toBe(80)
 })
 
+test('THE OVERLAY IN VIEW (windowOf with the help | drawer rows): an overlay that leaves the window a row rides its top — the layout continues from the row the window starts at, under it; at the top it sits under the fixed chrome as before; one as tall as the window stays in the chrome', () => {
+  // 3 fixed rows + an 11-row overlay (chrome 14), a 25-row window over 100 layout rows
+  expect(overlayInWindow(11, 25)).toBe(true)
+  expect(overlayInWindow(0, 25)).toBe(false)
+  expect(overlayInWindow(25, 25)).toBe(false)
+  // scrolled 40 rows: the overlay takes the window's first 11 rows, the layout goes on from row 37 (40 - 3) under it —
+  // the same first row as with no overlay at all (the person's place kept), 11 rows fewer of it
+  expect(windowOf(14, 40, 25, 100, 30, 11)).toEqual({ from: 37, count: 14 })
+  expect(windowOf(3, 40, 25, 100, 30)).toEqual({ from: 37, count: 25 })
+  // at the top (or inside the fixed chrome) the two placements are the same window
+  expect(windowOf(14, 0, 25, 100, 30, 11)).toEqual(windowOf(14, 0, 25, 100, 30))
+  expect(windowOf(14, 2, 25, 100, 30, 11)).toEqual(windowOf(14, 2, 25, 100, 30))
+  expect(windowOf(14, 3, 25, 100, 30, 11)).toEqual({ from: 0, count: 14 })
+  // just past the fixed chrome: the overlay is still whole at the top, the layout from row 1
+  expect(windowOf(14, 4, 25, 100, 30, 11)).toEqual({ from: 1, count: 14 })
+  // the end: the Client is 14 + 100 rows tall, so the last offset is 89 — the last layout row is the window's last
+  expect(windowOf(14, 89, 25, 100, 30, 11)).toEqual({ from: 86, count: 14 })
+  // an overlay as tall as the window (or taller) keeps its place in the chrome: today's window, scrolled through as content
+  expect(windowOf(28, 40, 25, 100, 30, 25)).toEqual(windowOf(28, 40, 25, 100, 30))
+  expect(windowOf(28, 40, 25, 100, 30, 25)).toEqual({ from: 12, count: 25 })
+})
+
 test('cleanSearch: the search text cut to SEARCH_MAX code points (never half an emoji) and freed of control characters (the surface refuses an Input value holding one)', () => {
   expect(SEARCH_MAX).toBe(200)
   expect(cleanSearch('triage')).toBe('triage')
@@ -201,6 +223,12 @@ test('chromeRows / officeHeight: header, toolbar, search; then help | drawer, th
   // the elapsed minutes ride on the chips line (whole minutes: the ruling of Task 2.2)
   expect(drawerLines(drawer({ elapsedMin: 7 }), LABELS, inner)[2]?.text).toMatch(/זמן 7/)
   expect(drawerLines(drawer({ elapsedMin: null }), LABELS, inner)[2]?.text).not.toMatch(/זמן/)
+  // the label follows the status, as the text cards' does: done → the duration, a failed (or killed) agent too — its chip reads ❌
+  expect(drawerLines(drawer({ chips: ['סיים'], done: true, elapsedMin: 3 }), LABELS, inner)[2]?.text).toMatch(/משך 3/)
+  const failed = drawerLines(drawer({ chips: ['❌ נכשל', 'Explore'], done: true, elapsedMin: 3 }), LABELS, inner)[2]?.text
+  expect(failed).toMatch(/משך 3/)
+  expect(failed).not.toMatch(/זמן/)
+  expect(drawerLines(drawer({ chips: ['❌ Failed'], done: true, elapsedMin: 3 }), LABELS_EN, inner)[2]?.text).toMatch(/Duration 3/)
   // the full height = chrome + the layout's rows; the empty office = chrome + its block
   const layout = layoutOffice(p)
   expect(officeHeight(p, layout.rows.length)).toBe(CHROME_ROWS + layout.rows.length)
@@ -456,6 +484,57 @@ test('pointer: only the drawn window answers — a click or a hover on a row the
   expect(f.posts).toHaveLength(2)
 })
 
+test('THE OVERLAY IN VIEW (render): a drawer or the help opened while the pane is scrolled is drawn at the top of the window — after the spacer — and the office rows under it start where they did; a click on the overlay hits no tile, the rows under it answer; an overlay as tall as the window stays under the fixed chrome', () => {
+  // 30 agents at 45 columns (3 tiles a row): 61 layout rows; a 25-row window scrolled 40 rows down
+  const crowd = withAgents(props({ rows: 25, offset: 40 }), Array.from({ length: 30 }, (_, i) => ag(`g${i}`)))
+  const lay = layoutOffice(crowd)
+  expect(lay.rows.length).toBe(61)
+  const rowText = (n: unknown) => texts(n).replace(/\n/g, '')
+  const laid = (y: number) => lay.rows[y]!.cells.map(c => c.ch).join('')
+  // no overlay: the spacer, then the window's rows from layout row 37 (40 - 3)
+  const plain = Office(crowd, fake(45, 0).surface) as unknown as Node
+  expect(plain.children[CHROME_ROWS]).toMatchObject({ type: 'Box', props: { height: 37 } })
+  expect(rowText(plain.children[CHROME_ROWS + 1])).toBe(laid(37))
+  // the drawer opens (a click on g13): drawn right after the spacer — the window's first rows — and the rows under it
+  // start at the same layout row 37: the grid did not move, the drawer took the top of the window
+  const p = { ...crowd, selected: 'g13', drawer: drawer({ id: 'g13' }) }
+  const C = chromeRows(p)
+  const H = overlayRows(p)
+  expect(C).toBe(CHROME_ROWS + H)
+  const f = fake(45, 0)
+  const tree = Office(p, f.surface) as unknown as Node
+  const kids = tree.children as Node[]
+  expect(kids[CHROME_ROWS]).toMatchObject({ type: 'Box', props: { height: 37 } })
+  expect(kids[CHROME_ROWS]!.props.borderStyle).toBeUndefined()
+  expect(kids[CHROME_ROWS + 1]).toMatchObject({ type: 'Box', props: { key: 'drawer', height: H } })
+  expect(texts(kids[CHROME_ROWS + 1])).toMatch(/💼 המנהל/)
+  expect(rowText(kids[CHROME_ROWS + 2])).toBe(laid(37))
+  expect(kids.length).toBe(CHROME_ROWS + 2 + (25 - H))   // the window less the drawer's rows
+  // Client rows: the drawer is rows 40..40+H (the window's top); layout row y is Client row C + y, as the pointer reads it
+  expect(CHROME_ROWS + 37).toBe(p.offset)
+  for (let y = p.offset; y < p.offset + H; y++) f.pointer({ type: 'down', x: 45 - TILE_W + 2, y, button: 'left' })
+  expect(f.posts).toEqual([])
+  const under = lay.hits.find(h => h.kind === 'agent' && h.y === 37)!
+  f.pointer({ type: 'down', x: under.x + 2, y: C + 37 + 2, button: 'left' })
+  expect(f.posts).toEqual([{ t: 'open', id: under.id }])
+  // the help likewise (it wins over the drawer)
+  const ph = { ...p, helpOpen: true }
+  const help = (Office(ph, fake(45, 0).surface) as unknown as Node).children as Node[]
+  expect(help[CHROME_ROWS]).toMatchObject({ type: 'Box', props: { height: 37 } })
+  expect(help[CHROME_ROWS + 1]).toMatchObject({ type: 'Box', props: { key: 'help', height: HELP_ROWS } })
+  expect(texts(help[CHROME_ROWS + 1])).toMatch(/קיצורי מקלדת/)
+  expect(rowText(help[CHROME_ROWS + 2])).toBe(laid(37))
+  // at the top the drawer sits under the fixed chrome, the layout from row 0
+  const top = (Office({ ...p, offset: 0 }, fake(45, 0).surface) as unknown as Node).children as Node[]
+  expect(top[CHROME_ROWS]).toMatchObject({ props: { key: 'drawer' } })
+  expect(rowText(top[CHROME_ROWS + 1])).toBe(laid(0))
+  // a window no taller than the drawer: the drawer keeps its place in the chrome (before the spacer), scrolled as content
+  const short = (Office({ ...p, rows: H }, fake(45, 0).surface) as unknown as Node).children as Node[]
+  expect(short[CHROME_ROWS]).toMatchObject({ props: { key: 'drawer' } })
+  expect(short[CHROME_ROWS + 1]).toMatchObject({ type: 'Box', props: { height: 40 - C } })
+  expect(rowText(short[CHROME_ROWS + 2])).toBe(laid(40 - C))
+})
+
 test('keys after a click: j/k walk the tiles with no post (the keyboard focus is the module\'s own), o/Enter open, x closes, f/m/l/h/d/s are the toolbar', () => {
   const f = fake()
   const p = props({ rooms: [room('A', [ag('lead'), ag('a1')]), room('B', [ag('b1')])] })
@@ -492,6 +571,33 @@ test('keys after a click: j/k walk the tiles with no post (the keyboard focus is
   Office(withAgents(p, [ag('lead')]), f.surface)
   f.key({ key: 'o' })
   expect(f.posts.length).toBe(9)
+})
+
+test('keys: j / k keep to the tiles drawn — from no focus, j lands on the window first tile and stops at its last; a focus scrolled out of the window restarts from the window first (j) or last (k) tile; o opens the focus', () => {
+  // 30 agents at 45 columns: tile blocks at layout rows 1 + 6k. A 13-row window scrolled 21 rows: layout rows 18..30,
+  // whose head rows are blocks 3 and 4 (rows 19 and 25) — g9..g14; block 2 (head row 13) and block 5 (row 31) are not drawn
+  const p = withAgents(props({ rows: 13, offset: 21 }), Array.from({ length: 30 }, (_, i) => ag(`g${i}`)))
+  const f = fake(45, 0)
+  Office(p, f.surface)
+  expect(f.surface.state!.inst.win).toEqual({ from: 18, count: 13 })
+  f.key({ key: 'j' })
+  expect(f.surface.state!.focus).toBe('g9')
+  for (let i = 0; i < 8; i++) f.key({ key: 'j' })
+  expect(f.surface.state!.focus).toBe('g14')                 // the window's last tile: the walk stops there
+  const tree = Office(p, f.surface)
+  expect(withBg(tree, FX_BG.focus).length).toBeGreaterThan(0) // ... and its highlight is drawn
+  f.key({ key: 'k' })
+  expect(f.surface.state!.focus).toBe('g13')
+  // the person scrolls back to the top: g13 is out of the window (layout rows 0..9: blocks 0 and 1, g0..g5)
+  Office({ ...p, offset: 3 }, f.surface)
+  f.key({ key: 'j' })
+  expect(f.surface.state!.focus).toBe('g0')
+  Office(p, f.surface)                                       // and down again: g0 is out; k restarts from the window's last
+  f.key({ key: 'k' })
+  expect(f.surface.state!.focus).toBe('g14')
+  expect(f.posts).toEqual([])
+  f.key({ key: 'o' })
+  expect(f.posts).toEqual([{ t: 'open', id: 'g14' }])
 })
 
 test('search: the Input draws the typed text (not props.search) across props updates; the post is debounced; an outside change is adopted', () => {
@@ -591,6 +697,15 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
     ;(b.props.onPress as () => void)()
     expect(f.posts[f.posts.length - 1]).toEqual({ t: t2 })
   }
+  // the show-finished box: ☑ while the finished are shown — the pref, or the demo (which shows them without touching the
+  // pref: the text cards' rule); its press still flips the pref alone
+  const doneBox = (q: OfficeProps) => nodes(Office(q, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!
+  expect(doneBox(props()).props.label).toBe('☐')
+  expect(doneBox(props({ prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('☑')
+  expect(doneBox(props({ demo: true })).props.label).toBe('☑')
+  const g = fake()
+  ;(nodes(Office(props({ demo: true }), g.surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!.props.onPress as () => void)()
+  expect(g.posts).toEqual([{ t: 'showDone' }])
   // the empty office: the message, the sub lines, the demo Button; no rows
   const empty = props({ rooms: [], counts: { run: 0, idle: 0, done: 0 }, empty: { kind: 'office', msg: LABELS.emptyOffice ?? '', sub: LABELS.emptySub ?? '' } })
   tree = Office(empty, fake().surface)
@@ -603,7 +718,9 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   expect(texts(Office({ ...p, usage: { pct: 85, resetsAt: '' } }, fake().surface))).toMatch(/⚠ 5h 85%/)
 })
 
-test('header: the five-hour meter is the full label (bar and reset clock) where the whole line fits from COMPACT_BELOW columns, else the short form — never cut mid-bar', () => {
+// (2,832 renders: about 0.5 s alone, 1.8 s in a full run, and a loaded machine stretches the suite tenfold — the 5 s
+// default timeout would fail it with no code change, as it did a 0.5 s band test; the other sweeps take 30 s too)
+test('header: the five-hour meter is the full label (bar and reset clock) where the whole line fits from COMPACT_BELOW columns, else the short form — never cut mid-bar', { timeoutMs: 30_000 }, () => {
   const R = new Date(2026, 9, 10, 14, 30).toISOString() // (a local wall-clock time: reads back as 14:30 in any zone)
   const u = { pct: 42.4, resetsAt: R }
   /** The header line the module drew: the first Text of the tree. */
@@ -720,12 +837,12 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
       expect(f.setStates()).toBe(1)
       // the window keeps its byte budget: past it the rows are left blank rather than unmounting the instance
       const chrome = chromeRows(p)
-      const from = Math.max(0, offset - chrome)
+      const win = windowOf(chrome, offset, rows, layoutOffice(p).rows.length, columns, overlayRows(p))
       const chromeElements = 3 + (p.footer ? 1 : 0) + 1   // header, toolbar, search, the drawer Box
-      const drawnRows = (tree as unknown as Node).children.length - chromeElements - (from > 0 ? 1 : 0)
-      expect(drawnRows).toBe(windowOf(chrome, offset, rows, layoutOffice(p).rows.length, columns).count)
+      const drawnRows = (tree as unknown as Node).children.length - chromeElements - (win.from > 0 ? 1 : 0)
+      expect(drawnRows).toBe(win.count)
       expect(drawnRows).toBeLessThanOrEqual(Math.floor(WINDOW_CHARS / (ROW_CHARS_PER_COLUMN * columns)))
-      if (columns === 200 && rows === 80) expect(drawnRows).toBe(50)
+      if (columns === 200 && rows === 80 && offset === 0) expect(drawnRows).toBe(50) // (scrolled 20 rows the content's end comes first)
     }
   }
   // widths in between, one window each, every fourth column (the per-column sweep is Task 2.1's; here the tree)

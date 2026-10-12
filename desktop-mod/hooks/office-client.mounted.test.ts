@@ -67,11 +67,13 @@ async function kidsOf(ui: Finder): Promise<Drawn[]> {
   return ((await ui.drawn({ in: OFFICE_KEY })) as Drawn).children?.filter((k): k is Drawn => typeof k !== 'string') ?? []
 }
 
-/** The drawn rows: layout row y is `rows[y - spacer]` (the chrome and the spacer Box left out). */
+/** The help popover | the drawer: the module's framed Boxes (drawn under the fixed chrome, or after the spacer at the window's top). */
+const isOverlay = (k: Drawn) => k.type === 'Box' && k.props.borderStyle !== undefined
+
+/** The drawn rows: layout row y is `rows[y - spacer]` (the chrome, the help | drawer and the spacer Box left out). */
 async function drawnRows(ui: Finder, p: OfficeProps): Promise<{ spacer: number; rows: Drawn[] }> {
-  const kids = await kidsOf(ui)
-  const chromeEls = 3 + (p.footer ? 1 : 0) + (p.helpOpen || p.drawer ? 1 : 0)
-  const body = kids.slice(chromeEls)
+  const kids = (await kidsOf(ui)).filter(k => !isOverlay(k))
+  const body = kids.slice(3 + (p.footer ? 1 : 0))
   const spacer = body[0]?.type === 'Box' ? Number(body[0].props.height ?? 0) : 0
   return { spacer, rows: spacer > 0 ? body.slice(1) : body }
 }
@@ -291,5 +293,56 @@ test('DESKTOP (2.4): the window — a spacer for the rows scrolled past, the row
   expect((await officeProps(ui)).selected).toBeNull()
   await ui.pointer({ in: OFFICE_KEY, type: 'move', x: 45 - TILE_W + 2, y: chrome + 1 + 2 })
   expect(await withBg(ui, HOVER_BG)).toBe(false)
+  await ui.unmount()
+})
+
+test('DESKTOP: a drawer or the help opened while the pane is scrolled opens IN VIEW — drawn at the top of the window, after the spacer, with the office rows under it where they were (the clicked tile still drawn, focused); closed, the window is as before', async ($, on) => {
+  if (!ENABLED) return
+  // 20 agents at 30 columns (2 tiles a row): 61 layout rows; a 25-row window scrolled 40 rows down shows layout rows from 37
+  const many = Array.from({ length: 20 }, (_, i) => agent({ id: `a${i}` }))
+  const { clock } = beneath(on, () => many, PREFS())
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 30, scroll: { offset: 40, bodyRows: 25 } } })
+  const p0 = await officeProps(ui)
+  expect(p0.offset).toBe(40)
+  expect(layoutOffice(p0).rows.length).toBe(61)
+  const before = await drawnRows(ui, p0)
+  expect(before.spacer).toBe(37)
+  // a click on a12 (block 6: its head is layout row 37, the window's first row; RTL → the right-hand tile)
+  const hit = layoutOffice(p0).hits.find(h => h.kind === 'agent' && h.id === 'a12')!
+  expect(hit.y).toBe(37)
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit.x + 2, y: chromeRows(p0) + hit.y + 2, button: 'left' })
+  const p1 = await officeProps(ui)
+  expect(p1.drawer?.id).toBe('a12')
+  expect(p1.offset).toBe(40)                                         // nothing scrolled: the engine's window stays
+  // the module's tree: the fixed chrome, the spacer, the DRAWER (the window's top: Client row 3 + 37 = 40), then the rows
+  const kids = await kidsOf(ui)
+  expect(kids[CHROME_ROWS]).toMatchObject({ type: 'Box', props: { height: 37 } })
+  expect(isOverlay(kids[CHROME_ROWS]!)).toBe(false)
+  expect(kids[CHROME_ROWS + 1]).toMatchObject({ type: 'Box', props: { borderStyle: 'double' } })
+  expect(textOf(kids[CHROME_ROWS + 1]!)).toMatch(/משימה/)        // the drawer's task heading
+  // ... and the rows under it start at the same layout row: the clicked tile is drawn, with the selection on its head row
+  const open = await drawnRows(ui, p1)
+  expect(open.spacer).toBe(37)
+  expect(await drawnRow(ui, p1, 37)).toBe(laidRow(p1, NO_DECOR, 37))
+  expect(await drawnRow(ui, p1, 37)).toContain(p1.rooms[0]!.agents.find(a => a.id === 'a12')!.emoji)
+  expect(await bgRows(ui, p1, FX_BG.focus)).toEqual([37])          // the click's focus (laid over its selection) on its head row
+  expect(open.rows.length).toBe(25 - (chromeRows(p1) - CHROME_ROWS))   // the window less the drawer's rows
+  // the help (h) takes the same place; h again closes it, x the drawer: the window is as before
+  await ui.key({ in: OFFICE_KEY, key: 'h' })
+  const p2 = await officeProps(ui)
+  expect(p2.helpOpen).toBe(true)
+  const help = await kidsOf(ui)
+  expect(help[CHROME_ROWS]).toMatchObject({ type: 'Box', props: { height: 37 } })
+  expect(help[CHROME_ROWS + 1]).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
+  expect(textOf(help[CHROME_ROWS + 1]!)).toMatch(/k \/ j/)
+  await ui.key({ in: OFFICE_KEY, key: 'h' })
+  await ui.key({ in: OFFICE_KEY, key: 'x' })
+  const p3 = await officeProps(ui)
+  expect(p3.drawer).toBeNull()
+  expect((await kidsOf(ui)).some(isOverlay)).toBe(false)
+  expect((await drawnRows(ui, p3)).spacer).toBe(37)
+  expect(await drawnRow(ui, p3, 37)).toBe(await drawnRow(ui, p0, 37))
   await ui.unmount()
 })

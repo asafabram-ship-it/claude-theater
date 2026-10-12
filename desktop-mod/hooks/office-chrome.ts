@@ -94,14 +94,35 @@ export function cleanSearch(q: string): string {
 export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
 
 /**
+ * THE OVERLAY IN VIEW: whether the help popover | the drawer (`overlay` rows, part of the chrome) is drawn at the
+ * top of the engine's window rather than under the fixed chrome — whenever it leaves the window a row for the
+ * office. Under the native scroll the chrome scrolls away with the content, so a drawer or help opened while the
+ * pane is scrolled down would otherwise be drawn above the window: the person would see the grid jump and no
+ * drawer. Drawn at the window's top instead, it opens in view and the office rows under it stay where they were
+ * (the person's place is kept); scrolled back to the top it sits under the fixed chrome as before. An overlay as
+ * tall as the window keeps its place in the chrome, so the person can still scroll through all of it.
+ */
+export function overlayInWindow(overlay: number, bodyRows: number): boolean {
+  return overlay > 0 && overlay < bodyRows
+}
+
+/**
  * The layout rows the engine's window shows, in layout coordinates: `from` is
  * the first row (the rows above it are one spacer), `count` how many — never
  * more than the content holds (so `windowRows` has nothing to clamp and the
  * rows stay under the pointer), never more than the byte budget allows.
+ * `chrome` is chromeRows (the overlay included) and `overlay` the help | drawer
+ * rows inside it: when the overlay is drawn at the window's top
+ * (overlayInWindow), the layout continues from the row the window starts at,
+ * under the overlay; either way layout row y sits at Client row chrome + y.
  */
-export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, columns: number): { from: number; count: number } {
-  const from = Math.max(0, offset - chrome)
-  const visible = Math.max(0, bodyRows - Math.max(0, chrome - offset))
+export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, columns: number, overlay = 0): { from: number; count: number } {
+  const inWindow = overlayInWindow(overlay, bodyRows)
+  // the rows above the layout that the window scrolls past before the office starts: the fixed chrome alone when the
+  // overlay rides the window's top, the whole chrome otherwise
+  const lead = inWindow ? chrome - overlay : chrome
+  const from = Math.max(0, offset - lead)
+  const visible = Math.max(0, bodyRows - (inWindow ? overlay : 0) - Math.max(0, lead - offset))
   const budget = Math.max(1, Math.floor(WINDOW_CHARS / (ROW_CHARS_PER_COLUMN * Math.max(1, columns))))
   return { from, count: Math.max(0, Math.min(visible, budget, len - from)) }
 }
@@ -151,7 +172,8 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
   if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
   const chips = [...d.chips]
-  if (d.elapsedMin !== null) chips.push(`${d.chips[0] === lbl('dDone') ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}′`)
+  // the label follows the status, as the text cards' does (a failed or killed agent is done: its chip reads ❌, its clock is a duration)
+  if (d.elapsedMin !== null) chips.push(`${d.done ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}′`)
   const shown: string[] = []
   let used = 0
   for (const c of chips) {
@@ -188,10 +210,14 @@ export function emptyRows(p: OfficeProps): number {
 
 /** The rows above the layout: header, toolbar, search, the footer line when there is one, then the help popover or the drawer. */
 export function chromeRows(p: OfficeProps): number {
-  let n = CHROME_ROWS + (p.footer ? 1 : 0)
-  if (p.helpOpen) n += HELP_ROWS
-  else if (p.drawer) n += 2 + drawerLines(p.drawer, p.labels, Math.max(1, p.columns - 4)).length
-  return n
+  return CHROME_ROWS + (p.footer ? 1 : 0) + overlayRows(p)
+}
+
+/** The help popover's or the drawer's rows (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
+export function overlayRows(p: OfficeProps): number {
+  if (p.helpOpen) return HELP_ROWS
+  if (p.drawer) return 2 + drawerLines(p.drawer, p.labels, Math.max(1, p.columns - 4)).length
+  return 0
 }
 
 /** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `rowCount(p)`, office-layout.ts: no cell is built for it). */

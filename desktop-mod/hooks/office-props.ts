@@ -12,11 +12,14 @@
 // the drawer (one selected agent), never per agent; every text capped (name
 // 24, act 16, room title and the drawer's name / subtitle 48, task/result
 // 4000 — whole glyphs, through the layout's `cut`); ~100 agents ≈ 25 KB, far
-// under the 100,000-character props bound.
+// under the 100,000-character props bound — and never past it: at most
+// MAX_PROPS_AGENTS agents ride the props (the rest counted in the footer,
+// `+N`), and props measured over PROPS_BUDGET shed the drawer's long text,
+// then more agents.
 
 import { I18N, activityLabel, dirOf, modelFamily, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
-import type { Agent, Payload, Prefs, View } from './model'
+import type { Payload, Prefs, View } from './model'
 import { cut } from './office-layout'
 import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
 import { personaName } from './personas'
@@ -51,6 +54,7 @@ export type OfficeDrawer = {
   id: string; name: string; chips: string[]; model: string; act: string; task: string; result: string; truncated: boolean
   elapsedMin: number | null                                 // whole minutes of agentElapsed(sel, nowMin, true): the duration when done, else the elapsed; null = unknown
   sub: string                                               // the dim subtitle under the name, as today: role || task_short (≤ 48)
+  done: boolean                                             // status 'done' (a failed or killed agent too): the clock is labelled Duration, else Elapsed
 }
 
 export type OfficeProps = {
@@ -99,6 +103,21 @@ const ACT_MAX = 16
 const TITLE_MAX = 48
 const TEXT_MAX = RESULT_CHAR_LIMIT
 
+/** The Client's props bound (ClientProps: at most 100,000 characters serialized): over it the whole update is refused. */
+export const PROPS_MAX_CHARS = 100_000
+/** What buildOfficeProps keeps the serialized props under: the bound less a margin. */
+export const PROPS_BUDGET = 90_000
+/**
+ * THE PROPS CAP: the most agents the props carry. One costs about 250 characters (more with a long id, or a room of
+ * its own), so this many sit near half the budget. Past it the agents are dropped — the finished first, then from
+ * the end of the office's own order (pinned rooms, rooms with a running agent, the latest activity) — a room left
+ * with none is left out, and the footer counts them (`+N`, i18n moreAgentsN). Reached only with "show finished" on
+ * and hundreds of agents inside MAX_AGE_MIN; the header's counts stay the whole office's.
+ */
+export const MAX_PROPS_AGENTS = 200
+/** The drawer's task and result when the props still pass PROPS_BUDGET: cut to this many cells first, before more agents go. */
+export const DRAWER_TEXT_TIGHT = 600
+
 /** A clock value in whole minutes (≥ 0); `null` when the clock is unknown. */
 const wholeMinutes = (el: number | null): number | null => el === null ? null : Math.max(0, Math.floor(el / 60_000))
 
@@ -134,10 +153,15 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const { rooms, stat, order } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins)
   const nowMin = minuteClock(now)
   const stars = office.stars
-  const toAgent = (a: Agent): OfficeAgent => {
+  const cards = new Map<number, OfficeAgent>()
+  /** The card of `order[i]` (memoised: a rebuild under the budget maps no agent twice). */
+  const toAgent = (i: number): OfficeAgent => {
+    const known = cards.get(i)
+    if (known) return known
+    const a = order[i]!
     const el = agentElapsed(a, nowMin)
     const starAt = stars[a.id]
-    return {
+    const card: OfficeAgent = {
       id: a.id, emoji: a.emoji, name: cut(cardName(a, lang), NAME_MAX), status: a.status, fam: toolFamily(a.tool),
       act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL, modelFam: modelFamily(a.model),
       startMin: wholeMinutes(el),
@@ -145,36 +169,68 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
       star: a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS ? starAt : 0,
       enteredAt: input.firstSeen[a.id] ?? 0,
     }
+    cards.set(i, card)
+    return card
   }
-  const outRooms: OfficeRoom[] = rooms.map(s => {
-    const st = stat.get(s)
-    return {
-      id: s, title: cut(st?.topic || st?.label || s.slice(0, 8), TITLE_MAX), small: st?.topic ? st.label : (st?.sid ?? s.slice(0, 8)),
-      pinned: prefs.pins.includes(s), showDone: roomShowsDone(roomDone, showDone, s),
-      run: st?.running ?? 0, stale: st?.stale ?? 0, done: st?.done ?? 0,
-      agents: order.filter(a => a.session_full === s).map(toAgent),
-    }
-  })
+  // THE PROPS CAP's ranking: the cards still working or waiting first, then the finished — each in the office's order
+  const ranked = order.map((_, i) => i).sort((x, y) => (order[x]!.status === 'done' ? 1 : 0) - (order[y]!.status === 'done' ? 1 : 0) || x - y)
   const sel = view.selected !== null ? office.agents.find(a => a.id === view.selected) : undefined
-  const drawer: OfficeDrawer | null = sel ? {
-    // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
-    id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
-    chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
-    model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
-    elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
-    task: cut(sel.task || L.taskUnavailable, TEXT_MAX), result: cut(sel.result ?? '', TEXT_MAX), truncated: sel.truncated,
-  } : null
   const kind = order.length === 0 ? emptyKind(view.search, office.agents.length, showDone) : null
   const labels: Record<string, string> = {}
   for (const k of LABEL_KEYS) labels[k] = L[k]
-  const props: OfficeProps = {
-    v: 1, lang, rtl: dirOf(lang) === 'rtl', columns: input.columns, rows: input.rows, offset: Math.max(0, input.offset), nowMin,
-    counts: headerCounts(office.agents),
-    prefs: { showDone: prefs.showDone, muted: prefs.muted, still: prefs.still === true },
-    search: view.search, selected: view.selected, helpOpen: view.helpOpen, demo: view.demo,
-    rooms: outRooms, drawer, footer: input.footer ?? '', usage: input.usage,
-    empty: kind === null ? null : { kind, msg: kind === 'noactive' ? L.emptyNoActive : kind === 'nonewindow' ? L.emptyNoneInWindow : kind === 'nomatch' ? L.emptyNoMatch : L.emptyOffice, sub: kind === 'office' ? L.emptySub : '' },
-    labels,
+  /** The props with at most `cap` agents and the drawer's task / result cut to `textMax` cells. */
+  const build = (cap: number, textMax: number): OfficeProps => {
+    const kept = new Set(ranked.slice(0, cap))
+    const dropped = order.length - kept.size
+    const outRooms: OfficeRoom[] = []
+    for (const s of rooms) {
+      const agents: OfficeAgent[] = []
+      order.forEach((a, i) => { if (a.session_full === s && kept.has(i)) agents.push(toAgent(i)) })
+      if (agents.length === 0) continue // every agent of the room went over the cap: the footer counts them
+      const st = stat.get(s)
+      outRooms.push({
+        id: s, title: cut(st?.topic || st?.label || s.slice(0, 8), TITLE_MAX), small: st?.topic ? st.label : (st?.sid ?? s.slice(0, 8)),
+        pinned: prefs.pins.includes(s), showDone: roomShowsDone(roomDone, showDone, s),
+        run: st?.running ?? 0, stale: st?.stale ?? 0, done: st?.done ?? 0,
+        agents,
+      })
+    }
+    const drawer: OfficeDrawer | null = sel ? {
+      // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
+      id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
+      chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
+      model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
+      elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
+      task: cut(sel.task || L.taskUnavailable, textMax), result: cut(sel.result ?? '', textMax), truncated: sel.truncated,
+      done: sel.status === 'done',
+    } : null
+    // the count of the agents over the cap leads the footer (short, so a narrow pane still shows it), then the scan notes
+    const footer = [dropped > 0 ? L.moreAgentsN(dropped) : '', input.footer ?? ''].filter(Boolean).join(' · ')
+    return {
+      v: 1, lang, rtl: dirOf(lang) === 'rtl', columns: input.columns, rows: input.rows, offset: Math.max(0, input.offset), nowMin,
+      counts: headerCounts(office.agents),
+      prefs: { showDone: prefs.showDone, muted: prefs.muted, still: prefs.still === true },
+      search: view.search, selected: view.selected, helpOpen: view.helpOpen, demo: view.demo,
+      rooms: outRooms, drawer, footer, usage: input.usage,
+      empty: kind === null ? null : { kind, msg: kind === 'noactive' ? L.emptyNoActive : kind === 'nonewindow' ? L.emptyNoneInWindow : kind === 'nomatch' ? L.emptyNoMatch : L.emptyOffice, sub: kind === 'office' ? L.emptySub : '' },
+      labels,
+    }
+  }
+  // THE PROPS BUDGET: props past ClientProps' bound lose the whole update, so they are measured and degraded until they
+  // fit — the drawer's long text first, then fewer agents (each pass at least one fewer, so it ends)
+  let cap = MAX_PROPS_AGENTS
+  let textMax = TEXT_MAX
+  let props = build(cap, textMax)
+  let size = JSON.stringify(props).length
+  if (size > PROPS_BUDGET && sel) {
+    textMax = DRAWER_TEXT_TIGHT
+    props = build(cap, textMax)
+    size = JSON.stringify(props).length
+  }
+  while (size > PROPS_BUDGET && cap > 0) {
+    cap = Math.max(0, Math.min(Math.min(cap, order.length) - 1, Math.floor((cap * PROPS_BUDGET * 0.9) / size)))
+    props = build(cap, textMax)
+    size = JSON.stringify(props).length
   }
   assertJson(props)
   return props

@@ -8,13 +8,19 @@
 // Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
 // Client as tall as the content (`officeHeight`); `props.offset` is the
 // engine's window offset and `props.rows` the pane's body height. The module
-// draws the chrome (header, toolbar, search, [footer], [help | drawer]), then
-// ONE spacer Box for the rows scrolled past, then only the layout rows the
-// window shows (`windowOf`, capped by a byte budget), then nothing: the tree
-// is bounded by the window, not by the number of agents. Pointer rows are
-// Client rows, so a hit is `hitAt(layout, x, y - chromeRows)` on the full
-// layout — on the rows drawn only: a row the budget left blank, or the spacer
-// above the window, answers nothing.
+// draws the fixed chrome (header, toolbar, search, [footer]), then ONE spacer
+// Box for the rows scrolled past, then the help popover | the drawer when one
+// is open — at the top of the window (office-chrome.ts overlayInWindow: so it
+// opens in view however far the pane is scrolled, the office rows under it
+// staying where they were; an overlay as tall as the window stays under the
+// fixed chrome, before the spacer) — then only the layout rows the window
+// shows (`windowOf`, capped by a byte budget), then nothing: the tree is
+// bounded by the window, not by the number of agents. Layout row y is Client
+// row chromeRows + y either way, so a hit is `hitAt(layout, x, y - chromeRows)`
+// on the full layout — on the rows drawn only: a row the budget left blank,
+// the spacer above the window or the overlay over it answers nothing. The
+// keyboard walk (j / k) keeps to the tiles drawn: a focus scrolled away is
+// left for the first (or last) tile of the window.
 //
 // Motion (spec §7.4): the layout draws the hover, the hop and the walk-in
 // from a decor the module derives from its local state (office-layout.ts
@@ -36,7 +42,7 @@
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, windowOf } from './office-chrome'
+import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, overlayInWindow, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
 import { NO_DECOR, TILE_H, cut, hitAt, layoutOffice, rowRuns, textWidth, windowRows } from './office-layout'
 import type { Cell, Hit, OfficeDecor, OfficeLayout } from './office-layout'
@@ -240,7 +246,14 @@ function listen(surface: Surface): void {
       const inst = cur.inst
       const k = ev.key
       if (k === 'j' || k === 'down' || k === 'k' || k === 'up') {
-        const order = inst.order
+        // the walk keeps to the tiles whose head row is drawn (the window): a focus on a tile scrolled away would show no
+        // highlight, and `o` would open a drawer for a tile the person cannot see; past the window's last tile the person
+        // scrolls the pane, and a focus left above or below the window restarts from the window's first (or last) tile
+        const { from, count } = inst.win
+        const order = inst.order.filter(id => {
+          const hit = inst.hitById.get(id)
+          return hit !== undefined && hit.y >= from && hit.y < from + count
+        })
         if (order.length === 0) return
         const d = k === 'j' || k === 'down' ? 1 : -1
         const i = cur.focus ? order.indexOf(cur.focus) : -1
@@ -331,7 +344,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         inst.drawerKey = dk
       }
     }
-    inst.chrome = CHROME_ROWS + (props.footer ? 1 : 0) + (props.helpOpen ? HELP_ROWS : props.drawer ? 2 + inst.drawer.length : 0)
+    // (the help | drawer rows: chromeRows' overlayRows, from the memoised lines)
+    const overlayRows = props.helpOpen ? HELP_ROWS : props.drawer ? 2 + inst.drawer.length : 0
+    inst.chrome = CHROME_ROWS + (props.footer ? 1 : 0) + overlayRows
 
     // --- the search text: ours unless the hooks changed it from outside (not our own echo); cleaned either way ---
     if (props.search !== inst.propsSearch) {
@@ -368,7 +383,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
 
     // --- toolbar: the same keys as today's pane ---
     kids.push(line([
-      Button({ key: 'showDone', ...hk('f'), plain: true, label: props.prefs.showDone ? '☑' : '☐', onPress: () => send(surface, { t: 'showDone' }) }),
+      // (☑ while the finished are shown: the pref, or the demo, which shows them without touching it — the text cards' rule)
+      Button({ key: 'showDone', ...hk('f'), plain: true, label: props.prefs.showDone || props.demo ? '☑' : '☐', onPress: () => send(surface, { t: 'showDone' }) }),
       Button({ key: 'mute', ...hk('m'), plain: true, label: props.prefs.muted ? '🔕' : '🔔', onPress: () => send(surface, { t: 'mute' }) }),
       Button({ key: 'lang', ...hk('l'), plain: true, label: props.lang === 'he' ? 'EN' : 'עב', onPress: () => send(surface, { t: 'lang' }) }),
       Button({ key: 'help', ...hk('h'), plain: true, label: '?', onPress: () => send(surface, { t: 'help' }) }),
@@ -390,12 +406,14 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     // --- footer (scan notes): in the chrome, so it is seen without scrolling to the end ---
     if (props.footer) kids.push(Text({ dimColor: true, wrap: 'truncate', children: [cut(props.footer, props.columns)] }))
 
-    // --- help popover | drawer: fixed heights, so the rows under them never move ---
+    // --- help popover | drawer: fixed heights, so the rows under them never move; pushed further down — at the window's
+    //     top, or under the fixed chrome ---
+    let overlay: RenderElement | null = null
     if (props.helpOpen) {
-      kids.push(Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', paddingX: 1, height: HELP_ROWS, overflow: 'hidden', children: [
+      overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', paddingX: 1, height: HELP_ROWS, overflow: 'hidden', children: [
         line([Text({ bold: true, children: [cut(lbl('helpTitle'), Math.max(1, inner - 3))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between' }),
         ...HELP.map(([k, keys]) => line([Text({ children: [cut(lbl(k), Math.max(1, inner - keys.length - 1))] }), Text({ color: 'cyan', children: [keys] })], { justifyContent: 'space-between' })),
-      ] }))
+      ] })
     } else if (props.drawer) {
       const items: RenderElement[] = inst.drawer.map(l => {
         // (the row takes the drawer's full width so `space-between` parts the name and the ✕: `alignSelf: 'stretch'` is not a value the desktop's Box takes)
@@ -405,12 +423,13 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (l.kind === 'dim' || l.kind === 'note') return Text({ dimColor: true, children: [l.text] })
         return Text({ children: [l.text] })
       })
-      kids.push(Box({ key: 'drawer', flexDirection: 'column', borderStyle: 'double', paddingX: 1, height: 2 + inst.drawer.length, overflow: 'hidden', alignItems: props.rtl ? 'flex-end' : 'flex-start', children: items }))
+      overlay = Box({ key: 'drawer', flexDirection: 'column', borderStyle: 'double', paddingX: 1, height: 2 + inst.drawer.length, overflow: 'hidden', alignItems: props.rtl ? 'flex-end' : 'flex-start', children: items })
     }
 
     if (props.empty) {
       // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no rows, so nothing to click ---
       inst.win = { from: 0, count: 0 }
+      if (overlay) kids.push(overlay)
       const e = emptyLines(props)
       kids.push(Box({ key: 'empty', flexDirection: 'column', alignItems: 'center', marginTop: 1, children: [
         Text({ children: ['🏢'] }),
@@ -419,11 +438,16 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: lbl('watchDemo'), onPress: () => send(surface, { t: 'demo' }) })] : []),
       ] }))
     } else {
-      // --- the rooms: a spacer for the rows scrolled past, then the window's rows, one Text per row, a Text per styled run ---
+      // --- the rooms: a spacer for the rows scrolled past, the help | drawer at the window's top (THE OVERLAY IN VIEW,
+      //     office-chrome.ts; one as tall as the window before the spacer, under the fixed chrome), then the window's
+      //     rows, one Text per row, a Text per styled run ---
       const body = props.rows > 0 ? props.rows : 30
-      const { from, count } = windowOf(inst.chrome, props.offset, body, layout.rows.length, props.columns)
+      const { from, count } = windowOf(inst.chrome, props.offset, body, layout.rows.length, props.columns, overlayRows)
       inst.win = { from, count }
+      const atTop = overlayInWindow(overlayRows, body)
+      if (overlay && !atTop) kids.push(overlay)
       if (from > 0) kids.push(Box({ height: from }))
+      if (overlay && atTop) kids.push(overlay)
       const rects = overlays(s, props)
       const rows = windowRows(layout, from, count)
       for (let i = 0; i < rows.length; i++) {

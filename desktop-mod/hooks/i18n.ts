@@ -42,6 +42,8 @@ export type Strings = {
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
+  /** The desktop footer's count of the agents over the props cap (office-props.ts MAX_PROPS_AGENTS), led by its `+N`. */
+  moreAgentsN: (n: number) => string
   roomTitle: string; details: string; keysHint: string
   personas: readonly string[]; tools: Readonly<Record<string, string>>
 }
@@ -74,6 +76,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
     oversizedN: n => `${n} transcript${n === 1 ? '' : 's'} over 4 MiB skipped`,
+    moreAgentsN: n => `+${n} more agent${n === 1 ? '' : 's'} not shown`,
     roomTitle: 'Conversation', details: 'Details', keysHint: 'focus the pane (ctrl+x tab) for the hotkeys',
     personas: PERSONAS_EN, tools: TOOLS_EN,
   },
@@ -104,6 +107,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי MCP',
     oversizedN: n => `${n} תמלילים מעל 4MiB דולגו`,
+    moreAgentsN: n => `+${n} סוכנים נוספים לא מוצגים`,
     roomTitle: 'שיחה', details: 'פרטים', keysHint: 'למקשי הקיצור מקדו את החלונית (ctrl+x tab)',
     personas: PERSONAS_HE, tools: TOOLS_HE,
   },

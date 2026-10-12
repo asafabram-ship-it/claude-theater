@@ -1,6 +1,6 @@
 # פרומפט להמשך: בניית המשרד על Client (תיאטרון הסוכנים בדסקטופ)
 
-נשמר: 2026-10-12 12:10 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 · Ultracode מופעל
+נשמר: 2026-10-12 13:20 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 · Ultracode מופעל
 
 ---
 
@@ -10,10 +10,10 @@
 
 **תור ראשון, לפני כל עבודה:**
 1. `get_usage` (self). צור CronCreate "usage-guard" כל 20 דקות (דקה לא עגולה) לפי סקיל `save-documents` (סעיף "שומר מכסה").
-2. קרא, בסדר הזה: `desktop-mod/HANDOFF.md` (הסעיפים העליונים: "נקודת שמירה 2026-10-12 12:10", ואז "2026-10-12 10:40" - כולל רשימת הבדיקה בעין של Task 2.8 - ו-"שלב 0 - תוצאות"), `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (סעיפים 2 - כולל פריטים 7-12, 4, 8, 12 חובה), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` ("Global Constraints" + "Shared interfaces" + ה-Amendment תחת Tasks 2.3/2.4/2.5/3.2/3.4, Task 1.5, Task 1.2b), והלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט; Tasks 0.1, 0.2, 1.1-1.4, 1.4b, 2.1-2.7, 2.7b, 3.1-3.3 כבר `complete` (3.4 בוצע בשלב 0) - אל תריץ אותן שוב; אם הלדג'ר חסר, פתח חדש לפי `superpowers:subagent-driven-development` ורשום אותן כ-complete לפי HANDOFF).
+2. קרא, בסדר הזה: `desktop-mod/HANDOFF.md` (הסעיפים העליונים: "נקודת שמירה 2026-10-12 13:20", "12:10", ואז "2026-10-12 10:40" - כולל רשימת הבדיקה בעין של Task 2.8 - ו-"שלב 0 - תוצאות"), `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (סעיפים 2 - כולל פריטים 7-12, 4, 8, 12 חובה), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` ("Global Constraints" + "Shared interfaces" + ה-Amendment תחת Tasks 2.3/2.4/2.5/3.2/3.4, Task 1.5, Task 1.2b), והלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט; Tasks 0.1, 0.2, 1.1-1.4, 1.4b, 2.1-2.7, 2.7b, 3.1-3.3 כבר `complete` (3.4 בוצע בשלב 0) - אל תריץ אותן שוב; אם הלדג'ר חסר, פתח חדש לפי `superpowers:subagent-driven-development` ורשום אותן כ-complete לפי HANDOFF).
 3. אם `git status` מראה קבצים לא מקומטים - קמט ודחוף (`docs(mod): checkpoint <תאריך>`, עם השורה `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`).
 
-**איפה אנחנו:** כל הקוד של התוכנית כתוב ונסקר (שלב 3 - מד 5 השעות - הושלם ב-12.10, `142d1f9`, 146 בדיקות). קוד שלב 2: המשרד בדסקטופ הוא Client אחד (`office-client.tsx`) עם הודעות (`ui.message`), נפילה לכרטיסי טקסט (`ui.fault`), הנפשה באירועים, וניקוי תווי בקרה/כיוון מטקסט הסוכנים ומהחיפוש. 122 בדיקות עוברות על מנועים 2.1.293 ו-2.1.295 (האפליקציה רצה עכשיו על 2.1.295), הכול נדחף (`8d9ff14`). המוד הראשי עדיין כבוי.
+**איפה אנחנו:** כל הקוד של התוכנית כתוב ונסקר, כולל סקירה כוללת של הענף וגל תיקון (12.10, `85093f6`, 156 בדיקות על שני המנועים). קוד שלב 2: המשרד בדסקטופ הוא Client אחד (`office-client.tsx`) עם הודעות (`ui.message`), נפילה לכרטיסי טקסט (`ui.fault`), הנפשה באירועים, וניקוי תווי בקרה/כיוון מטקסט הסוכנים ומהחיפוש. 122 בדיקות עוברות על מנועים 2.1.293 ו-2.1.295 (האפליקציה רצה עכשיו על 2.1.295), הכול נדחף (`8d9ff14`). המוד הראשי עדיין כבוי.
 
 **המשימה, לפי הסדר:**
 

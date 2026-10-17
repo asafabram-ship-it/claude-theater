@@ -19,14 +19,20 @@
 // row chromeRows + y either way, so a hit is `hitAt(layout, x, y - chromeRows)`
 // on the full layout — on the rows drawn only: a row the budget left blank,
 // the spacer above the window or the overlay over it answers nothing. The
-// keyboard walk (j / k) keeps to the tiles drawn: a focus scrolled away is
-// left for the first (or last) tile of the window.
+// keyboard walk (j / k) keeps to the agent rows drawn: a focus scrolled away
+// is left for the first (or last) row of the window.
 //
 // Motion (spec §7.4): the layout draws the hover, the hop and the walk-in
 // from a decor the module derives from its local state (office-layout.ts
 // OfficeDecor), memoised by the props AND the decor; the selection, the
 // keyboard focus, the gold pulse under a hop and the status flash are
-// background overlays laid on the layout's cells here.
+// background overlays laid on the agent's row here.
+//
+// THE HEBREW RULE (i18n.ts): every line the chrome composes from Hebrew labels
+// and numbers (the header's counts and meter, the footer, the drawer's name,
+// model line and note) is a cell row of parts (office-layout.ts lineRow) drawn
+// as one Text per run, never one string with a digit or a Latin word inside a
+// Hebrew one. A label's symbol (✕, ✂, 🔍) follows the word in RTL.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while an fx is active and is stopped when the last one ends; the render
@@ -44,8 +50,8 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, overlayInWindow, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { NO_DECOR, TILE_H, cut, hitAt, layoutOffice, rowRuns, textWidth, windowRows } from './office-layout'
-import type { Cell, Hit, OfficeDecor, OfficeLayout } from './office-layout'
+import { NO_DECOR, cut, hitAt, layoutOffice, lineRow, rowRuns, textWidth, windowRows } from './office-layout'
+import type { Cell, CellRow, Hit, OfficeDecor, OfficeLayout, Part } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort } from './usage'
 
@@ -55,13 +61,13 @@ export { CHROME_ROWS } from './office-chrome'
 export const FX_TICK_MS = 250
 export const FX_ENTER_MS = 700
 export const FX_DONE_MS = 1000
-/** A status change flashes the desk row for this many frames of the fx clock. */
+/** A status change flashes the agent's row for this many frames of the fx clock. */
 export const FX_STATUS_FRAMES = 2
 export const SEARCH_DEBOUNCE_MS = 150
 /**
- * The background highlights the module lays over the layout's cells: the selection and the keyboard
- * focus (the head row), the gold pulse under a hop (the head row, alternating by frame) and the status
- * flash (the desk row). The hover and the motion are the layout's (office-layout.ts HOVER_BG, OfficeDecor).
+ * The background highlights the module lays over the agent's row: the selection and the keyboard
+ * focus, the gold pulse under a hop (alternating by frame) and the status flash. The hover and the
+ * motion are the layout's (office-layout.ts HOVER_BG, OfficeDecor).
  */
 export const FX_BG = {
   focus: '#3b4f8a', selected: '#4a3f8a',
@@ -116,7 +122,7 @@ function layoutKeyOf(p: OfficeProps, d: OfficeDecor): string {
 }
 
 /**
- * The decor from the local state: the hover, the tiles hopping (a `done` fx) and each walk-in's
+ * The decor from the local state: the hover, the agents hopping (a `done` fx) and each walk-in's
  * progress, 0 when its `enter` fx starts → 1 at FX_ENTER_MS (`1 - left / FX_ENTER_MS`).
  */
 function decorOf(s: OfficeState): OfficeDecor {
@@ -230,7 +236,7 @@ function listen(surface: Surface): void {
           if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
           send(surface, { t: 'open', id: hit.id })
         } else if (hit.kind === 'pin') send(surface, { t: 'pin', room: hit.id })
-        else send(surface, { t: 'roomDone', room: hit.id })
+        else send(surface, { t: 'roomDone', room: hit.id })   // the head's ✅ counts and the "more / hide finished" row: the room's toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
         const id = ev.type === 'leave' ? null : hit?.kind === 'agent' ? hit.id : null
         if (id !== cur.hover) surface.setState({ ...cur, hover: id })
@@ -246,9 +252,9 @@ function listen(surface: Surface): void {
       const inst = cur.inst
       const k = ev.key
       if (k === 'j' || k === 'down' || k === 'k' || k === 'up') {
-        // the walk keeps to the tiles whose head row is drawn (the window): a focus on a tile scrolled away would show no
-        // highlight, and `o` would open a drawer for a tile the person cannot see; past the window's last tile the person
-        // scrolls the pane, and a focus left above or below the window restarts from the window's first (or last) tile
+        // the walk keeps to the agent rows drawn (the window): a focus on a row scrolled away would show no highlight,
+        // and `o` would open a drawer for a row the person cannot see; past the window's last row the person scrolls
+        // the pane, and a focus left above or below the window restarts from the window's first (or last) row
         const { from, count } = inst.win
         const order = inst.order.filter(id => {
           const hit = inst.hitById.get(id)
@@ -281,25 +287,23 @@ function listen(surface: Surface): void {
 type Rect = { x: number; w: number; y: number; bg: string }
 
 /**
- * The highlights laid over the layout's cells: the selection and the keyboard focus (the head row),
- * the gold pulse under a hop (the head row, by frame parity: the ⭐ itself is the layout's) and the
- * status flash (the desk row). The walk-in is motion alone (the layout's), no colour.
+ * The highlights laid over the agent's row: the selection and the keyboard focus, the gold pulse
+ * under a hop (by frame parity: the ⭐ itself is the layout's) and the status flash. The walk-in is
+ * motion alone (the layout's), no colour.
  */
 function overlays(s: OfficeState, p: OfficeProps): Rect[] {
   const inst = s.inst
   const rects: Rect[] = []
-  const head = (id: string | null, bg: string) => {
+  const row = (id: string | null, bg: string) => {
     const hit = id ? inst.hitById.get(id) : undefined
     if (hit) rects.push({ x: hit.x, w: hit.w, y: hit.y, bg })
   }
-  head(p.selected, FX_BG.selected)
-  head(s.focus, FX_BG.focus)
-  for (const f of inst.fx) {
-    const hit = inst.hitById.get(f.id)
-    if (!hit) continue
-    if (f.kind === 'done') rects.push({ x: hit.x, w: hit.w, y: hit.y, bg: s.frame % 2 === 0 ? FX_BG.done : FX_BG.doneAlt })
-    else if (f.kind === 'status') rects.push({ x: hit.x, w: hit.w, y: Math.min(hit.y + 1, hit.y + TILE_H - 1), bg: FX_BG.status })
-  }
+  // all on the one row, painted in this order, the last on top: the status flash under everything (a finish is a status
+  // change too: its gold pulse must show), then the selection, the focus, the pulse
+  for (const f of inst.fx) if (f.kind === 'status') row(f.id, FX_BG.status)
+  row(p.selected, FX_BG.selected)
+  row(s.focus, FX_BG.focus)
+  for (const f of inst.fx) if (f.kind === 'done') row(f.id, s.frame % 2 === 0 ? FX_BG.done : FX_BG.doneAlt)
   return rects
 }
 
@@ -315,6 +319,13 @@ function paint(cells: readonly Cell[], y: number, rects: readonly Rect[]): reado
 
 const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
   const { Box, Text, Button, Input } = surface.elements
+  /** A cell row as one Text, a Text per styled run (the layout's rows and the chrome's lines alike). */
+  const rowText = (cells: readonly Cell[]): RenderElement => Text({ wrap: 'truncate', children: rowRuns(cells).map(run => {
+    if (!run.fg && !run.bg && !run.bold && !run.dim) return run.text
+    return Text({ ...(run.fg ? { color: run.fg } : {}), ...(run.bg ? { backgroundColor: run.bg } : {}), ...(run.bold ? { bold: true } : {}), ...(run.dim ? { dimColor: true } : {}), children: [run.text] })
+  }) })
+  /** One chrome line of parts, `columns` cells wide, in reading order (office-layout.ts lineRow). */
+  const partsLine = (id: string, parts: readonly Part[], columns: number, rtl: boolean): RenderElement => rowText(lineRow(id, columns, parts, rtl).cells)
   try {
     // --- the instance: once ---
     let s = surface.state
@@ -366,20 +377,21 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const line = (children: RenderElement[], extra: Record<string, unknown> = {}) => Box({ flexDirection: row, columnGap: 1, flexWrap: 'nowrap', height: 1, overflow: 'hidden', ...extra, children })
     const kids: RenderElement[] = []
 
-    // --- header: the counts, the 5-hour meter. The meter is the full label (bar and reset clock, usage.ts) from
-    //     COMPACT_BELOW columns when the whole line fits, else the short `⏳ 5h 42%` when that fits (it keeps `5h`:
-    //     the idle count is a `⏳` too), else nothing: a meter is drawn whole or not at all, never cut in half (`5h 4…`
-    //     reads as 4%) — the same rule as the text cards' header (ui.tsx) ---
+    // --- header: the counts, the 5-hour meter — parts a space apart (THE HEBREW RULE: the icon, the number and the
+    //     Hebrew word are runs of their own, placed from the right in RTL). The meter is the full label (bar and reset
+    //     clock, usage.ts) from COMPACT_BELOW columns when the whole line fits, else the short `⏳ 5h 42%` when that
+    //     fits (it keeps `5h`: the idle count is a `⏳` too), else nothing: a meter is drawn whole or not at all, never
+    //     cut in half (`5h 4…` reads as 4%) — the same rule as the text cards' header (ui.tsx) ---
     const c = props.counts
-    const counts = wide
-      ? `🟢 ${c.run} ${lbl('working')}${c.idle ? ` · ⏳ ${c.idle} ${lbl('idleN')}` : ''} · ✅ ${c.done} ${lbl('finished')}`
-      : `🟢 ${c.run}${c.idle ? ` · ⏳ ${c.idle}` : ''} · ✅ ${c.done}`
-    const head = `🎭 ${counts}`
-    const fits = (meter: string) => textWidth(head + meter) <= props.columns
+    const head: string[] = ['🎭', '🟢', String(c.run), ...(wide ? [lbl('working')] : [])]
+    if (c.idle) head.push('·', '⏳', String(c.idle), ...(wide ? [lbl('idleN')] : []))
+    head.push('·', '✅', String(c.done), ...(wide ? [lbl('finished')] : []))
+    const fits = (meter: string) => textWidth(head.join(' ') + meter) <= props.columns
     const full = props.usage ? ` · ${usageLabel(props.usage, props.lang, props.nowMin)}` : ''
     const short = props.usage ? ` · ${usageShort(props.usage)}` : ''
     const meter = props.usage ? (wide && fits(full) ? full : fits(short) ? short : '') : ''
-    kids.push(line([Text({ bold: true, wrap: 'truncate', children: [cut(head + meter, props.columns)] })]))
+    if (meter) head.push('·', meter.slice(3))
+    kids.push(partsLine('header', head.map(text => ({ text, bold: true as const })), props.columns, props.rtl))
 
     // --- toolbar: the same keys as today's pane ---
     kids.push(line([
@@ -392,19 +404,20 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       Button({ key: 'still', ...hk('s'), plain: true, label: props.prefs.still ? '🖼' : '🎞', onPress: () => send(surface, { t: 'still' }) }),
     ]))
 
-    // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS ---
-    const placeholder = lbl('searchPlaceholder')
+    // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS. (The glass follows the Hebrew word.) ---
+    const placeholder = lbl('searchPlaceholder').replace(/…$/, '')
     kids.push(line([Input({
       key: 'search',
-      placeholder: cut(`🔍 ${placeholder.endsWith('…') ? placeholder.slice(0, -1) : placeholder}`, props.columns),
+      placeholder: cut(props.rtl ? `${placeholder} 🔍` : `🔍 ${placeholder}`, props.columns),
       value: inst.query,
       // (cleaned and capped: a paste of a page or of an escape sequence would make the post or the value unmount the office)
       onInput: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, false) },
       onSubmit: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, true) },
     })]))
 
-    // --- footer (scan notes): in the chrome, so it is seen without scrolling to the end ---
-    if (props.footer) kids.push(Text({ dimColor: true, wrap: 'truncate', children: [cut(props.footer, props.columns)] }))
+    // --- footer (the props cap's `+N`, the scan notes): in the chrome, so it is seen without scrolling to the end; its
+    //     ` · `-joined notes are parts, so a Hebrew note never shares a run with an English one ---
+    if (props.footer) kids.push(partsLine('footer', props.footer.split(' · ').flatMap((text, i) => (i ? [{ text: '·', dim: true as const }] : []).concat([{ text, dim: true as const }])), props.columns, props.rtl))
 
     // --- help popover | drawer: fixed heights, so the rows under them never move; pushed further down — at the window's
     //     top, or under the fixed chrome ---
@@ -415,10 +428,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         ...HELP.map(([k, keys]) => line([Text({ children: [cut(lbl(k), Math.max(1, inner - keys.length - 1))] }), Text({ color: 'cyan', children: [keys] })], { justifyContent: 'space-between' })),
       ] })
     } else if (props.drawer) {
-      const items: RenderElement[] = inst.drawer.map(l => {
+      const items: RenderElement[] = inst.drawer.map((l, i) => {
         // (the row takes the drawer's full width so `space-between` parts the name and the ✕: `alignSelf: 'stretch'` is not a value the desktop's Box takes)
-        if (l.kind === 'name') return line([Text({ bold: true, children: [l.text] }), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
+        if (l.kind === 'name') return line([partsLine(`d${i}`, [{ text: l.text, bold: true }], textWidth(l.text), props.rtl), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: props.rtl ? `${lbl('close')} ✕` : `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
         if (l.kind === 'chips') return line((l.chips ?? []).map(ch => Text({ inverse: true, children: [` ${ch} `] })))
+        // a line of parts (the model line, the ✂ note): THE HEBREW RULE's runs; a heading or a body line is one Text
+        if (l.parts) return partsLine(`d${i}`, l.parts.map(text => (l.kind === 'head' ? { text, bold: true as const } : { text, dim: true as const })), inner, props.rtl)
         if (l.kind === 'head') return Text({ bold: true, children: [l.text] })
         if (l.kind === 'dim' || l.kind === 'note') return Text({ dimColor: true, children: [l.text] })
         return Text({ children: [l.text] })
@@ -449,15 +464,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       if (from > 0) kids.push(Box({ height: from }))
       if (overlay && atTop) kids.push(overlay)
       const rects = overlays(s, props)
-      const rows = windowRows(layout, from, count)
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i]!
-        const runs = rowRuns(paint(r.cells, from + i, rects))
-        kids.push(Text({ wrap: 'truncate', children: runs.map(run => {
-          if (!run.fg && !run.bg && !run.bold && !run.dim) return run.text
-          return Text({ ...(run.fg ? { color: run.fg } : {}), ...(run.bg ? { backgroundColor: run.bg } : {}), ...(run.bold ? { bold: true } : {}), ...(run.dim ? { dimColor: true } : {}), children: [run.text] })
-        }) }))
-      }
+      const rows: CellRow[] = windowRows(layout, from, count)
+      for (let i = 0; i < rows.length; i++) kids.push(rowText(paint(rows[i]!.cells, from + i, rects)))
     }
     return Box({ flexDirection: 'column', children: kids })
   } catch (err) {

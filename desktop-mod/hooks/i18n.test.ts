@@ -1,8 +1,56 @@
-// i18n.ts: the model display helper (the string tables are exercised through ui.test.ts).
+// i18n.ts: the model display helper (the string tables are exercised through
+// ui.test.ts) and THE HEBREW RULE over every Hebrew string the office Client draws.
 
 import { expect, test } from 'claude-code/testing'
 
-import { modelLabel } from './i18n'
+import { I18N, hebrewRuleOk, modelLabel } from './i18n'
+import { LABEL_KEYS } from './office-props'
+
+test('hebrewRuleOk: a string without Hebrew passes; one with Hebrew must start with a Hebrew letter and hold no Latin letter', () => {
+  expect(hebrewRuleOk('Opus 5.5')).toBe(true)
+  expect(hebrewRuleOk('⏳ 5h 42% · 14:30')).toBe(true)
+  expect(hebrewRuleOk('')).toBe(true)
+  expect(hebrewRuleOk('עוד 5 שסיימו')).toBe(true)
+  expect(hebrewRuleOk('משך 7′')).toBe(true)
+  expect(hebrewRuleOk('צפו בדמו חי ▶')).toBe(true)
+  expect(hebrewRuleOk('4 תמלילים מעל 4MiB דולגו')).toBe(false)   // a digit first, Latin inside: the scrambled footer of the live check
+  expect(hebrewRuleOk('דולגו 4 תמלילים גדולים מדי')).toBe(true)
+  expect(hebrewRuleOk('▶ צפו בדמו חי')).toBe(false)                // a symbol first
+  expect(hebrewRuleOk('📖 קורא')).toBe(false)                      // an emoji first (the layout draws it as a run of its own)
+  expect(hebrewRuleOk('הפעילו סוכן ב-Claude Code')).toBe(false)    // Latin inside
+  expect(hebrewRuleOk('+4 סוכנים נוספים')).toBe(false)
+  expect(hebrewRuleOk(' שלום')).toBe(false)                        // a leading space is not a letter
+})
+
+test('THE HEBREW RULE: every Hebrew string the office Client draws passes it — the labels of the props (LABEL_KEYS), the counted labels, the empty-office messages, the toasts', () => {
+  const L = I18N.he
+  const bad: string[] = []
+  const check = (key: string, s: string) => { if (!hebrewRuleOk(s)) bad.push(`${key}: ${s}`) }
+  for (const k of LABEL_KEYS) check(k, L[k])
+  for (const k of ['emptyOffice', 'emptySub', 'emptyNoMatch', 'emptyNoActive', 'emptyNoneInWindow', 'finishedToast', 'srNoMatch', 'srCleared', 'pin', 'unpin', 'roomTitle', 'details', 'loading', 'helpHint', 'langHint', 'toggleFinished', 'scSearch', 'scPrev', 'scNext', 'mute', 'unmute'] as const) check(k, L[k])
+  // the empty-office sub is split at " - " into lines of its own (office-chrome.ts emptyLines): each must pass too
+  for (const part of L.emptySub.split(/\s[-—]\s/)) check('emptySub part', part)
+  for (const n of [1, 4, 400]) {
+    check('oversizedN', L.oversizedN(n))
+    check('moreAgentsN', L.moreAgentsN(n))
+    check('moreDoneN', L.moreDoneN(n))
+    check('srResults', L.srResults(n))
+    check('usageToast', L.usageToast(n, '14:30'))
+    check('usageToast', L.usageToast(n, ''))
+  }
+  // the compositions the Client makes of them: the drawer's clock chip and failed chip, the placeholder, the close Button
+  check('dDuration chip', `${L.dDuration}7′`)
+  check('dElapsed chip', `${L.dElapsed}12′`)
+  check('dFailed chip', `${L.dFailed} ❌`)
+  check('placeholder', `${L.searchPlaceholder.replace(/…$/, '')} 🔍`)
+  check('close', `${L.close} ✕`)
+  // the tool table: an emoji leads every entry (the layout draws it as a run of its own); the Hebrew after it must pass alone
+  for (const [tool, label] of Object.entries(L.tools)) check(`tools.${tool}`, label.replace(/^\S+\s/, ''))
+  for (const k of ['actDone', 'actStale', 'actThinking', 'actMcp'] as const) check(k, L[k].replace(/^\S+\s/, ''))
+  expect(bad).toEqual([])
+  // the English table holds no Hebrew but the language switch label (Hebrew alone: fine)
+  expect(hebrewRuleOk(I18N.en.switchTo)).toBe(true)
+})
 
 test('modelLabel: short human names for the known families', () => {
   expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')

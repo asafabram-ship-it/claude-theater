@@ -1,10 +1,12 @@
 // office-layout.ts: the pure cell layout of the desktop office. No engine, no
-// `$`: the rows of cells with their ids, tile placement in both directions,
-// the hit rectangles, run merging and the row window are asserted on the data.
+// `$`: the rows of cells with their ids, one row per agent in both directions,
+// the hit rectangles, THE HEBREW RULE's runs, run merging and the row window
+// are asserted on the data.
 
 import { expect, test } from 'claude-code/testing'
 
-import { EMOJI_CELLS, HOVER_BG, NO_DECOR, TILE_GAP, TILE_H, TILE_W, WALK_CELLS, blankRow, hitAt, layoutOffice, put, rowCount, rowRuns, tileX, tilesPerRow, walkShift, windowRows } from './office-layout'
+import { hebrewRuleOk } from './i18n'
+import { ACT_MAX, EMOJI_CELLS, HOVER_BG, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, cut, hitAt, layoutOffice, lineRow, pillText, place, put, rowCount, rowRuns, segments, tailText, walkShift, windowRows } from './office-layout'
 import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -12,21 +14,25 @@ function ag(id: string, i: number, over: Partial<OfficeAgent> = {}): OfficeAgent
   return { id, emoji: '🦉', name: `סוכן ${i}`, status: 'running', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 3, isLead: i === 0, failed: false, longRunning: false, star: 0, enteredAt: 0, ...over }
 }
 
+function room(over: Partial<OfficeRoom> = {}): OfficeRoom {
+  return { id: 'sess-a', title: 'תקרא את המסמך', small: 'acme', pinned: false, showDone: false, run: 2, stale: 0, done: 0, agents: [ag('lead', 0), ag('a1', 1)], moreDone: 0, moreLabel: '', ...over }
+}
+
 function props(over: Partial<OfficeProps> = {}): OfficeProps {
   return {
     v: 1, lang: 'he', rtl: true, columns: 45, rows: 30, offset: 0, nowMin: 0,
     counts: { run: 2, idle: 0, done: 0 }, prefs: { showDone: false, muted: false, still: false },
     search: '', selected: null, helpOpen: false, demo: false,
-    rooms: [{ id: 'sess-a', title: 'תקרא את המסמך', small: 'acme', pinned: false, showDone: false, run: 2, stale: 0, done: 0, agents: [ag('lead', 0), ag('a1', 1)] }],
+    rooms: [room()],
     drawer: null, footer: '', usage: null, empty: null, labels: {}, ...over,
   }
 }
 
 /** Ten rooms of ten agents: the limits fixture of the plan (spec §7.2). */
 function tenByTen(): OfficeRoom[] {
-  return Array.from({ length: 10 }, (_, r) => ({
-    id: `s${r}`, title: `חדר ${r}`, small: '', pinned: false, showDone: true, run: 10, stale: 0, done: 0,
-    agents: Array.from({ length: 10 }, (_, i) => ({ id: `a${r}-${i}`, emoji: '🦉', name: `סוכן ${i}`, status: 'running' as const, fam: 'read' as const, act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus' as const, startMin: 1, isLead: false, failed: false, longRunning: false, star: 0, enteredAt: 0 })),
+  return Array.from({ length: 10 }, (_, r) => room({
+    id: `s${r}`, title: `חדר ${r}`, small: '', showDone: true, run: 10,
+    agents: Array.from({ length: 10 }, (_, i) => ag(`a${r}-${i}`, i, { isLead: false, startMin: 1 })),
   }))
 }
 
@@ -44,8 +50,10 @@ function wellFormed(row: Cells): boolean {
 function decor(over: { hover?: string | null; hop?: string[]; entering?: Array<[string, number]> } = {}): OfficeDecor {
   return { hover: over.hover ?? null, hop: new Set(over.hop ?? []), entering: new Map(over.entering ?? []) }
 }
+/** The runs of a row that hold a Hebrew letter. */
+const hebrewRuns = (row: Cells & { cells: ReadonlyArray<{ ch: string; fg?: string; bg?: string; bold?: true; dim?: true; brk?: true }> }) => rowRuns(row.cells).map(r => r.text).filter(t => /\p{Script=Hebrew}/u.test(t))
 
-test('cells: put clips to the row and an emoji takes EMOJI_CELLS', () => {
+test('cells: put clips to the row and an emoji takes EMOJI_CELLS; a brk marks the first glyph', () => {
   const row = blankRow('r', 6)
   put(row, 4, 'abc')
   expect(row.cells.map(c => c.ch).join('')).toBe('    ab')
@@ -67,6 +75,15 @@ test('cells: put clips to the row and an emoji takes EMOJI_CELLS', () => {
   expect(r3.cells[2]?.ch).toBe('')
   expect(blankRow('e', 0).cells).toHaveLength(0)
   expect(blankRow('n', -4).cells).toHaveLength(0)
+  // brk: the first drawn glyph starts a run of its own, even with the style of the cell before
+  const r4 = blankRow('r4', 6)
+  put(r4, 0, 'ab', { fg: '#f00' })
+  put(r4, 2, 'cd', { fg: '#f00' }, true)
+  expect(r4.cells[2]).toEqual({ ch: 'c', fg: '#f00', brk: true })
+  expect(r4.cells[3]).toEqual({ ch: 'd', fg: '#f00' })
+  expect(rowRuns(r4.cells).map(r => r.text)).toEqual(['ab', 'cd', '  '])
+  put(r4, -1, 'xy', {}, true)                // skipped cells carry no brk: the first drawn glyph does
+  expect(r4.cells[0]).toEqual({ ch: 'y', brk: true })
 })
 
 test('cells: a variation selector, a ZWJ sequence, a skin tone and Hebrew points stay with their glyph (zero width)', () => {
@@ -88,38 +105,88 @@ test('cells: a variation selector, a ZWJ sequence, a skin tone and Hebrew points
   expect(row.cells[11]?.ch).toBe(' ')
   expect(rowRuns(row.cells).map(r => r.text)).toEqual(['✏️x', '👨‍💻y👍🏽zשָׁל '])
   expect(row.cells.every(c => !LONE_SURROGATE.test(c.ch))).toBe(true)
-  // a selector-bearing head is centred like a plain one, and the tile keeps it whole
-  const lay = layoutOffice(props({ rtl: false, rooms: [{ ...props().rooms[0]!, agents: [ag('v', 1, { emoji: '🕵️', act: '✏️ עורך', name: 'שָׁלוֹם' })] }] }))
-  expect(seg(lay.rows[1]!, 0, TILE_W)).toBe('      🕵️    1 ')
-  expect(seg(lay.rows[3]!, 0, TILE_W).trim()).toBe('שָׁלוֹם')
-  expect(seg(lay.rows[5]!, 0, TILE_W).trim()).toBe('✏️ עורך')
+  // a selector-bearing emoji, a pointed name and a selector-bearing activity are laid whole on the row
+  const lay = layoutOffice(props({ rtl: false, rooms: [room({ agents: [ag('v', 1, { emoji: '🕵️', act: '✏️ עורך', name: 'שָׁלוֹם' })] })] }))
+  const r1 = lay.rows[1]!
+  expect(seg(r1, 0, 4)).toBe(' 🕵️ ')
+  expect(rowRuns(r1.cells).map(r => r.text)).toContain('שָׁלוֹם')
+  expect(rowRuns(r1.cells).map(r => r.text)).toContain('✏️')
+  expect(rowRuns(r1.cells).map(r => r.text)).toContain('עורך')
+  expect(wellFormed(r1)).toBe(true)
 })
 
-test('tiles per row and x positions, LTR and RTL', () => {
-  expect(tilesPerRow(45)).toBe(3)
-  expect(tilesPerRow(14)).toBe(1)
-  expect(tileX(0, 3, 45, false)).toBe(0)
-  expect(tileX(1, 3, 45, false)).toBe(TILE_W + 1)
-  expect(tileX(0, 3, 45, true)).toBe(45 - TILE_W)
-  // the narrow docked pane (31 columns) and the floor of the sweep (24) both hold a tile
-  expect(tilesPerRow(31)).toBe(2)
-  expect(tilesPerRow(24)).toBe(1)
-  expect(tilesPerRow(0)).toBe(1)
-  expect(tilesPerRow(200)).toBe(13)
-  // the last RTL tile of a full row still starts inside the row; the next index wraps to the first column
-  expect(tileX(2, 3, 45, true)).toBe(1)
-  expect(tileX(3, 3, 45, true)).toBe(45 - TILE_W)
-  expect(tileX(3, 3, 45, false)).toBe(0)
-  expect(tileX(1, 2, 31, true)).toBe(31 - TILE_W - (TILE_W + TILE_GAP))
+test('THE HEBREW RULE: segments splits a text into runs by script — a Hebrew run starts with a Hebrew letter and holds no other script\'s letter, digits ride inside, the spaces between runs are gaps', () => {
+  const texts = (s: string) => segments(s).map(x => [x.gap, x.text])
+  expect(texts('📖 קורא')).toEqual([[0, '📖'], [1, 'קורא']])
+  expect(texts('עוד 5 שסיימו')).toEqual([[0, 'עוד 5 שסיימו']])
+  expect(texts('4 תמלילים מעל 4MiB דולגו')).toEqual([[0, '4'], [1, 'תמלילים מעל 4'], [0, 'MiB'], [1, 'דולגו']])
+  expect(texts('שם Reviewer')).toEqual([[0, 'שם'], [1, 'Reviewer']])
+  expect(texts('שם - Reviewer')).toEqual([[0, 'שם -'], [1, 'Reviewer']])
+  expect(texts('Opus 5.5')).toEqual([[0, 'Opus 5.5']])
+  expect(texts('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30')).toEqual([[0, '⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 14:30']])   // no Hebrew: one run, whatever it starts with
+  expect(texts('🔌 github')).toEqual([[0, '🔌 github']])
+  expect(texts('🔌 גיטהאב')).toEqual([[0, '🔌'], [1, 'גיטהאב']])
+  expect(texts('  🟢2 ⏳1  ')).toEqual([[2, '🟢2 ⏳1']])
+  expect(texts('')).toEqual([])
+  expect(texts('   ')).toEqual([])
+  expect(texts('שם ארוך…')).toEqual([[0, 'שם ארוך…']])
+  // every Hebrew run passes the rule, whatever the text
+  for (const s of ['📖 קורא', '4 תמלילים מעל 4MiB דולגו', 'שם Reviewer', 'abc דף 12 x', '12 דף', 'דף — Claude Code — דף']) {
+    for (const x of segments(s)) expect(hebrewRuleOk(x.text), `${s} → ${x.text}`).toBe(true)
+  }
 })
 
-test('layoutOffice: a room head row, then tile rows; hits cover every tile cell and the pin', () => {
+test('place: the runs of a text in reading order — from the left in LTR, from the right in RTL — each a run of its own, cut to the field', () => {
+  const ltr = blankRow('l', 12)
+  place(ltr, 1, 10, '📖 קורא', { fg: '#0f0' }, false)
+  expect(text(ltr)).toBe(' 📖 קורא    ')
+  expect(rowRuns(ltr.cells)).toEqual([{ text: ' ' }, { text: '📖', fg: '#0f0' }, { text: ' ' }, { text: 'קורא', fg: '#0f0' }, { text: '    ' }])
+  const rtl = blankRow('r', 12)
+  place(rtl, 1, 10, '📖 קורא', { fg: '#0f0' }, true)
+  expect(text(rtl)).toBe('    קורא 📖 ')             // the emoji at the field's right edge, the word to its left
+  expect(rowRuns(rtl.cells)).toEqual([{ text: '    ' }, { text: 'קורא', fg: '#0f0' }, { text: ' ' }, { text: '📖', fg: '#0f0' }, { text: ' ' }])
+  // a leading digit becomes a run of its own, so the Hebrew run starts with a letter
+  const d = blankRow('d', 14)
+  place(d, 0, 14, '4 תמלילים', {}, true)
+  expect(text(d)).toBe('     תמלילים 4')
+  expect(rowRuns(d.cells).map(r => r.text)).toEqual(['     ', 'תמלילים ', '4'])   // (the unstyled gap merges into the unstyled run before it: trailing, never leading)
+  // cut to the field, whole glyphs, the ellipsis on the last run; a field off the row draws nothing
+  const c = blankRow('c', 8)
+  place(c, 0, 8, '🦉 שם ארוך מאוד', { bold: true }, false)
+  expect(text(c)).toBe('🦉 שם א…')
+  expect(wellFormed(c)).toBe(true)
+  const n = blankRow('n', 8)
+  place(n, -1, 4, 'abc', {}, true)
+  place(n, 8, 4, 'abc', {}, false)
+  place(n, 2, 0, 'abc', {}, false)
+  expect(text(n)).toBe('        ')
+})
+
+test('lineRow: a chrome line of parts a space apart in reading order, each its own run, the last part that does not fit cut', () => {
+  const parts = [{ text: '🎭', bold: true as const }, { text: '🟢', bold: true as const }, { text: '2', bold: true as const }, { text: 'עובדים', bold: true as const }, { text: '·', bold: true as const }, { text: '⏳ 5h 42%', bold: true as const }]
+  const ltr = lineRow('h', 30, parts, false)
+  expect(text(ltr)).toBe('🎭 🟢 2 עובדים · ⏳ 5h 42%    ')
+  expect(rowRuns(ltr.cells).filter(r => r.bold).map(r => r.text)).toEqual(['🎭', '🟢', '2', 'עובדים', '·', '⏳ 5h 42%'])
+  const rtl = lineRow('h', 30, parts, true)
+  expect(text(rtl)).toBe('    ⏳ 5h 42% · עובדים 2 🟢 🎭')
+  expect(rowRuns(rtl.cells).filter(r => r.bold).map(r => r.text)).toEqual(['⏳ 5h 42%', '·', 'עובדים', '2', '🟢', '🎭'])
+  for (const row of [ltr, rtl]) for (const run of hebrewRuns(row)) expect(hebrewRuleOk(run)).toBe(true)
+  // narrow: the parts that fit, the next one cut, nothing after it
+  const narrow = lineRow('h', 12, parts, false)
+  expect(text(narrow)).toBe('🎭 🟢 2 עוב…')
+  expect(narrow.cells).toHaveLength(12)
+  expect(lineRow('h', 0, parts, true).cells).toHaveLength(0)
+  expect(text(lineRow('e', 5, [], true))).toBe('     ')
+})
+
+test('layoutOffice: a room head row, then one row per agent; an agent hit covers its whole row, the pin its glyph', () => {
   const lay = layoutOffice(props())
-  expect(lay.rows[0]?.id).toBe('room:sess-a:head')
-  expect(lay.rows).toHaveLength(1 + TILE_H)
+  expect(lay.rows.map(r => r.id)).toEqual(['room:sess-a:head', 'room:sess-a:a:0', 'room:sess-a:a:1'])
   const lead = lay.hits.find(hit => hit.kind === 'agent' && hit.id === 'lead')
-  expect(lead).toBeDefined()
-  expect(hitAt(lay, (lead?.x ?? 0) + 2, (lead?.y ?? 0) + 2)?.id).toBe('lead')
+  expect(lead).toEqual({ kind: 'agent', id: 'lead', x: 0, y: 1, w: 45, h: 1 })
+  for (let x = 0; x < 45; x++) expect(hitAt(lay, x, 1)?.id).toBe('lead')
+  expect(hitAt(lay, 3, 2)?.id).toBe('a1')
+  expect(hitAt(lay, 3, 3)).toBeUndefined()
   // RTL: the pin is the first thing of the head, at the right edge (spec §7.1 head order); the counts sit at 0
   expect(hitAt(lay, 45 - EMOJI_CELLS, 0)?.kind).toBe('pin')
   expect(hitAt(lay, 44, 0)?.id).toBe('sess-a')
@@ -130,21 +197,10 @@ test('layoutOffice: a room head row, then tile rows; hits cover every tile cell 
   expect(hitAt(ltr, 0, 0)?.kind).toBe('pin')
   expect(hitAt(ltr, 1, 0)?.kind).toBe('pin')
   expect(hitAt(ltr, 2, 0)).toBeUndefined()
-  // every cell of the lead tile resolves to the lead, and the cell past each edge does not
-  expect(lead).toEqual({ kind: 'agent', id: 'lead', x: 45 - TILE_W, y: 1, w: TILE_W, h: TILE_H })
-  for (let y = 1; y < 1 + TILE_H; y++) for (let x = 45 - TILE_W; x < 45; x++) expect(hitAt(lay, x, y)?.id).toBe('lead')
-  expect(hitAt(lay, 45 - TILE_W - TILE_GAP, 3)).toBeUndefined()           // the gap column belongs to nobody
-  expect(hitAt(lay, 45 - TILE_W - TILE_GAP - 1, 3)?.id).toBe('a1')       // one further is the second tile
-  expect(hitAt(lay, 45 - TILE_W, 1 + TILE_H)).toBeUndefined()
-  expect(hitAt(lay, 45 - TILE_W, 0)).toBeUndefined()
-  // the second tile sits to the LEFT of the lead in RTL, to the right in LTR
-  const a1 = lay.hits.find(hit => hit.id === 'a1')
-  expect(a1?.x).toBe(45 - TILE_W - (TILE_W + TILE_GAP))
-  expect(ltr.hits.find(hit => hit.id === 'a1')?.x).toBe(TILE_W + TILE_GAP)
-  expect(ltr.hits.find(hit => hit.id === 'lead')?.x).toBe(0)
+  expect(ltr.hits.find(hit => hit.id === 'a1')).toEqual({ kind: 'agent', id: 'a1', x: 0, y: 2, w: 45, h: 1 })
 })
 
-test('rowRuns merges neighbours with the same style; windowRows slices by offset', () => {
+test('rowRuns merges neighbours with the same style and keeps a brk apart; windowRows slices by offset', () => {
   const row = blankRow('r', 8)
   put(row, 0, 'aa', { fg: '#f00' })
   put(row, 2, 'bb', { fg: '#f00' })
@@ -153,28 +209,29 @@ test('rowRuns merges neighbours with the same style; windowRows slices by offset
   expect(runs.map(r => r.text)).toEqual(['aabb', 'cc  '])
   expect(runs[0]?.fg).toBe('#f00')
   const lay = layoutOffice(props())
-  expect(windowRows(lay, 2, 3).map(r => r.id)).toEqual(lay.rows.slice(2, 5).map(r => r.id))
-  // a run carries only the flags that are set (no `dim: undefined` keys reach the tree); a wide glyph's two cells are one run
+  expect(windowRows(lay, 1, 2).map(r => r.id)).toEqual(lay.rows.slice(1, 3).map(r => r.id))
+  // a run carries only the flags that are set (no `dim: undefined` and no `brk` reach the tree); a wide glyph's two cells are one run
   const r3 = blankRow('r3', 9)
   put(r3, 0, 'aa', { fg: '#f00' })
-  put(r3, 2, 'bb', { fg: '#f00' })
+  put(r3, 2, 'bb', { fg: '#f00' }, true)
   put(r3, 4, 'cc')
   put(r3, 6, 'd', { bold: true })
   put(r3, 7, '🦉', { bg: '#000', dim: true })
   const r2 = rowRuns(r3.cells)
-  expect(r2).toEqual([{ text: 'aabb', fg: '#f00' }, { text: 'cc' }, { text: 'd', bold: true }, { text: '🦉', bg: '#000', dim: true }])
-  expect(Object.keys(r2[1] ?? {})).toEqual(['text'])
+  expect(r2).toEqual([{ text: 'aa', fg: '#f00' }, { text: 'bb', fg: '#f00' }, { text: 'cc' }, { text: 'd', bold: true }, { text: '🦉', bg: '#000', dim: true }])
+  expect(Object.keys(r2[2] ?? {})).toEqual(['text'])
   expect(rowRuns([])).toEqual([])
 })
 
 test('windowRows: clamps the offset to the content, never returns more than count, tolerates count 0', () => {
-  const lay = layoutOffice(props({ rooms: [...props().rooms, { ...props().rooms[0]!, id: 'sess-b' }] }))   // 1 + 6 + gap + 1 + 6 = 15 rows
-  expect(lay.rows).toHaveLength(15)
+  const five = room({ agents: Array.from({ length: 5 }, (_, i) => ag(`x${i}`, i)) })
+  const lay = layoutOffice(props({ rooms: [five, { ...five, id: 'sess-b' }] }))   // 1 + 5 + gap + 1 + 5 = 13 rows
+  expect(lay.rows).toHaveLength(13)
   expect(windowRows(lay, 0, 5).map(r => r.id)).toEqual(lay.rows.slice(0, 5).map(r => r.id))
-  expect(windowRows(lay, 12, 5).map(r => r.id)).toEqual(lay.rows.slice(10, 15).map(r => r.id))   // past the end: the last full window
+  expect(windowRows(lay, 10, 5).map(r => r.id)).toEqual(lay.rows.slice(8, 13).map(r => r.id))   // past the end: the last full window
   expect(windowRows(lay, 99, 5)).toHaveLength(5)
   expect(windowRows(lay, -3, 5).map(r => r.id)).toEqual(lay.rows.slice(0, 5).map(r => r.id))
-  expect(windowRows(lay, 3, 100)).toHaveLength(15)                                                  // count beyond the content: everything, from 0
+  expect(windowRows(lay, 3, 100)).toHaveLength(13)                                                  // count beyond the content: everything, from 0
   expect(windowRows(lay, 3, 0)).toEqual([])
   expect(windowRows({ rows: [], hits: [] }, 2, 3)).toEqual([])
 })
@@ -189,74 +246,89 @@ test('bounds: 100 agents in 10 rooms at 45 and 200 columns stay small', () => {
   }
 })
 
-/**
- * The sweep's widths: every one from 24 to 60 (the docked panes), then every 4th to 200, plus both sides of
- * each step of tilesPerRow past 60 (the width where one more tile fills the row exactly, and the one before).
- */
+/** The sweep's widths: every one from 24 to 60 (the docked panes), then every 4th to 200. */
 function sweepWidths(): number[] {
-  const out = new Set<number>()
-  for (let c = 24; c <= 60; c++) out.add(c)
-  for (let c = 64; c <= 200; c += 4) out.add(c)
-  for (let c = 61; c <= 200; c++) if (tilesPerRow(c) !== tilesPerRow(c - 1)) { out.add(c - 1); out.add(c) }
-  return [...out].sort((a, b) => a - b)
+  const out: number[] = []
+  for (let c = 24; c <= 60; c++) out.push(c)
+  for (let c = 64; c <= 200; c += 4) out.push(c)
+  return out
 }
 
-// (CPU-bound: ~180 layouts of 100 agents, the narrow ones hundreds of rows tall; 3.4-5.1 s while the other test
-// files run beside it, so it keeps the limits test's budget: under the default 5 s it timed out in one run of two)
-test('sweep: 100 agents at widths 24..200 (every one to 60, then every 4th and each tile-row step), both directions — rows fit the columns, hits stay inside, a 40-row window is under the tree limits', { timeoutMs: 30_000 }, () => {
-  const rooms = tenByTen()
+/** A cast with every kind of text the rows carry: names of several widths, the activities of the table, every model family, every badge, unknown minutes. */
+function mixedCast(n: number, prefix: string): OfficeAgent[] {
+  const names = ['א', 'סוכן', 'שם ארוך מאוד שנחתך בוודאות', 'map session-token valid…', 'Reviewer', 'בודק Reviewer', '🦉🦉🦉🦉🦉🦉🦉🦉🦉🦉']
+  const acts = ['📖 קורא', '✍️ כותב קובץ ארוך', '🔌 github', '🤔 חושב', '✅ סיים', '💤 ממתין', '🧾 מסכם']
+  const models = [['Opus 5.5', 'opus'], ['Sonnet 5.5', 'sonnet'], ['Haiku 4.5', 'haiku'], ['Fable 5.1', 'fable'], ['?', 'other'], ['nova-6-0', 'other'], ['x'.repeat(40), 'other']] as const
+  return Array.from({ length: n }, (_, i) => ag(`${prefix}${i}`, i, {
+    name: names[i % names.length]!, act: acts[i % acts.length]!, model: models[i % models.length]![0], modelFam: models[i % models.length]![1],
+    status: i % 7 === 4 ? 'done' : i % 7 === 5 ? 'stale' : 'running', isLead: i === 0,
+    startMin: i % 5 === 0 ? null : i % 5 === 1 ? 0 : i * 37, failed: i % 3 === 0, star: i % 4 === 0 ? 1 : 0, longRunning: i % 6 === 0,
+    emoji: i % 3 === 0 ? '👨‍💻' : i % 3 === 1 ? '🕵️' : '🦉',
+  }))
+}
+
+// (CPU-bound: ~100 layouts of 100 agents; keeps the limits test's budget, see office-client.test.ts)
+test('sweep: 100 agents at widths 24..200 (every one to 60, then every 4th), both directions — every row is exactly `columns` cells, whole glyphs, one hit per agent row, no two hits overlap, every Hebrew run obeys the rule; a 40-row window is under the tree limits', { timeoutMs: 30_000 }, () => {
+  const rooms = [...tenByTen().slice(0, 5), ...Array.from({ length: 5 }, (_, r) => room({ id: `m${r}`, title: `חדר ${r}`, showDone: true, done: 2, moreDone: 0, moreLabel: r % 2 ? 'הסתר שסיימו' : '', agents: mixedCast(10, `m${r}-`) }))]
+  const bad: string[] = []
   for (const columns of sweepWidths()) {
     for (const rtl of [true, false]) {
       const lay = layoutOffice(props({ columns, rtl, rooms }))
-      const perRow = tilesPerRow(columns)
-      expect(lay.rows).toHaveLength(10 * (1 + TILE_H * Math.ceil(10 / perRow)) + 9)
-      expect(lay.rows.every(r => r.cells.length === columns)).toBe(true)
-      expect(lay.rows.every(r => r.cells.every(c => !LONE_SURROGATE.test(c.ch)))).toBe(true)
-      expect(lay.hits.filter(hit => hit.kind === 'agent')).toHaveLength(100)
-      expect(lay.hits.every(hit => hit.x >= 0 && hit.w > 0 && hit.x + hit.w <= columns && hit.y >= 0 && hit.h > 0 && hit.y + hit.h <= lay.rows.length)).toBe(true)
+      const at = `${columns}${rtl ? ' rtl' : ''}`
+      if (lay.rows.length !== 10 * (1 + 10) + 9 + 2) bad.push(`${at}: ${lay.rows.length} rows`)
+      for (let y = 0; y < lay.rows.length; y++) {
+        const row = lay.rows[y]!
+        if (row.cells.length !== columns) bad.push(`${at}: row ${y} has ${row.cells.length} cells`)
+        if (!wellFormed(row)) bad.push(`${at}: row ${y} breaks a wide glyph: ${text(row)}`)
+        if (row.cells.some(c => LONE_SURROGATE.test(c.ch))) bad.push(`${at}: row ${y} holds a lone surrogate`)
+        for (const run of hebrewRuns(row)) if (!hebrewRuleOk(run)) bad.push(`${at}: row ${y} run "${run}" breaks THE HEBREW RULE`)
+      }
+      const agents = lay.hits.filter(hit => hit.kind === 'agent')
+      if (agents.length !== 100) bad.push(`${at}: ${agents.length} agent hits`)
+      if (!lay.hits.every(hit => hit.x >= 0 && hit.w > 0 && hit.x + hit.w <= columns && hit.y >= 0 && hit.h === 1 && hit.y + hit.h <= lay.rows.length)) bad.push(`${at}: a hit leaves the layout`)
+      if (!agents.every(hit => hit.x === 0 && hit.w === columns)) bad.push(`${at}: an agent hit is not its whole row`)
       // no two hit rectangles overlap: every cell resolves to at most one agent or button
-      const tiles = lay.hits.filter(hit => hit.kind === 'agent')
-      for (let i = 1; i < tiles.length; i++) {
-        const a = tiles[i - 1]!, b = tiles[i]!
-        expect(a.y === b.y ? Math.abs(a.x - b.x) >= TILE_W + TILE_GAP : Math.abs(a.y - b.y) >= TILE_H).toBe(true)
+      for (let i = 0; i < lay.hits.length; i++) for (let j = i + 1; j < lay.hits.length; j++) {
+        const a = lay.hits[i]!, b = lay.hits[j]!
+        if (a.y === b.y && a.x < b.x + b.w && b.x < a.x + a.w) bad.push(`${at}: hits ${a.kind}:${a.id} and ${b.kind}:${b.id} overlap`)
       }
       // the window the Client draws: 40 rows, from the top and from the middle
       for (const offset of [0, Math.floor(lay.rows.length / 2)]) {
         const win = windowRows(lay, offset, 40)
         const runsPerRow = win.map(r => rowRuns(r.cells))
         const nodes = runsPerRow.reduce((n, runs) => n + 1 + runs.length, 0)
-        expect(nodes).toBeLessThan(20_000)
-        expect(JSON.stringify(runsPerRow).length).toBeLessThan(100_000)
+        if (nodes >= 20_000) bad.push(`${at}: ${nodes} nodes`)
+        if (JSON.stringify(runsPerRow).length >= 100_000) bad.push(`${at}: the window serializes too large`)
       }
     }
   }
+  expect(bad).toEqual([])
 })
 
-test('the room head: pin glyph, title and counts, LTR flush right and RTL flush left; the ✅ button covers the counts', () => {
-  const room = { ...props().rooms[0]!, pinned: true, run: 2, stale: 1, done: 3 }
+test('the room head: pin glyph, title and counts, LTR flush right and RTL flush left; the ✅ button covers the counts; the title is a Hebrew run of its own', () => {
+  const r = room({ pinned: true, run: 2, stale: 1, done: 3 })
   const counts = '🟢2 ⏳1 ✅3'                                  // 11 cells: three wide glyphs, eight narrow
-  const ltr = layoutOffice(props({ rtl: false, rooms: [room] }))
+  const ltr = layoutOffice(props({ rtl: false, rooms: [r] }))
   const lh = ltr.rows[0]!
   expect(lh.cells[0]?.ch).toBe('📌')
   expect(lh.cells[1]?.ch).toBe('')
   expect(lh.cells[2]?.ch).toBe(' ')
-  expect(lh.cells[3]?.ch).toBe('💬')
+  expect(seg(lh, 3, 3 + 13)).toBe('תקרא את המסמך')
   expect(seg(lh, 34, 45)).toBe(counts)
   expect(lh.cells[44]?.ch).toBe('3')                               // the last digit is drawn, not clipped
   expect(lh.cells[34]?.ch).toBe('🟢')
   expect(lh.cells[33]?.ch).toBe(' ')
-  expect(text(lh)).toContain('💬 תקרא את המסמך')
   expect(ltr.hits.find(hit => hit.kind === 'roomDone')).toEqual({ kind: 'roomDone', id: 'sess-a', x: 34, y: 0, w: 11, h: 1 })
   expect(hitAt(ltr, 44, 0)?.kind).toBe('roomDone')
   expect(hitAt(ltr, 33, 0)).toBeUndefined()
-  const rtl = layoutOffice(props({ rtl: true, rooms: [room] }))
+  const rtl = layoutOffice(props({ rtl: true, rooms: [r] }))
   const rh = rtl.rows[0]!
   expect(seg(rh, 0, 11)).toBe(counts)
   expect(rh.cells[11]?.ch).toBe(' ')
   expect(rh.cells[43]?.ch).toBe('📌')
   expect(rh.cells[44]?.ch).toBe('')
   expect(rh.cells[42]?.ch).toBe(' ')
-  expect(text(rh)).toContain('💬 תקרא את המסמך')
+  expect(seg(rh, 42 - 13, 42)).toBe('תקרא את המסמך')                 // flush against the pin: the title's first glyph at the reading edge
   expect(rtl.hits.find(hit => hit.kind === 'roomDone')).toEqual({ kind: 'roomDone', id: 'sess-a', x: 0, y: 0, w: 11, h: 1 })
   expect(hitAt(rtl, 10, 0)?.kind).toBe('roomDone')
   expect(hitAt(rtl, 11, 0)).toBeUndefined()
@@ -266,184 +338,249 @@ test('the room head: pin glyph, title and counts, LTR flush right and RTL flush 
   expect(plain.rows[0]?.cells[0]?.ch).toBe('○')
   expect(text(plain.rows[0]!).trimEnd().endsWith('🟢2')).toBe(true)
   expect(text(plain.rows[0]!)).not.toContain('⏳')
-  // the title is one run (a single Hebrew string, bold), never split by the renderer
+  // the title is one run (a single Hebrew string, bold, starting with a Hebrew letter), never split by the renderer
   const titleRun = rowRuns(lh.cells).find(r => r.text.includes('תקרא'))
-  expect(titleRun?.text).toBe('💬 תקרא את המסמך')
-  expect(titleRun?.bold).toBe(true)
+  expect(titleRun).toEqual({ text: 'תקרא את המסמך', bold: true })
+  // a title with a digit first or a Latin word inside is split into runs by the rule, in both directions
+  const mixed = layoutOffice(props({ rooms: [room({ title: '4 קבצים של Claude Code לבדיקה' })] })).rows[0]!
+  expect(rowRuns(mixed.cells).filter(r => r.bold).map(r => r.text)).toEqual(['לבדיקה', 'Claude Code', 'קבצים של', '4'])
+  for (const run of hebrewRuns(mixed)) expect(hebrewRuleOk(run)).toBe(true)
   // a long title is cut with an ellipsis before the counts, in both directions
-  const long = { ...room, title: 'כותרת ארוכה מאוד שלא נכנסת בשורה אחת של ארבעים וחמישה תאים בכלל' }
+  const long = { ...r, title: 'כותרת ארוכה מאוד שלא נכנסת בשורה אחת של ארבעים וחמישה תאים בכלל' }
   for (const dir of [true, false]) {
     const head = layoutOffice(props({ rtl: dir, rooms: [long] })).rows[0]!
     expect(head.cells).toHaveLength(45)
     expect(text(head)).toContain('…')
     expect(text(head)).toContain(counts)
-    expect(text(head)).toContain(dir ? '📌' : '📌 💬')
+    expect(text(head)).toContain('📌')
   }
 })
 
-test('the tile: six rows at the tile x, name/model/activity cut to the width, badges and minutes, selection frame', () => {
+test('the agent row (LTR): margin, emoji, name (bold, status colour), the model pill, the activity (dim once done), the minutes and badges at the room\'s tail field; the fields line up down the room', () => {
   const lead = ag('lead', 0, { name: 'מנהל', model: 'Opus 5.5', act: '📖 קורא', startMin: 12, failed: true, star: 1_700_000, longRunning: true })
   const other = ag('a1', 1, { emoji: '🐢', name: 'שם ארוך מאוד שנחתך בוודאות', model: 'Sonnet 5.5', modelFam: 'sonnet', act: '✍️ כותב קובץ ארוך', startMin: 0, status: 'stale' })
   const done = ag('a2', 2, { name: 'גמור', model: '?', modelFam: 'other', act: '✅ סיים', startMin: null, status: 'done' })
-  const room = { ...props().rooms[0]!, showDone: true, agents: [lead, other, done] }
-  const lay = layoutOffice(props({ rtl: false, columns: 45, rooms: [room], selected: 'lead' }))
-  expect(lay.rows.map(r => r.id)).toEqual(['room:sess-a:head', ...Array.from({ length: TILE_H }, (_, k) => `room:sess-a:row:0:${k}`)])
-  const [, head, desk, name, pill, act, mins] = lay.rows
-  // row 1: 💬 for the lead at the tile's start, the head centred, the index at the end; the selection frame is white and bold
-  expect(seg(head!, 0, TILE_W)).toBe('💬    🦉    1 ')
-  expect(head!.cells[6]?.fg).toBe('#ffffff')
-  expect(head!.cells[6]?.bold).toBe(true)
-  expect(head!.cells[12]?.dim).toBe(true)
-  expect(seg(head!, TILE_W + TILE_GAP, 2 * TILE_W + TILE_GAP)).toBe('      🐢    2 ')   // not the lead: no 💬; not selected: no frame
-  expect(head!.cells[TILE_W + TILE_GAP + 6]?.fg).toBeUndefined()
-  // row 2: ten half-blocks of desk, the two middle ones the screen: lit when running, grey when stale, off when done
-  expect(seg(desk!, 0, TILE_W)).toBe('  ▀▀▀▀▀▀▀▀▀▀  ')
-  expect(desk!.cells[2]?.fg).toBe('#8b5a2b')
-  expect(desk!.cells[6]?.fg).toBe('#39d353')
-  expect(desk!.cells[7]?.fg).toBe('#39d353')
-  expect(desk!.cells[8]?.fg).toBe('#8b5a2b')
-  expect(desk!.cells[TILE_W + TILE_GAP + 6]?.fg).toBe('#6b7280')
-  expect(desk!.cells[2 * (TILE_W + TILE_GAP) + 6]?.fg).toBe('#1f2937')
-  expect(desk!.cells[TILE_W]?.ch).toBe(' ')                       // the gap column stays blank
-  // row 3: the name, one bold run in the status colour, cut to the tile with an ellipsis
-  expect(seg(name!, 0, TILE_W).trim()).toBe('מנהל')
-  const nameRuns = rowRuns(name!.cells)
-  expect(nameRuns.find(r => r.text === 'מנהל')).toEqual({ text: 'מנהל', fg: '#7ee29a', bold: true })
-  const cutName = nameRuns.find(r => r.text.endsWith('…'))
-  expect(cutName?.text).toBe('שם ארוך מאוד …')
-  expect(cutName?.fg).toBe('#e6c07e')
-  expect(seg(name!, TILE_W, TILE_W + 1)).toBe(' ')
-  // row 4: the model pill: white on the family colour; unknown model on the grey with the light ink
-  const pillRuns = rowRuns(pill!.cells)
-  expect(pillRuns.find(r => r.text === ' Opus 5.5 ')).toEqual({ text: ' Opus 5.5 ', fg: '#ffffff', bg: '#7b5cf0' })
-  expect(pillRuns.find(r => r.text === ' Sonnet 5.5 ')?.bg).toBe('#2f7fe8')
-  expect(pillRuns.find(r => r.text === ' ? ')).toEqual({ text: ' ? ', fg: '#e8ecff', bg: '#3a4470' })
-  // row 5: the activity in the status colour, dim once done, cut to the tile
-  const actRuns = rowRuns(act!.cells)
-  expect(actRuns.find(r => r.text === '📖 קורא')).toEqual({ text: '📖 קורא', fg: '#7ee29a' })
-  expect(actRuns.find(r => r.text === '✅ סיים')).toEqual({ text: '✅ סיים', fg: '#9fb0e6', dim: true })
-  expect(actRuns.find(r => r.text.startsWith('✍️'))?.text.endsWith('…')).toBe(true)
-  // row 6: minutes then badges ❌⭐⏰; '<1' under a minute; nothing but badges when unknown
-  expect(seg(mins!, 0, TILE_W).trim()).toBe('12❌⭐⏰')
-  expect(seg(mins!, TILE_W + TILE_GAP, 2 * TILE_W + TILE_GAP).trim()).toBe('<1')
-  expect(seg(mins!, 2 * (TILE_W + TILE_GAP), 3 * TILE_W + 2 * TILE_GAP).trim()).toBe('')
-  expect(mins!.cells[5]?.dim).toBe(true)
-  // every tile row is exactly the width; nothing bleeds into the gap column
-  for (const r of lay.rows.slice(1)) {
-    expect(r.cells).toHaveLength(45)
-    expect(r.cells[TILE_W]?.ch).toBe(' ')
-    expect(r.cells[2 * TILE_W + TILE_GAP]?.ch).toBe(' ')
+  const r = room({ showDone: true, agents: [lead, other, done] })
+  // 72 columns: the fields whole (4 + 24 + 1 + 12 + 1 + 16 = 58), the tail field (11) at the far end
+  const lay = layoutOffice(props({ rtl: false, columns: 72, rooms: [r], selected: 'lead' }))
+  expect(lay.rows.map(x => x.id)).toEqual(['room:sess-a:head', 'room:sess-a:a:0', 'room:sess-a:a:1', 'room:sess-a:a:2'])
+  const [, r0, r1, r2] = lay.rows
+  // the name field is the room's widest name (24 cells: the long name cut), the pill its widest (` Sonnet 5.5 `), the act its widest (16)
+  expect(seg(r0!, 0, 4)).toBe(' 🦉 ')
+  expect(seg(r0!, 4, 4 + 24).trimEnd()).toBe('מנהל')
+  expect(seg(r1!, 4, 4 + 24)).toBe('שם ארוך מאוד שנחתך בווד…')
+  expect(seg(r2!, 4, 4 + 24).trimEnd()).toBe('גמור')
+  expect(seg(r0!, 29, 29 + 12)).toBe(' Opus 5.5   ')
+  expect(seg(r1!, 29, 29 + 12)).toBe(' Sonnet 5.5 ')
+  expect(seg(r2!, 29, 29 + 12)).toBe(' ?          ')
+  expect(seg(r0!, 42, 42 + 16).trimEnd()).toBe('📖 קורא')
+  expect(seg(r1!, 42, 42 + 16)).toBe('✍️ כותב קובץ אר…')
+  expect(seg(r2!, 42, 42 + 16).trimEnd()).toBe('✅ סיים')
+  // the tail: badges then the minutes at the far end (the room's widest tail is `❌⭐⏰💬12′` = 11 cells, right-aligned in its field)
+  expect(seg(r0!, 61, 72).trimStart()).toBe('❌⭐⏰💬12′')
+  expect(seg(r1!, 61, 72).trimStart()).toBe('<1′')
+  expect(seg(r2!, 58, 72).trim()).toBe('')
+  expect(r0!.cells[71]?.ch).toBe('′')
+  expect(r1!.cells[71]?.ch).toBe('′')
+  // styles: the selected emoji white and bold; the name bold in the status colour; the pill on the family colour; the act dim once done; the tail dim
+  expect(r0!.cells[1]).toEqual({ ch: '🦉', fg: '#ffffff', bold: true, brk: true })
+  expect(r1!.cells[1]).toEqual({ ch: '🐢', brk: true })
+  const runs = (row: { cells: readonly { ch: string; fg?: string; bg?: string; bold?: true; dim?: true; brk?: true }[] }) => rowRuns(row.cells)
+  expect(runs(r0!).find(x => x.text === 'מנהל')).toEqual({ text: 'מנהל', fg: '#7ee29a', bold: true })
+  expect(runs(r1!).find(x => x.text.endsWith('…') && x.bold)).toEqual({ text: 'שם ארוך מאוד שנחתך בווד…', fg: '#e6c07e', bold: true })
+  expect(runs(r0!).find(x => x.text === ' Opus 5.5 ')).toEqual({ text: ' Opus 5.5 ', fg: '#ffffff', bg: '#7b5cf0' })
+  expect(runs(r1!).find(x => x.text === ' Sonnet 5.5 ')?.bg).toBe('#2f7fe8')
+  expect(runs(r2!).find(x => x.text === ' ? ')).toEqual({ text: ' ? ', fg: '#e8ecff', bg: '#3a4470' })
+  expect(runs(r0!).find(x => x.text === 'קורא')).toEqual({ text: 'קורא', fg: '#7ee29a' })
+  expect(runs(r0!).find(x => x.text === '📖')).toEqual({ text: '📖', fg: '#7ee29a' })
+  expect(runs(r2!).find(x => x.text === 'סיים')).toEqual({ text: 'סיים', fg: '#9fb0e6', dim: true })
+  expect(runs(r0!).find(x => x.text === '❌⭐⏰💬12′')).toEqual({ text: '❌⭐⏰💬12′', dim: true })
+  for (const row of lay.rows) {
+    expect(row.cells).toHaveLength(72)
+    expect(wellFormed(row)).toBe(true)
+    for (const run of hebrewRuns(row)) expect(hebrewRuleOk(run)).toBe(true)
   }
+  // pillText and tailText, the row's pieces
+  expect(pillText('Opus 5.5')).toBe(' Opus 5.5 ')
+  expect(pillText('Opus 5.5', true)).toBe(' Opus ')
+  expect(pillText('?', true)).toBe(' ? ')
+  expect(pillText('')).toBe(' ? ')
+  expect(pillText('x'.repeat(40))).toBe(` ${'x'.repeat(11)}… `)
+  expect(tailText(lead, false)).toBe('❌⭐⏰💬12′')
+  expect(tailText(lead, true)).toBe('12′❌⭐⏰💬')
+  expect(tailText(other, true)).toBe('<1′')
+  expect(tailText(done, true)).toBe('')
 })
 
-test('cutting at a wide glyph never leaves half an emoji; names of only emoji fit the tile', () => {
-  const owl = ag('o', 1, { name: '🦉'.repeat(10), act: '🦉'.repeat(9), model: '🦉'.repeat(8) })
-  const room = { ...props().rooms[0]!, title: '🦉'.repeat(30), agents: [owl] }
-  for (const columns of [24, 31, 45]) {
+test('the agent row (RTL): the same row mirrored — the emoji at the right edge, the name to its left, the pill, then the activity (its emoji first), the minutes at the left edge; a roomy pane keeps the minutes GAP_MAX past the activity', () => {
+  const cast = [ag('lead', 0, { name: 'המנהל', act: '🤔 חושב', startMin: 1 }), ag('a1', 1, { emoji: '🦆', name: 'הברווז', act: '🤔 חושב', startMin: 7, status: 'stale' })]
+  // 34 columns: the content (4 + 6 + 1 + 10 + 1 + 7 = 29) and the tail field (4) fill the row: the minutes at the left edge
+  const lay = layoutOffice(props({ rtl: true, columns: 34, rooms: [room({ agents: cast })] }))
+  const [, r0, r1] = lay.rows
+  expect(text(r0!)).toBe('1′💬 חושב 🤔  Opus 5.5   המנהל 🦉 ')
+  expect(text(r1!)).toBe('7′   חושב 🤔  Opus 5.5  הברווז 🦆 ')
+  expect(rowRuns(r0!.cells).map(x => x.text)).toEqual(['1′💬', ' ', 'חושב', ' ', '🤔', ' ', ' Opus 5.5 ', '  ', 'המנהל', ' ', '🦉 '])
+  // the minutes field is the room's widest tail (`1′💬`, 4 cells), at the edge: 7′ sits at x 0 too; the emoji at the right edge
+  expect(r1!.cells[0]?.ch).toBe('7')
+  expect(r0!.cells[0]?.ch).toBe('1')
+  expect(r0!.cells[31]?.ch).toBe('🦉')
+  expect(r1!.cells[31]?.ch).toBe('🦆')
+  // 60 columns: the same content at the right edge, the minutes two cells past the activity, the left of the row blank
+  const wide = layoutOffice(props({ rtl: true, columns: 60, rooms: [room({ agents: cast })] })).rows[1]!
+  expect(text(wide)).toBe(' '.repeat(24) + '1′💬   חושב 🤔  Opus 5.5   המנהל 🦉 ')
+})
+
+test('widths: at every width 24..200 the row shrinks in order — the activity first, then the name, then the pill to its family, then the pill away — and never cuts a glyph; wider panes cap the gap before the minutes', () => {
+  const r = room({ agents: [ag('lead', 0, { name: 'שם בינוני', model: 'Sonnet 5.5', modelFam: 'sonnet', act: '✍️ כותב קובץ ארוך', startMin: 12, failed: true }), ag('a1', 1, { name: 'קצר', act: '📖 קורא', startMin: 3 })] })
+  const have = (columns: number, rtl: boolean) => {
+    const row = layoutOffice(props({ columns, rtl, rooms: [r] })).rows[1]!
+    const runs = rowRuns(row.cells).map(x => x.text)
+    return { row, runs, pill: runs.find(x => /^ (Sonnet|S…) ?/.test(x) || x === ' Sonnet 5.5 ' || x === ' Sonnet ') ?? '', act: runs.some(x => x.startsWith('כותב')), name: runs.find(x => x.startsWith('שם')) ?? '' }
+  }
+  for (const rtl of [true, false]) {
+    // roomy: every field whole, the minutes GAP_MAX past the activity, the rest blank (the gap does not grow with the pane)
+    const wide = have(120, rtl)
+    expect(wide.pill).toBe(' Sonnet 5.5 ')
+    expect(wide.act).toBe(true)
+    expect(wide.name).toBe('שם בינוני')
+    expect(text(wide.row).trim()).toBe(text(have(200, rtl).row).trim())
+    expect(text(wide.row).trim().length).toBeLessThan(70)
+    // 45: the activity is cut; 36: the activity is gone, the name whole; 30: the name gives way, the pill short; 24: the pill is the family, the name cut
+    expect(have(45, rtl).runs.some(x => x.endsWith('…') && /כותב/.test(x))).toBe(true)
+    expect(have(36, rtl).act).toBe(false)
+    expect(have(36, rtl).name).toBe('שם בינוני')
+    expect(have(36, rtl).pill).toBe(' Sonnet 5.5 ')
+    expect(have(28, rtl).pill).toBe(' Sonnet ')
+    expect(have(24, rtl).pill).toBe(' Sonnet ')
+    expect(have(24, rtl).name.endsWith('…')).toBe(true)
+  }
+  // the whole sweep: exact width, whole glyphs, the pill never half (either text or none), the minutes always drawn
+  for (let columns = 24; columns <= 200; columns++) {
     for (const rtl of [true, false]) {
-      const lay = layoutOffice(props({ columns, rtl, rooms: [room] }))
-      expect(lay.rows.every(r => r.cells.length === columns)).toBe(true)
-      expect(lay.rows.every(r => r.cells.every(c => !LONE_SURROGATE.test(c.ch)))).toBe(true)
-      const name = lay.rows[3]!
-      expect(text(name)).toContain('🦉🦉🦉🦉🦉🦉…')              // 6 owls (12 cells) + the ellipsis = 13 ≤ TILE_W
-      expect(text(name)).not.toContain('🦉🦉🦉🦉🦉🦉🦉🦉')
-      expect(text(lay.rows[0]!)).toContain('…')
+      const { row, runs } = have(columns, rtl)
+      expect(row.cells, `${columns}`).toHaveLength(columns)
+      expect(wellFormed(row), `${columns}`).toBe(true)
+      expect(runs.filter(x => /Sonnet|S…/.test(x)).every(x => x === ' Sonnet 5.5 ' || x === ' Sonnet '), `${columns}: ${runs.join('|')}`).toBe(true)
+      expect(runs.some(x => x.includes('12′')), `${columns}`).toBe(true)
     }
   }
 })
 
-test('rooms: done agents hidden unless the room shows them; a blank gap row only between rooms; the output is deterministic', () => {
-  const done = ag('d', 2, { status: 'done' })
-  const a = { ...props().rooms[0]!, id: 'ra', agents: [ag('lead', 0), done] }
-  const b = { ...props().rooms[0]!, id: 'rb', showDone: true, agents: [done] }
+test('cutting at a wide glyph never leaves half an emoji; names of only emoji fit the row', () => {
+  const owl = ag('o', 1, { name: '🦉'.repeat(10), act: '🦉'.repeat(9), model: '🦉'.repeat(8) })
+  const r = room({ title: '🦉'.repeat(30), agents: [owl] })
+  for (const columns of [24, 31, 45, 90]) {
+    for (const rtl of [true, false]) {
+      const lay = layoutOffice(props({ columns, rtl, rooms: [r] }))
+      expect(lay.rows.every(x => x.cells.length === columns)).toBe(true)
+      expect(lay.rows.every(x => x.cells.every(c => !LONE_SURROGATE.test(c.ch)))).toBe(true)
+      expect(lay.rows.every(wellFormed)).toBe(true)
+      if (columns < 64) expect(text(lay.rows[0]!)).toContain('…')   // (at 90 the 60-cell title fits whole)
+      expect(text(lay.rows[1]!)).toContain('🦉🦉')
+    }
+  }
+  expect(cut('🦉'.repeat(15), NAME_MAX)).toBe('🦉'.repeat(11) + '…')
+  expect(cut('✍️ כותב קובץ ארוך', ACT_MAX)).toBe('✍️ כותב קובץ אר…')
+})
+
+test('rooms: a blank gap row only between rooms; the "more / hide finished" row under a room that has one, its hit the whole row; the output is deterministic', () => {
+  const a = room({ id: 'ra', agents: [ag('lead', 0), ag('d', 2, { status: 'done' })], done: 6, moreDone: 5, moreLabel: 'עוד 5 שסיימו' })
+  const b = room({ id: 'rb', showDone: true, done: 1, agents: [ag('d', 2, { status: 'done' })], moreLabel: 'הסתר שסיימו' })
   const lay = layoutOffice(props({ rooms: [a, b] }))
-  expect(lay.rows.map(r => r.id)).toEqual([
-    'room:ra:head', 'room:ra:row:0:0', 'room:ra:row:0:1', 'room:ra:row:0:2', 'room:ra:row:0:3', 'room:ra:row:0:4', 'room:ra:row:0:5',
-    'room:ra:gap',
-    'room:rb:head', 'room:rb:row:0:0', 'room:rb:row:0:1', 'room:rb:row:0:2', 'room:rb:row:0:3', 'room:rb:row:0:4', 'room:rb:row:0:5',
-  ])
-  expect(lay.hits.filter(hit => hit.kind === 'agent').map(hit => `${hit.id}@${hit.y}`)).toEqual(['lead@1', 'd@9'])
-  expect(text(lay.rows[7]!)).toBe(' '.repeat(45))
-  // a room whose agents are all hidden is a head alone
-  const empty = layoutOffice(props({ rooms: [{ ...a, agents: [done] }] }))
-  expect(empty.rows.map(r => r.id)).toEqual(['room:ra:head'])
-  expect(empty.hits.map(hit => hit.kind)).toEqual(['pin'])
-  // a second tile row starts a new block of six, with the index continuing
-  const four = { ...a, agents: [ag('x0', 0), ag('x1', 1), ag('x2', 2), ag('x3', 3)] }
-  const wrapped = layoutOffice(props({ rooms: [four], rtl: false }))
-  expect(wrapped.rows).toHaveLength(1 + 2 * TILE_H)
-  expect(wrapped.rows[1 + TILE_H]?.id).toBe('room:ra:row:1:0')
-  expect(wrapped.hits.find(hit => hit.id === 'x3')).toEqual({ kind: 'agent', id: 'x3', x: 0, y: 1 + TILE_H, w: TILE_W, h: TILE_H })
-  expect(seg(wrapped.rows[1 + TILE_H]!, 0, TILE_W)).toBe('      🦉    4 ')
+  expect(lay.rows.map(r => r.id)).toEqual(['room:ra:head', 'room:ra:a:0', 'room:ra:a:1', 'room:ra:more', 'room:ra:gap', 'room:rb:head', 'room:rb:a:0', 'room:rb:more'])
+  expect(lay.hits.map(hit => `${hit.kind}:${hit.id}@${hit.y}`)).toEqual(['pin:ra@0', 'roomDone:ra@0', 'agent:lead@1', 'agent:d@2', 'moreDone:ra@3', 'pin:rb@5', 'roomDone:rb@5', 'agent:d@6', 'moreDone:rb@7'])
+  expect(lay.hits.find(hit => hit.kind === 'moreDone')).toEqual({ kind: 'moreDone', id: 'ra', x: 0, y: 3, w: 45, h: 1 })
+  expect(text(lay.rows[4]!)).toBe(' '.repeat(45))
+  // the more row: ▸ (dim) at the reading edge, then the label in the finished colour — a Hebrew run starting with its letter
+  const more = lay.rows[3]!
+  expect(text(more)).toBe(' '.repeat(45 - 15) + 'עוד 5 שסיימו ▸ ')
+  expect(rowRuns(more.cells).filter(r => r.fg || r.dim)).toEqual([{ text: 'עוד 5 שסיימו', fg: '#9fb0e6' }, { text: '▸', dim: true }])
+  expect(text(lay.rows[7]!).trim()).toBe('הסתר שסיימו ▸')
+  const ltr = layoutOffice(props({ rooms: [a], rtl: false }))
+  expect(text(ltr.rows[3]!)).toBe(' ▸ עוד 5 שסיימו' + ' '.repeat(45 - 15))
+  expect(hitAt(ltr, 40, 3)?.kind).toBe('moreDone')
+  // without a label there is no row (the room shows every finished agent, or has none)
+  expect(layoutOffice(props({ rooms: [room({ agents: [ag('d', 2, { status: 'done' })], showDone: true })] })).rows.map(r => r.id)).toEqual(['room:sess-a:head', 'room:sess-a:a:0'])
+  // a room whose agents are all held back is a head and the more row
+  const held = layoutOffice(props({ rooms: [{ ...a, agents: [] }] }))
+  expect(held.rows.map(r => r.id)).toEqual(['room:ra:head', 'room:ra:more'])
+  expect(held.hits.map(hit => hit.kind)).toEqual(['pin', 'roomDone', 'moreDone'])
   expect(JSON.stringify(layoutOffice(props({ rooms: [a, b] })))).toBe(JSON.stringify(lay))
   expect(layoutOffice(props({ rooms: [] }))).toEqual({ rows: [], hits: [] })
 })
 
-test('decor: the walk-in shifts the head round((1 - p) × WALK_CELLS) cells toward the reading start; the hop draws ⭐ beside the head on its own row; the hover lays HOVER_BG on the head row', () => {
+test('decor: the walk-in shifts the emoji and the name round((1 - p) × WALK_CELLS) cells inside from the reading edge; the hop draws ⭐ beside the emoji; the hover lays HOVER_BG across the row', () => {
   expect([walkShift(0), walkShift(1 / 3), walkShift(0.5), walkShift(0.9), walkShift(1)]).toEqual([WALK_CELLS, 2, 2, 0, 0])
   expect([walkShift(-1), walkShift(2), walkShift(Number.NaN)]).toEqual([WALK_CELLS, 0, 0])   // out of range: clamped; nonsense: home
-  const ltr = props({ rtl: false })   // lead (💬, index 1) at x 0, a1 (index 2) at x 15
-  const rtl = props({ rtl: true })    // lead at x 31, a1 at x 16
-  const head = (p: OfficeProps, d: OfficeDecor, x: number) => seg(layoutOffice(p, d).rows[1]!, x, x + TILE_W)
+  const ltr = props({ rtl: false, columns: 40 })
+  const rtl = props({ rtl: true, columns: 40 })
+  const row = (p: OfficeProps, d: OfficeDecor, y: number) => text(layoutOffice(p, d).rows[y]!)
   // at home: no decor, and a walk-in that has arrived (p = 1)
-  expect(head(ltr, NO_DECOR, 15)).toBe('      🦉    2 ')
-  expect(head(ltr, decor({ entering: [['a1', 1]] }), 15)).toBe('      🦉    2 ')
-  // LTR: the head comes in from the left, 3 → 2 → 0 cells off home
-  expect(head(ltr, decor({ entering: [['a1', 0]] }), 15)).toBe('   🦉       2 ')
-  expect(head(ltr, decor({ entering: [['a1', 0.5]] }), 15)).toBe('    🦉      2 ')
-  expect(head(ltr, decor({ entering: [['lead', 0]] }), 0)).toBe('💬 🦉       1 ')        // the lead's 💬 is never covered
-  // RTL: from the right (the reading start)
-  expect(head(rtl, NO_DECOR, 16)).toBe('      🦉    2 ')
-  expect(head(rtl, decor({ entering: [['a1', 0]] }), 16)).toBe('         🦉 2 ')
-  expect(head(rtl, decor({ entering: [['a1', 0.5]] }), 16)).toBe('        🦉  2 ')
-  expect(head(rtl, decor({ entering: [['lead', 0]] }), 31)).toBe('💬       🦉 1 ')
-  // the hop: ⭐ beside the head, centred on the tile's own head row (the row above is the room head or another tile)
-  expect(head(ltr, decor({ hop: ['a1'] }), 15)).toBe('     ⭐🦉   2 ')
-  expect(head(ltr, decor({ hop: ['lead'] }), 0)).toBe('💬   ⭐🦉   1 ')
-  expect(head(rtl, decor({ hop: ['a1'] }), 16)).toBe('     ⭐🦉   2 ')
-  // both at once: the walk-in carries the ⭐ along and stops at the 💬 / the index
-  expect(head(ltr, decor({ hop: ['lead'], entering: [['lead', 0]] }), 0)).toBe('💬⭐🦉      1 ')
-  expect(head(rtl, decor({ hop: ['a1'], entering: [['a1', 0]] }), 16)).toBe('        ⭐🦉2 ')
-  // only the decorated tile's head row changes; the other rows, the other tile and the hits are the plain layout's
+  const home = row(ltr, NO_DECOR, 2)
+  expect(home.startsWith(' 🦉 סוכן 1')).toBe(true)
+  expect(row(ltr, decor({ entering: [['a1', 1]] }), 2)).toBe(home)
+  // LTR: the emoji starts 3 cells in and walks to the edge (3 → 2 → 0); the name follows it, cut by as much; the pill does not move
+  const pillAt = (p: OfficeProps, d: OfficeDecor) => layoutOffice(p, d).rows[2]!.cells.findIndex(c => c.ch === 'O')
+  expect(row(ltr, decor({ entering: [['a1', 0]] }), 2).startsWith('    🦉 סו… ')).toBe(true)
+  expect(row(ltr, decor({ entering: [['a1', 0.5]] }), 2).startsWith('   🦉 סוכ… ')).toBe(true)
+  expect(pillAt(ltr, decor({ entering: [['a1', 0]] }))).toBe(pillAt(ltr, NO_DECOR))
+  // RTL: from the right edge inward
+  const rhome = row(rtl, NO_DECOR, 2)
+  expect(rhome.endsWith('סוכן 1 🦉 ')).toBe(true)
+  expect(row(rtl, decor({ entering: [['a1', 0]] }), 2).endsWith(' סו… 🦉    ')).toBe(true)
+  expect(row(rtl, decor({ entering: [['a1', 0.5]] }), 2).endsWith(' סוכ… 🦉   ')).toBe(true)
+  expect(pillAt(rtl, decor({ entering: [['a1', 0]] }))).toBe(pillAt(rtl, NO_DECOR))
+  // the hop: ⭐ before the emoji, the name giving it two cells
+  expect(row(ltr, decor({ hop: ['a1'] }), 2).startsWith(' ⭐🦉 סוכ… ')).toBe(true)
+  expect(row(rtl, decor({ hop: ['a1'] }), 2).endsWith(' סוכ… ⭐🦉 ')).toBe(true)
+  // both at once: the walk-in carries the ⭐ along, the name down to its ellipsis
+  expect(row(ltr, decor({ hop: ['a1'], entering: [['a1', 0]] }), 2).startsWith('    ⭐🦉 … ')).toBe(true)
+  // only the decorated row changes; the other rows and the hits are the plain layout's
   const plain = layoutOffice(ltr)
   const moved = layoutOffice(ltr, decor({ hop: ['a1'], entering: [['lead', 0]] }))
   expect(moved.hits).toEqual(plain.hits)
   expect(moved.rows.map(r => r.id)).toEqual(plain.rows.map(r => r.id))
-  for (let y = 0; y < plain.rows.length; y++) if (y !== 1) expect(moved.rows[y]).toEqual(plain.rows[y])
-  expect(seg(moved.rows[1]!, 0, TILE_W)).toBe('💬 🦉       1 ')
-  expect(seg(moved.rows[1]!, 15, 15 + TILE_W)).toBe('     ⭐🦉   2 ')
-  // hover: HOVER_BG across the tile's head row only (the 💬 and the index too); the head stays home; a selected head keeps its frame
+  expect(moved.rows[0]).toEqual(plain.rows[0])
+  expect(moved.rows[1]).not.toEqual(plain.rows[1])
+  expect(moved.rows[2]).not.toEqual(plain.rows[2])
+  // hover: HOVER_BG across the whole row only; the emoji stays home; a selected emoji keeps its frame
   const hov = layoutOffice({ ...ltr, selected: 'a1' }, decor({ hover: 'a1' }))
-  expect(hov.rows[1]!.cells.map((c, i) => (c.bg === HOVER_BG ? i : -1)).filter(i => i >= 0)).toEqual(Array.from({ length: TILE_W }, (_, i) => 15 + i))
+  expect(hov.rows[2]!.cells.every(c => c.bg === HOVER_BG)).toBe(true)
   expect(hov.rows.filter(r => r.cells.some(c => c.bg === HOVER_BG))).toHaveLength(1)
-  expect(seg(hov.rows[1]!, 15, 15 + TILE_W)).toBe('      🦉    2 ')
-  expect(hov.rows[1]!.cells[21]).toEqual({ ch: '🦉', fg: '#ffffff', bold: true, bg: HOVER_BG })
-  expect(rowRuns(hov.rows[1]!.cells.slice(15, 15 + TILE_W)).every(r => r.bg === HOVER_BG)).toBe(true)
+  expect(text(hov.rows[2]!)).toBe(home)
+  expect(hov.rows[2]!.cells[1]).toEqual({ ch: '🦉', fg: '#ffffff', bold: true, bg: HOVER_BG, brk: true })
+  expect(rowRuns(hov.rows[2]!.cells).every(r => r.bg === HOVER_BG)).toBe(true)
   // an id the office does not hold decorates nothing
   expect(layoutOffice(ltr, decor({ hover: 'ghost', hop: ['ghost'], entering: [['ghost', 0]] }))).toEqual(plain)
 })
 
-test('decor: a three-digit index leaves less room — the hop and the walk-in are clamped before it, never over it', () => {
-  const crowd = Array.from({ length: 100 }, (_, i) => ag(`x${i}`, i + 1))
+test('decor: a narrow row leaves the emoji less room — the hop and the walk-in stop before the pill, never over it', () => {
+  const r = room({ agents: [ag('x', 1, { name: 'א', startMin: 100, failed: true, longRunning: true })] })
   for (const rtl of [true, false]) {
-    const p = props({ rtl, rooms: [{ ...props().rooms[0]!, agents: crowd }] })
-    const hit = layoutOffice(p).hits.find(r => r.id === 'x99')!
-    const lay = layoutOffice(p, decor({ hop: ['x99'], entering: [['x99', 0]] }))
-    const row = lay.rows[hit.y]!
-    expect(seg(row, hit.x, hit.x + TILE_W)).toBe(rtl ? '       ⭐🦉100' : '  ⭐🦉     100')
-    expect(wellFormed(row)).toBe(true)
-    expect(row.cells).toHaveLength(45)
+    for (const columns of [24, 26, 28]) {
+      const p = props({ rtl, columns, rooms: [r] })
+      const plain = layoutOffice(p).rows[1]!
+      const lay = layoutOffice(p, decor({ hop: ['x'], entering: [['x', 0]] })).rows[1]!
+      expect(wellFormed(lay)).toBe(true)
+      expect(lay.cells).toHaveLength(columns)
+      expect(text(lay)).toContain('⭐🦉')
+      // the pill (or what is left of it) and the tail sit in the cells they sat in
+      const col = (r: Cells, ch: string) => r.cells.findIndex(c => c.ch === ch)
+      expect(col(lay, 'O')).toBe(col(plain, 'O'))
+      expect(col(lay, '′')).toBe(col(plain, '′'))
+      expect(col(lay, '′')).toBeGreaterThanOrEqual(0)
+    }
   }
 })
 
-/** A small office for the decor sweep: two rooms, the lead first, done agents shown in the second, three kinds of head glyph. */
+/** A small office for the decor sweep: two rooms, the lead first, done agents shown in the second, three kinds of emoji. */
 function smallOffice(): OfficeRoom[] {
   const a = Array.from({ length: 7 }, (_, i) => ag(`a${i}`, i, { emoji: i % 2 ? '🦉' : '🕵️' }))
   const b = Array.from({ length: 5 }, (_, i) => ag(`b${i}`, i + 1, { status: i % 2 ? 'done' : 'running', emoji: '👨‍💻' }))
-  return [{ ...props().rooms[0]!, id: 'ra', agents: a }, { ...props().rooms[0]!, id: 'rb', showDone: true, agents: b }]
+  return [room({ id: 'ra', agents: a }), room({ id: 'rb', showDone: true, agents: b, moreLabel: 'הסתר שסיימו' })]
 }
 
-test('decor sweep: at the sweep widths 24..200, both directions, every walk-in step, hops and a hover — each row is exactly `columns` cells, every wide glyph keeps its pair, the hits never move', { timeoutMs: 30_000 }, () => {
+test('decor sweep: at the sweep widths 24..200, both directions, every walk-in step, hops and a hover — each row is exactly `columns` cells, every wide glyph keeps its pair, the hits never move, only the decorated agent\'s row changes', { timeoutMs: 30_000 }, () => {
   const rooms = smallOffice()
   const ids = rooms.flatMap(r => r.agents.map(a => a.id))
   const bad: string[] = []
@@ -453,8 +590,9 @@ test('decor sweep: at the sweep widths 24..200, both directions, every walk-in s
       const plain = layoutOffice(p)
       const plainHits = JSON.stringify(plain.hits)
       const plainText = plain.rows.map(text)
-      for (const progress of [0, 0.4, 0.75]) {   // walkShift 3, 2, 1 (at 1 the head is home: the plain layout)
-        const d = decor({ hover: ids[columns % ids.length]!, hop: ids.filter((_, i) => i % 3 === 0), entering: ids.map((id): [string, number] => [id, progress]) })
+      for (const progress of [0, 0.4, 0.75]) {   // walkShift 3, 2, 1 (at 1 the emoji is home: the plain layout)
+        const hop = ids.filter((_, i) => i % 3 === 0)
+        const d = decor({ hover: ids[columns % ids.length]!, hop, entering: ids.map((id): [string, number] => [id, progress]) })
         const lay = layoutOffice(p, d)
         const at = `${columns}${rtl ? ' rtl' : ''} p=${progress}`
         if (lay.rows.length !== plain.rows.length || JSON.stringify(lay.hits) !== plainHits) bad.push(`${at}: rows or hits moved`)
@@ -463,11 +601,8 @@ test('decor sweep: at the sweep widths 24..200, both directions, every walk-in s
           if (row.cells.length !== columns) bad.push(`${at}: row ${y} has ${row.cells.length} cells`)
           if (text(row) === plainText[y]) continue
           if (!wellFormed(row)) bad.push(`${at}: row ${y} breaks a wide glyph`)
-          // a head never leaves its own tile: every changed cell lies inside the hit rectangle of a tile on that row
-          for (let x = 0; x < columns; x++) {
-            if (row.cells[x]!.ch === plain.rows[y]!.cells[x]!.ch) continue
-            if (!lay.hits.some(r => r.kind === 'agent' && r.y === y && x >= r.x && x < r.x + r.w)) bad.push(`${at}: cell ${x},${y} changed outside a tile`)
-          }
+          if (!lay.hits.some(r => r.kind === 'agent' && r.y === y)) bad.push(`${at}: row ${y} changed but is no agent's`)
+          for (const run of hebrewRuns(row)) if (!hebrewRuleOk(run)) bad.push(`${at}: row ${y} run "${run}" breaks THE HEBREW RULE`)
         }
       }
     }
@@ -475,19 +610,16 @@ test('decor sweep: at the sweep widths 24..200, both directions, every walk-in s
   expect(bad).toEqual([])
 })
 
-test('rowCount: the number of layout rows without building a cell — equal to layoutOffice(...).rows.length across room shapes and the sweep widths 24..200', { timeoutMs: 30_000 }, () => {
+test('rowCount: the number of layout rows without building a cell — equal to layoutOffice(...).rows.length across room shapes and widths 24..200', { timeoutMs: 30_000 }, () => {
   const sizes = [0, 1, 2, 3, 4, 5, 8, 13, 14, 27]
-  const rooms: OfficeRoom[] = sizes.map((n, r) => ({
-    ...props().rooms[0]!, id: `r${r}`, showDone: r % 2 === 0,
+  const rooms: OfficeRoom[] = sizes.map((n, r) => room({
+    id: `r${r}`, showDone: r % 2 === 0, moreDone: r % 3, moreLabel: r % 3 ? `עוד ${r % 3} שסיימו` : r % 2 === 0 && n > 3 ? 'הסתר שסיימו' : '',
     agents: Array.from({ length: n }, (_, i) => ag(`r${r}-${i}`, i, { status: i % 4 === 3 ? 'done' : i % 5 === 4 ? 'stale' : 'running' })),
   }))
-  const allDone: OfficeRoom = { ...props().rooms[0]!, id: 'gone', showDone: false, agents: [ag('d1', 1, { status: 'done' }), ag('d2', 2, { status: 'done' })] }
-  const shapes = [[], [rooms[1]!], rooms, [allDone], [allDone, ...rooms], [...rooms, allDone]]
+  const held: OfficeRoom = room({ id: 'gone', agents: [], moreDone: 2, moreLabel: 'עוד 2 שסיימו' })
+  const shapes = [[], [rooms[1]!], rooms, [held], [held, ...rooms], [...rooms, held]]
   const bad: string[] = []
-  // the count depends on the width only through tilesPerRow: both sides of each of its steps from 24 to 200
-  const steps = [24, 200]
-  for (let c = 25; c <= 200; c++) if (tilesPerRow(c) !== tilesPerRow(c - 1)) steps.push(c - 1, c)
-  for (const columns of steps) {
+  for (const columns of [24, 31, 45, 60, 100, 200]) {
     shapes.forEach((shape, k) => {
       const p = props({ columns, rooms: shape, rtl: columns % 2 === 0 })
       const n = layoutOffice(p).rows.length
@@ -498,7 +630,9 @@ test('rowCount: the number of layout rows without building a cell — equal to l
   for (const columns of [24, 31, 45, 200]) {
     const p = props({ columns, rooms: tenByTen() })
     expect(rowCount(p)).toBe(layoutOffice(p).rows.length)
+    expect(rowCount(p)).toBe(10 * 11 + 9)
   }
   expect(rowCount(props({ rooms: [] }))).toBe(0)
-  expect(rowCount(props())).toBe(1 + TILE_H)
+  expect(rowCount(props())).toBe(3)
+  expect(ROW_MARGIN).toBe(1)
 })

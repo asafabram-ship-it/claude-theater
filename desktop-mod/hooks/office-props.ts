@@ -20,10 +20,10 @@
 import { I18N, activityLabel, dirOf, modelFamily, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
 import type { Payload, Prefs, View } from './model'
-import { cut } from './office-layout'
+import { ACT_MAX, NAME_MAX, cut } from './office-layout'
 import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
 import { personaName } from './personas'
-import { agentElapsed, cardName, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
+import { RECENT_DONE, agentElapsed, cardName, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
 
 /** The family colour token of a model id (i18n.ts): office-layout.ts colours the model pill by it (MODEL_BG). */
 export { modelFamily } from './i18n'
@@ -47,7 +47,12 @@ export type OfficeAgent = {
 export type OfficeRoom = {
   id: string; title: string; small: string; pinned: boolean; showDone: boolean
   run: number; stale: number; done: number
+  /** The agents the room draws, in the office's order: the working and waiting, and the finished it shows (all of them, or the RECENT_DONE most recent — ui.tsx officeView). */
   agents: OfficeAgent[]
+  /** The finished agents (of the search) the room holds past the ones it draws: 0 when it shows them all. */
+  moreDone: number
+  /** The row under the agents: i18n moreDoneN while finished are held back, hideDone while the room shows them all, '' when there is no such row. */
+  moreLabel: string
 }
 
 export type OfficeDrawer = {
@@ -97,9 +102,7 @@ export type OfficePropsInput = {
   footer?: string
 }
 
-/** The caps of spec §10: a card's name, its activity, a room's title, the drawer's task / result (RESULT_CHAR_LIMIT, as the scanner cuts today). */
-const NAME_MAX = 24
-const ACT_MAX = 16
+/** The caps of spec §10: a card's name and its activity (office-layout.ts NAME_MAX / ACT_MAX), a room's title, the drawer's task / result (RESULT_CHAR_LIMIT, as the scanner cuts today). */
 const TITLE_MAX = 48
 const TEXT_MAX = RESULT_CHAR_LIMIT
 
@@ -121,8 +124,8 @@ export const DRAWER_TEXT_TIGHT = 600
 /** A clock value in whole minutes (≥ 0); `null` when the clock is unknown. */
 const wholeMinutes = (el: number | null): number | null => el === null ? null : Math.max(0, Math.floor(el / 60_000))
 
-/** The i18n strings the Client draws (toolbar, help rows, drawer headings, the empty office). */
-const LABEL_KEYS = ['appTitle', 'showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'helpTitle', 'keysHint', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scHelp', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo'] as const
+/** The i18n strings the Client draws (toolbar, help rows, drawer headings, the empty office); every Hebrew one is worded to THE HEBREW RULE (i18n.ts hebrewRuleOk, checked by i18n.test.ts). */
+export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'helpTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scHelp', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone'] as const
 
 /**
  * Throws `undefined at <path>` for the first `undefined` anywhere in `v`
@@ -141,7 +144,7 @@ export function assertJson(v: unknown, path = ''): void {
  * is selected or the selection is gone), the header counts, the empty-office
  * kind, the flags the toolbar shows and the strings it draws. Pure — the
  * same inputs give the same JSON; a card's clock is `agentElapsed` at the
- * wall-clock minute, so every tile ticks (and the props change) once a
+ * wall-clock minute, so every row ticks (and the props change) once a
  * minute, together.
  */
 export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
@@ -150,7 +153,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const L = I18N[lang]
   const office = effectivePayload(input.payload, view, now)
   const showDone = view.demo || prefs.showDone
-  const { rooms, stat, order } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins)
+  const { rooms, stat, order, moreDone } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins, RECENT_DONE)
   const nowMin = minuteClock(now)
   const stars = office.stars
   const cards = new Map<number, OfficeAgent>()
@@ -188,17 +191,22 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
       order.forEach((a, i) => { if (a.session_full === s && kept.has(i)) agents.push(toAgent(i)) })
       if (agents.length === 0) continue // every agent of the room went over the cap: the footer counts them
       const st = stat.get(s)
+      const shows = roomShowsDone(roomDone, showDone, s)
+      const more = moreDone.get(s) ?? 0
       outRooms.push({
         id: s, title: cut(st?.topic || st?.label || s.slice(0, 8), TITLE_MAX), small: st?.topic ? st.label : (st?.sid ?? s.slice(0, 8)),
-        pinned: prefs.pins.includes(s), showDone: roomShowsDone(roomDone, showDone, s),
+        pinned: prefs.pins.includes(s), showDone: shows,
         run: st?.running ?? 0, stale: st?.stale ?? 0, done: st?.done ?? 0,
-        agents,
+        agents, moreDone: more,
+        // the row under the agents: "N more finished" while the room holds some back, "Hide finished" once it shows them all
+        moreLabel: more > 0 ? L.moreDoneN(more) : shows && agents.some(a => a.status === 'done') ? L.hideDone : '',
       })
     }
     const drawer: OfficeDrawer | null = sel ? {
       // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
       id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
-      chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
+      // (the ❌ follows the Hebrew word: THE HEBREW RULE, i18n.ts)
+      chips: [sel.failed ? (lang === 'he' ? `${L.dFailed} ❌` : `❌ ${L.dFailed}`) : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
       model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
       elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
       task: cut(sel.task || L.taskUnavailable, textMax), result: cut(sel.result ?? '', textMax), truncated: sel.truncated,

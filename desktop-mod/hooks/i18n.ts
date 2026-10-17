@@ -3,6 +3,14 @@
 //
 // OWNER: builder "ui". The server-only strings of PAGE (reconnecting, version
 // banner, skipped-lines/report) are dropped per the spec ("יורד").
+//
+// THE HEBREW RULE (Asaf's live check, 2026-10-17): the desktop draws every Text
+// as an LTR paragraph and refuses bidi controls, so a string that holds Hebrew
+// reads right only when it STARTS with a Hebrew letter and holds NO Latin
+// letter (digits between Hebrew words are fine: `עוד 5 שסיימו`). Every Hebrew
+// string the office Client draws (office-props.ts LABEL_KEYS and the counted
+// labels) is worded to the rule — `hebrewRuleOk` below checks it, i18n.test.ts
+// walks the set — never patched with control marks.
 
 import type { Agent } from './model'
 import { mcpServer } from './model'
@@ -42,8 +50,12 @@ export type Strings = {
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
-  /** The desktop footer's count of the agents over the props cap (office-props.ts MAX_PROPS_AGENTS), led by its `+N`. */
+  /** The desktop footer's count of the agents over the props cap (office-props.ts MAX_PROPS_AGENTS): `+N …` in English, the count inside the Hebrew. */
   moreAgentsN: (n: number) => string
+  /** The office's row under a room that hides its finished: how many more finished agents it holds (a click shows them all). */
+  moreDoneN: (n: number) => string
+  /** The same row once the room shows every finished agent (a click hides them again). */
+  hideDone: string
   roomTitle: string; details: string; keysHint: string
   personas: readonly string[]; tools: Readonly<Record<string, string>>
 }
@@ -77,14 +89,15 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
     oversizedN: n => `${n} transcript${n === 1 ? '' : 's'} over 4 MiB skipped`,
     moreAgentsN: n => `+${n} more agent${n === 1 ? '' : 's'} not shown`,
+    moreDoneN: n => `${n} more finished`, hideDone: 'Hide finished',
     roomTitle: 'Conversation', details: 'Details', keysHint: 'focus the pane (ctrl+x tab) for the hotkeys',
     personas: PERSONAS_EN, tools: TOOLS_EN,
   },
   he: {
     appTitle: '🏢 משרד הסוכנים', showDone: 'הצג שהושלמו', toggleFinished: 'הצג/הסתר שהושלמו בשיחה זו', switchTo: 'English',
     emptyOffice: 'המשרד ריק',
-    emptySub: 'הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:',
-    watchDemo: '▶ צפו בדמו חי', demoLabel: 'דמו', exitDemo: 'יציאה',
+    emptySub: 'הפעילו סוכן בקלוד קוד - או הציצו איך נראה משרד עמוס:',
+    watchDemo: 'צפו בדמו חי ▶', demoLabel: 'דמו', exitDemo: 'יציאה',
     langHint: 'החלפת שפה (עברית / אנגלית)', close: 'סגירה',
     loading: 'טוען…', helpTitle: 'קיצורי מקלדת', helpHint: 'קיצורי מקלדת',
     scSearch: 'חיפוש', scFinished: 'הצג / הסתר שהושלמו', scMove: 'מעבר בין סוכנים',
@@ -96,7 +109,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',
     officeFailed: 'לא ניתן היה לצייר את המשרד; מוצגים כרטיסים (/theater לניסיון נוסף)',
     usageToast: (pct, reset) => `מכסת 5 השעות: ${pct}%${reset ? ` · איפוס ${reset}` : ''}`,
-    srResults: n => `${n} סוכנים תואמים`, srNoMatch: 'אין סוכנים תואמים', srCleared: 'החיפוש נוקה',
+    srResults: n => `נמצאו ${n} סוכנים תואמים`, srNoMatch: 'אין סוכנים תואמים', srCleared: 'החיפוש נוקה',
     pin: 'נעץ למעלה', unpin: 'בטל נעיצה',
     emptyNoActive: 'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',
     emptyNoneInWindow: 'אין סוכנים בחלון הזמן.',
@@ -105,9 +118,10 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     dDuration: 'משך ', dElapsed: 'זמן ',
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
-    actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי MCP',
-    oversizedN: n => `${n} תמלילים מעל 4MiB דולגו`,
-    moreAgentsN: n => `+${n} סוכנים נוספים לא מוצגים`,
+    actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי מחובר',
+    oversizedN: n => `דולגו ${n} תמלילים גדולים מדי`,
+    moreAgentsN: n => `עוד ${n} סוכנים לא מוצגים`,
+    moreDoneN: n => `עוד ${n} שסיימו`, hideDone: 'הסתר שסיימו',
     roomTitle: 'שיחה', details: 'פרטים', keysHint: 'למקשי הקיצור מקדו את החלונית (ctrl+x tab)',
     personas: PERSONAS_HE, tools: TOOLS_HE,
   },
@@ -165,6 +179,22 @@ export function modelLabel(model: string): string {
     }
   }
   return id
+}
+
+/** A Hebrew letter, a Latin letter (the two scripts the rule is about). */
+const HEBREW_LETTER_RE = /\p{Script=Hebrew}/u
+const LATIN_LETTER_RE = /\p{Script=Latin}/u
+
+/**
+ * THE HEBREW RULE on one string: true when it holds no Hebrew at all, or when its first glyph is a
+ * Hebrew letter and no Latin letter follows (digits, punctuation, emoji and spaces are fine anywhere
+ * after the first letter). The layout splits mixed text into runs by this rule (office-layout.ts
+ * `place`); the i18n strings are worded to pass it whole.
+ */
+export function hebrewRuleOk(s: string): boolean {
+  if (!HEBREW_LETTER_RE.test(s)) return true
+  const first = [...s][0] ?? ''
+  return HEBREW_LETTER_RE.test(first) && !LATIN_LETTER_RE.test(s)
 }
 
 /** Text direction for a language. */

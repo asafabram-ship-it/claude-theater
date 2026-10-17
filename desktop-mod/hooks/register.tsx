@@ -111,7 +111,7 @@ import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolSta
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, STORE_USAGE_TOAST_KEY, USAGE, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
 import { cleanAgentText } from './office-chrome'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
+import { RECENT_DONE, STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
 import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageLabel, usageThreshold, type FiveHour, type ToastMark } from './usage'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
@@ -409,7 +409,7 @@ export async function poll($: EngineInterface): Promise<void> {
     if (fresh.length > 0) {
       prefs = await read($, prefsAtom)
       const roomDone = parseRoomDone(await $.store.get(STORE_ROOM_DONE_KEY).catch(() => undefined))
-      const shown = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins).visible.map(a => a.id))
+      const shown = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins, RECENT_DONE).visible.map(a => a.id))
       const L = I18N[prefs.lang]
       let celebrated = false
       for (const id of fresh) {

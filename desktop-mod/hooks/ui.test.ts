@@ -562,16 +562,20 @@ test('the finish beat (the poll\'s, over the scanned office): a shown agent that
   expect(captured.plays).toBe(1)
   const starQ2 = clock.now()
   expect(captured.payload?.stars).toEqual({ q2: starQ2 })
-  // a hidden finish (finished are hidden) is remembered, never celebrated later — not even once they show
+  // a finish in a room that hides its finished is still a finish the office draws (THE RECENT FINISHED: the desktop office
+  // keeps a room's three most recent): celebrated once, its ⭐ stamped; the text cards (this terminal) do not draw it
   await ui.press({ key: 'showDone' })
   finishIn(files, Q3, clock.now(), '41 tests.')
   await clock.advance(POLL_MS)
   expect(captured.payload?.agents.find(a => a.id === 'q3')?.status).toBe('done')
-  expect(captured.payload?.stars).toEqual({ q2: starQ2 }) // q2's star still inside its window; none for q3
+  const starQ3 = clock.now()
+  expect(captured.payload?.stars).toEqual({ q2: starQ2, q3: starQ3 })
+  expect(captured.toasts).toHaveLength(3)
+  expect(await ui.find({ key: 'open:q3' })).toBeUndefined()
   await ui.press({ key: 'showDone' })
   await clock.advance(POLL_MS)
-  expect(captured.toasts).toHaveLength(2)
-  expect(captured.payload?.stars).toEqual({}) // q2's window ended; q3 never starred
+  expect(captured.toasts).toHaveLength(3)
+  expect(captured.payload?.stars).toEqual({ q3: starQ3 }) // q2's window ended; q3's star still inside its own
   await ui.unmount()
 })
 
@@ -615,9 +619,11 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(p.rtl).toBe(true)
     expect(p.usage).toBeNull() // Phase 3 fills the meter
     expect(client.props.height).toBe(officeHeight(p, layoutOffice(p).rows.length))
-    // the office as the text cards draw it: room A (its topic) first, B (its project); a1 shown, a2 (finished) hidden; the counts
+    // the office as the text cards draw it: room A (its topic) first, B (its project); a1 shown, a2 (finished) among room A's
+    // recent finished (THE RECENT FINISHED: the Client's rooms draw up to RECENT_DONE of them, the text cards none); the counts
     expect(p.rooms.map(r => r.title)).toEqual(['Ship the v2 config migration.', 'research'])
-    expect(p.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1'], ['b1']])
+    expect(p.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1', 'a2'], ['b1']])
+    expect(p.rooms[0]).toMatchObject({ moreDone: 0, moreLabel: '' })
     expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'map session-token valid…', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 0, isLead: false }) // the name capped at 24 cells (office-props.ts)
     expect(await cardOf(ui, 'b1')).toMatchObject({ act: '🔌 github', model: '?', modelFam: 'other', fam: 'agent' })
     expect(await cardOf(ui, 'lead-a')).toMatchObject({ isLead: true })
@@ -1173,20 +1179,21 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   // no Svg, no engine Text of the plugin's own: the message and its sub ride the Client's props, the module draws them
   const p = await officePropsOf(desk)
   expect(p?.rtl).toBe(true)
-  expect(p?.empty).toEqual({ kind: 'office', msg: 'המשרד ריק', sub: 'הפעילו סוכן ב-Claude Code - או הציצו איך נראה משרד עמוס:' })
+  // (the sub names Claude Code in Hebrew letters: THE HEBREW RULE, i18n.ts — no Latin inside a Hebrew Text)
+  expect(p?.empty).toEqual({ kind: 'office', msg: 'המשרד ריק', sub: 'הפעילו סוכן בקלוד קוד - או הציצו איך נראה משרד עמוס:' })
   // the sub is split at its " - " into its own lines (office-chrome.ts emptyLines, the module's split)
-  expect(emptyLines(p!)).toEqual({ msg: ['המשרד ריק'], sub: ['הפעילו סוכן ב-Claude Code', 'או הציצו איך נראה משרד עמוס:'] })
+  expect(emptyLines(p!)).toEqual({ msg: ['המשרד ריק'], sub: ['הפעילו סוכן בקלוד קוד', 'או הציצו איך נראה משרד עמוס:'] })
   expect(await desk.find({ type: 'Svg' })).toBeUndefined()
   expect(await desk.find({ type: 'Text', text: /Claude Code/ })).toBeUndefined()
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^המשרד ריק$/ })).toBeDefined()
-  expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^הפעילו סוכן ב-Claude Code$/ })).toBeDefined()
+  expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^הפעילו סוכן בקלוד קוד$/ })).toBeDefined()
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^או הציצו איך נראה משרד עמוס:$/ })).toBeDefined()
   expect(await desk.find({ in: OFFICE_KEY, key: 'watchDemo' })).toBeDefined()
-  expect((await desk.find({ in: OFFICE_KEY, key: 'search' }))?.props?.placeholder).toBe('🔍 חיפוש סוכנים')
+  expect((await desk.find({ in: OFFICE_KEY, key: 'search' }))?.props?.placeholder).toBe('חיפוש סוכנים 🔍')
   await desk.unmount()
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
   expect(await term.find({ type: 'Svg' })).toBeUndefined()
-  expect(await term.find({ type: 'Text', text: /^הפעילו סוכן ב-Claude Code - או/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /^הפעילו סוכן בקלוד קוד - או/ })).toBeDefined()
   expect((await term.find({ key: 'search' }))?.props?.placeholder).toBe('🔍 חיפוש סוכנים…')
   await term.unmount()
 })

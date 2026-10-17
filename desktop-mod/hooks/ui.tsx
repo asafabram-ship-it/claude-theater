@@ -33,7 +33,7 @@
 //            without building a cell), so the engine scrolls it natively
 //            and hands the window back as e.props.scroll (offset → props.offset,
 //            bodyRows → props.rows). The module draws the chrome and the text-cell
-//            tiles (office-layout.ts), the hover and the fx motion (walk-in, hop),
+//            agent rows (office-layout.ts), the hover and the fx motion (walk-in, hop),
 //            the selection/focus/status highlights, and POSTS
 //            what the person did (open / pin / roomDone / the toolbar / search —
 //            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
@@ -80,7 +80,7 @@
 // poll stamps the just-finished ids into the payload it publishes
 // (`payload.stars`, by starsOf below) and toasts / chimes there, so a finish
 // costs the ONE $.state write of the publish and this render only DRAWS
-// `office.stars` (the ⭐, the terminal's confetti burst, the desktop tile's
+// `office.stars` (the ⭐, the terminal's confetti burst, the desktop row's
 // hop) — it writes nothing. ENGINE FACTS (probed, 2.1.288): a plugin's hooks
 // never see its own $.state.set, a render may toast and play audio, a render
 // may NOT write state. As in PAGE the beat fires only for an agent the office
@@ -278,12 +278,29 @@ export type OfficeView = {
   stat: Map<string, RoomStat>
   /** Cards in display order (room by room), the arrow-key walk's list. */
   order: Agent[]
+  /** Per room that hides its finished: how many finished agents (of the search) it holds past the `recentDone` it draws. */
+  moreDone: Map<string, number>
+}
+
+/**
+ * THE RECENT FINISHED (Asaf, 2026-10-17): on the desktop office a room that hides its finished still
+ * draws this many of them — the most recently finished — and a row counting the rest (office-layout.ts);
+ * the global ☑ and the room's toggle mean "show every finished". The poll celebrates a finish the office
+ * draws (register.tsx), so a finish in such a room is celebrated: it is one of the recent. The text cards
+ * (the terminal, the desktop's fallback) and their walk keep hiding every finished agent of such a room.
+ */
+export const RECENT_DONE = 3
+
+/** When an agent finished, for the recent-finished pick: its end stamp, else its last activity (what the payload has). */
+function finishedAt(a: Agent): number {
+  return a.end_ms ?? a.mtime_ms ?? 0
 }
 
 /**
  * PAGE render()'s filtering and ordering: search → drop closed chats and the
- * finished the room hides → rooms sorted pinned, then with-running, then by
- * last activity (newest first).
+ * finished the room hides (but for the `recentDone` most recently finished of
+ * each room, by end_ms then mtime_ms, newest first; ties by payload order) →
+ * rooms sorted pinned, then with-running, then by last activity (newest first).
  */
 export function officeView(
   all: readonly Agent[],
@@ -292,11 +309,27 @@ export function officeView(
   showDone: boolean,
   roomDone: Readonly<Record<string, boolean>>,
   pins: readonly string[],
+  recentDone = 0,
 ): OfficeView {
   const stat = roomStats(all)
   const needle = q.toLowerCase().trim()
   const searched = needle ? all.filter(a => matchesSearch(a, needle, lang)) : [...all]
-  const visible = searched.filter(a => !a.closed && (a.status !== 'done' || roomShowsDone(roomDone, showDone, a.session_full)))
+  // the finished agents of a room that hides them: the recentDone newest stay, the rest are counted
+  const held = new Map<string, Agent[]>()
+  for (const a of searched) {
+    if (a.closed || a.status !== 'done' || roomShowsDone(roomDone, showDone, a.session_full)) continue
+    const list = held.get(a.session_full) ?? []
+    list.push(a)
+    held.set(a.session_full, list)
+  }
+  const kept = new Set<string>()
+  const moreDone = new Map<string, number>()
+  for (const [s, list] of held) {
+    const ranked = list.map((a, i) => ({ a, i })).sort((x, y) => finishedAt(y.a) - finishedAt(x.a) || x.i - y.i)
+    ranked.slice(0, recentDone).forEach(({ a }) => kept.add(a.id))
+    if (ranked.length > recentDone) moreDone.set(s, ranked.length - recentDone)
+  }
+  const visible = searched.filter(a => !a.closed && (a.status !== 'done' || roomShowsDone(roomDone, showDone, a.session_full) || kept.has(a.id)))
   const rooms = [...new Set(visible.map(a => a.session_full))]
   const pinned = new Set(pins)
   rooms.sort((x, y) => {
@@ -310,7 +343,7 @@ export function officeView(
   })
   const order: Agent[] = []
   for (const s of rooms) for (const a of visible) if (a.session_full === s) order.push(a)
-  return { visible, rooms, stat, order }
+  return { visible, rooms, stat, order, moreDone }
 }
 
 /** PAGE emptyHTML kind: office (nothing at all) | nomatch | nonewindow | noactive. */
@@ -427,7 +460,7 @@ export function gridFor(width: number): { perRow: number; cardW: number } {
   return { perRow, cardW }
 }
 
-/** DESKTOP: the clock the tiles are timed from — the wall-clock minute, so every tile's minutes (and so the props) move together, once a minute. */
+/** DESKTOP: the clock the agent rows are timed from — the wall-clock minute, so every row's minutes (and so the props) move together, once a minute. */
 export function minuteClock(now: number): number {
   return Math.floor(now / 60_000) * 60_000
 }
@@ -465,7 +498,7 @@ export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now
  * moved (register.tsx): a $.state.set redraws every reader, and on the
  * desktop every redraw of the pane blinks, so a per-tick write WAS the
  * flicker. Time enters at the resolution it is drawn:
- * the elapsed MINUTE (the desktop tile's timer; the text surfaces tick their
+ * the elapsed MINUTE (the desktop row's timer; the text surfaces tick their
  * mm:ss from the tick atom instead), the ⏰ long-running flag, and the ⭐ ids
  * still inside the JUST_FINISHED window (`payload.stars`, the poll's stamps)
  * — so a star's expiry and a minute's turn still redraw, once.
@@ -503,7 +536,7 @@ export function parseRoomDone(stored: unknown): Record<string, boolean> {
 
 /** PAGE roomDone, cached from $.store ('roomDone'); null until first read. */
 let roomDoneCache: Record<string, boolean> | null = null
-/** PAGE .entering: agent id → when it first appeared in the office (the desktop tile's walk-in: `enteredAt` in the Client's props). */
+/** PAGE .entering: agent id → when it first appeared in the office (the desktop row's walk-in: `enteredAt` in the Client's props). */
 const firstSeen: Record<string, number> = {}
 
 async function loadRoomDone($: EngineInterface): Promise<Record<string, boolean>> {
@@ -705,7 +738,7 @@ export function registerUi(on: On): void {
     // the desktop draws the office Client (office-client.tsx); every other surface the text cards
     const desktop = e.surface === 'desktop'
     // the text surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT
-    // (its tiles show minutes, and every redraw of it blinks — the tick must never reach it)
+    // (its rows show minutes, and every redraw of it blinks — the tick must never reach it)
     if (!desktop) await read($, tickAtom)
     const roomDone = await loadRoomDone($)
     // the clock is the engine's; a host without one (a bare test) falls back to the last time the clock answered,
@@ -721,7 +754,7 @@ export function registerUi(on: On): void {
 
     // --- DESKTOP: the office is ONE Client. The hooks build its props from state (buildOfficeProps: pure,
     //     plain JSON) and size it to its full content (chrome + layout rows), so the engine scrolls it
-    //     natively and hands the window back as e.props.scroll; the module draws the tiles, the chrome and
+    //     natively and hands the window back as e.props.scroll; the module draws the agent rows, the chrome and
     //     the fx, and posts what the person did to `ui.message` (applyOfficeMessage above). Nothing is written here.
     //     Equal state → equal props → nothing redraws. Only where the surface's table has a Client (the
     //     capability, not the name: spec §5), and never while DESKTOP.clientFailed (a `ui.fault` of the module,

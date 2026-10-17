@@ -91,7 +91,8 @@ export function cleanSearch(q: string): string {
   return Array.from(q.replace(BIDI_RE, '').slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
 }
 
-export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
+/** One drawn line of the drawer: `text` as a string; `parts` when the line is composed of labels and values (drawn as runs, THE HEBREW RULE); `chips` for the chips line. */
+export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[]; parts?: string[] }
 
 /**
  * THE OVERLAY IN VIEW: whether the help popover | the drawer (`overlay` rows, part of the chrome) is drawn at the
@@ -183,13 +184,15 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
     used += w
   }
   lines.push({ kind: 'chips', text: shown.map(c => ` ${c} `).join(' '), chips: shown })
-  lines.push({ kind: 'head', text: cut(`${lbl('dModel')}: 🧠 ${d.model} · ${lbl('dAction')}: ${d.act}`, inner) })
+  // the model line and the ✂ note are parts (a label, a value, a mark): the Client lays them in reading order as runs
+  const model = [`${lbl('dModel')}:`, '🧠', d.model, '·', `${lbl('dAction')}:`, d.act]
+  lines.push({ kind: 'head', text: cut(model.join(' '), inner), parts: model })
   lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
   for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })
   if (d.result) {
     lines.push({ kind: 'head', text: cut(lbl('dResult'), inner) })
     for (const t of wrapLines(d.result, inner, RESULT_LINES)) lines.push({ kind: 'body', text: t })
-    if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner) })
+    if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner), parts: ['✂', lbl('resultTruncated')] })
   }
   return lines
 }

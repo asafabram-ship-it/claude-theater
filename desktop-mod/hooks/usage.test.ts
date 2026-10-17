@@ -400,11 +400,16 @@ test('SessionMode: the plugin adds no label there — the terminal and the deskt
 // the literal path in ui.tsx); a surface other than the desktop gets the text cards.
 
 /** What the header helpers need of a mounted pane (structural: the kit's own type is generic over the surface and component). */
-type Mounted = { find: (q: { type: string; text?: RegExp; in?: string }) => Promise<{ text?: string } | undefined> }
+type Mounted = { find: (q: { type: string; text?: RegExp; in?: string }) => Promise<{ text?: string } | undefined>; findAll: (q: { type: string; in?: string }) => Promise<Array<{ text?: string }>> }
 
-/** The office header line the desktop Client drew (the first Text of the module: `🎭 …`). */
+/**
+ * The office header line the desktop Client drew: the Text (a Text per run, THE HEBREW RULE) holding the 🎭 — the
+ * longest one, the line itself rather than its 🎭 run — with its blank cells trimmed. Hebrew (RTL): the parts run from
+ * the right edge, so in cell order the meter comes first and the 🎭 last.
+ */
 async function officeHeader(ui: Mounted): Promise<string> {
-  return (await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^🎭/ }))?.text ?? ''
+  const lines = (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).map(t => t.text ?? '').filter(t => t.includes('🎭'))
+  return lines.sort((a, b) => b.length - a.length)[0]?.trim() ?? ''
 }
 
 /** The text-card header's counts line (`🟢 0 … · ✅ 0 …`, or `🟢0 ✅0` when narrow). */
@@ -426,15 +431,15 @@ test('desktop header: the Client gets the reading; a wide pane draws the full la
   await clock.advance(POLL_MS)
   const R = local(15, 45)
   const wide = await $.ui.mount(PANE) // bodyColumns 90
-  expect(await officeHeader(wide)).toMatch(/^🎭 🟢 0/)
+  expect(await officeHeader(wide)).toMatch(/ 0 🟢 🎭$/)
   expect(await officeHeader(wide)).not.toContain('5h')
   await measure($, limits(42, R))
   expect((await usageProp(wide))?.pct).toBe(42)
   const label = usageLabel({ pct: 42, resetsAt: R }, 'he', 0)
   expect(label).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 15:45')
-  expect((await officeHeader(wide)).slice(-label.length - 3)).toBe(` · ${label}`)
+  expect((await officeHeader(wide)).slice(0, label.length + 3)).toBe(`${label} · `)
   await measure($, limits(85, R))
-  expect(await officeHeader(wide)).toContain(' · ⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 15:45')
+  expect(await officeHeader(wide)).toMatch(/^⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 15:45 · /)
   expect(await officeHeader(wide)).not.toMatch(NO_BIDI)
   await measure($, [])
   expect(await officeHeader(wide)).not.toContain('5h')
@@ -444,10 +449,10 @@ test('desktop header: the Client gets the reading; a wide pane draws the full la
   expect(await officeHeader(narrow)).not.toContain('5h')
   await measure($, limits(42, R))
   expect((await usageProp(narrow))?.pct).toBe(42)
-  expect(await officeHeader(narrow)).toMatch(/ · ⏳ 5h 42%$/)
+  expect(await officeHeader(narrow)).toMatch(/^⏳ 5h 42% · /)
   expect(await officeHeader(narrow)).not.toContain('▰')
   await measure($, limits(97, R))
-  expect(await officeHeader(narrow)).toMatch(/ · ⚠ 5h 97%$/)
+  expect(await officeHeader(narrow)).toMatch(/^⚠ 5h 97% · /)
   await measure($, [])
   expect(await officeHeader(narrow)).not.toContain('5h')
   await narrow.unmount()

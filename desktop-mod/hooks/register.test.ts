@@ -92,7 +92,7 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   await ui.resize({ in: OFFICE_KEY, columns: 90, rows: 40 })
   const p0 = await propsOf(ui)
   expect(p0.prefs).toEqual({ showDone: false, muted: false, still: false })
-  expect(p0.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1'], ['b1']])
+  expect(p0.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1', 'a2'], ['b1']])   // (a2, finished, is among room A's recent finished)
 
   // showDone (the toolbar Button): the pref and its store mirror, nothing else; the finished writer is drawn
   expect(await writesOf(captured, () => ui.press({ key: 'showDone' }))).toEqual({ prefs: 1, 'store:prefs': 1 })

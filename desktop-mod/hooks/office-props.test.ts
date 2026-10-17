@@ -33,11 +33,27 @@ test('modelFamily', () => {
 test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () => {
   const two = [agent({ id: 'a1', role: 'Reviewer' }), agent({ id: 'a2', status: 'done', end_ms: T0 - 1000 })]
   const shown = { ...DEFAULT_PREFS, showDone: true }
-  // the office hides a finished agent until "show finished" (officeView / roomShowsDone, as today); the header counts it either way
+  // a room that hides its finished still draws its RECENT_DONE most recent (THE RECENT FINISHED, ui.tsx officeView) and no
+  // "more" row while none is held back; the header counts them either way
   const hidden = buildOfficeProps(input(two))
-  expect(hidden.rooms[0]?.agents.map(a => a.id)).toEqual(['a1'])
-  expect(hidden.rooms[0]?.showDone).toBe(false)
+  expect(hidden.rooms[0]?.agents.map(a => a.id)).toEqual(['a1', 'a2'])
+  expect(hidden.rooms[0]).toMatchObject({ showDone: false, moreDone: 0, moreLabel: '' })
   expect(hidden.counts).toEqual({ run: 1, idle: 0, done: 1 })
+  // five finished: the three most recently finished (by end_ms, then mtime_ms) ride the props, the rest are counted on the row
+  const five = [agent({ id: 'r1' }), ...[5, 1, 4, 2, 3].map((k, i) => agent({ id: `d${i}`, status: 'done', end_ms: T0 - k * 1000 }))]
+  const held = buildOfficeProps(input(five))
+  expect(held.rooms[0]?.agents.map(a => a.id)).toEqual(['r1', 'd1', 'd3', 'd4'])   // payload order kept; d0 (5 s ago) and d2 (4 s ago) held back
+  expect(held.rooms[0]).toMatchObject({ moreDone: 2, moreLabel: I18N.he.moreDoneN(2), done: 5 })
+  expect(held.rooms[0]?.moreLabel).toBe('עוד 2 שסיימו')
+  const opened = buildOfficeProps(input(five, { roomDone: { 'sess-aaaa': true } }))
+  expect(opened.rooms[0]?.agents).toHaveLength(6)
+  expect(opened.rooms[0]).toMatchObject({ showDone: true, moreDone: 0, moreLabel: I18N.he.hideDone })
+  expect(buildOfficeProps(input(five, { prefs: { ...DEFAULT_PREFS, lang: 'en' } })).rooms[0]?.moreLabel).toBe('2 more finished')
+  // a search still filters every agent: the held count is of the agents that match
+  expect(buildOfficeProps(input(five, { view: { ...DEFAULT_VIEW, search: 'zzzz' } })).rooms).toEqual([])
+  // no finished at all: no row; every finished shown and none held: the hide row only when the room shows some
+  expect(buildOfficeProps(input([agent({ id: 'r1' })])).rooms[0]).toMatchObject({ moreDone: 0, moreLabel: '' })
+  expect(buildOfficeProps(input([agent({ id: 'r1' })], { prefs: shown })).rooms[0]).toMatchObject({ moreDone: 0, moreLabel: '' })
   const p = buildOfficeProps(input(two, { prefs: shown }))
   assertJson(p)
   expect(JSON.parse(JSON.stringify(p))).toEqual(p) // plain JSON: the round trip loses nothing
@@ -67,7 +83,8 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(withDrawer.drawer?.done).toBe(false)
   const failedOne = agent({ id: 'f1', status: 'done', failed: true, end_ms: T0 - 1000 })
   const failed = buildOfficeProps(input([failedOne], { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'f1' } }))
-  expect(failed.drawer?.chips[0]).toBe(`❌ ${I18N.he.dFailed}`)
+  expect(failed.drawer?.chips[0]).toBe(`${I18N.he.dFailed} ❌`)   // (the mark after the Hebrew word: THE HEBREW RULE; before the English one)
+  expect(buildOfficeProps(input([failedOne], { prefs: { ...shown, lang: 'en' }, view: { ...DEFAULT_VIEW, selected: 'f1' } })).drawer?.chips[0]).toBe('❌ Failed')
   expect(failed.drawer?.done).toBe(true)
   const wide = buildOfficeProps(input([agent({ id: 'a1', emoji: '🦉'.repeat(30) })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
   expect(wide.drawer?.name).toBe('🦉'.repeat(23) + '…') // the 48-cell cap: whole glyphs, an ellipsis for the rest
@@ -119,7 +136,8 @@ test('THE PROPS CAP: 600 agents (show finished on) stay under the props bound �
   const order = officeView(many, '', 'he', true, {}, []).order
   expect(carried).toEqual(order.filter(a => a.status !== 'done').slice(0, MAX_PROPS_AGENTS).map(a => a.id))
   expect(p.footer).toBe(`${I18N.he.moreAgentsN(400)} · 2 transcripts over 4 MiB skipped`)
-  expect(p.footer.startsWith('+400 ')).toBe(true)
+  expect(p.footer.startsWith('עוד 400 ')).toBe(true)   // (the count inside the Hebrew: THE HEBREW RULE; `+400 more agents` in English)
+  expect(buildOfficeProps(input(many, { prefs: { ...shown, lang: 'en' } })).footer.startsWith('+400 more agents')).toBe(true)
   expect(p.counts).toEqual({ run: 400, idle: 0, done: 200 })
   expect(p.rooms.every(r => r.agents.length > 0)).toBe(true)
   // under the cap nothing is dropped and the footer is the scan notes alone

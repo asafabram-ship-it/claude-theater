@@ -22,6 +22,7 @@
 
 import type { Agent } from './model'
 import { mcpServer } from './model'
+import { ROW_MINUTES } from './office-layout'
 import { PERSONAS_EN, PERSONAS_HE } from './personas'
 
 export type Lang = 'he' | 'en'
@@ -57,6 +58,8 @@ export type Strings = {
   dWorking: string; dDone: string; dStale: string; dFailed: string; dDuration: string; dElapsed: string
   /** What follows the minutes on the drawer's clock chip: `7′` in English, `7 דק׳` in Hebrew (a Hebrew geresh: the chip ends right-to-left, never with a neutral). */
   dMinutes: string
+  /** What follows the minutes in an agent row's clock field: ` min` in English, the prime in Hebrew (office-layout.ts ROW_MINUTES says why not `דק׳`). */
+  rowMinutes: string
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
@@ -93,7 +96,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoneInWindow: 'No agents in the time window.',
     working: 'working', idleN: 'idle', finished: 'finished',
     dWorking: 'Working', dDone: 'Done', dStale: 'Idle', dFailed: 'Failed',
-    dDuration: 'Duration ', dElapsed: 'Elapsed ', dMinutes: '′',
+    dDuration: 'Duration ', dElapsed: 'Elapsed ', dMinutes: '′', rowMinutes: ROW_MINUTES.en,
     dAction: 'Activity', dTask: 'Task', dResult: 'Result', dModel: 'Model',
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
@@ -125,7 +128,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoneInWindow: 'אין סוכנים בחלון הזמן',
     working: 'עובדים', idleN: 'ממתינים', finished: 'סיימו',
     dWorking: 'עובד', dDone: 'סיים', dStale: 'ממתין', dFailed: 'נכשל',
-    dDuration: 'משך ', dElapsed: 'זמן ', dMinutes: ' דק׳',
+    dDuration: 'משך ', dElapsed: 'זמן ', dMinutes: ' דק׳', rowMinutes: ROW_MINUTES.he,
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי מחובר',

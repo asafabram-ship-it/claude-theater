@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, EMOJI_CELLS, HOVER_BG, MODEL_FG, MODEL_FULL_FROM, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, blocksOfParts, cut, ellipsisFirst, firstGlyph, hitAt, layoutOffice, lineRow, modelText, place, put, rowCount, rowRuns, segments, tailText, walkShift, windowRows } from './office-layout'
+import { ACT_MAX, EMOJI_CELLS, HOVER_BG, MODEL_FG, MODEL_FULL_FROM, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, blocksOfParts, cut, ellipsisFirst, firstGlyph, hitAt, layoutOffice, lineRow, modelText, place, put, rowCount, rowRuns, segments, tailText, textWidth, walkShift, windowRows } from './office-layout'
 import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -445,7 +445,7 @@ test('the room head: pin glyph, title and counts, LTR flush right and RTL flush 
   }
 })
 
-test('the agent row (LTR): margin, emoji, the persona name (bold, status colour), the model word (its family colour, no pill), the activity whole, the minutes and badges at the room\'s tail field; a finished row is dim with its ✅ alone; the fields line up down the room', () => {
+test('the agent row (LTR): margin, emoji, the persona name (bold, status colour), the model word (its family colour, no pill), the activity whole, the badges and the time at the room\'s tail field; a finished row is dim with its ✅ alone; the fields line up down the room', () => {
   const lead = ag('lead', 0, { name: 'מנהל', model: 'Opus 5.5', act: '📖 קורא', startMin: 12, failed: true, star: 1_700_000, longRunning: true })
   const other = ag('a1', 1, { emoji: '🐢', name: 'שם ארוך מאוד שנחתך בוודאות', model: 'Sonnet 5.5', modelFam: 'sonnet', act: '✍️ כותב קובץ ארוך', startMin: 0, status: 'stale' })
   const done = ag('a2', 2, { name: 'גמור', model: '?', modelFam: 'other', act: '✅ סיים', startMin: null, status: 'done' })
@@ -466,15 +466,15 @@ test('the agent row (LTR): margin, emoji, the persona name (bold, status colour)
   expect(seg(r0!, 40, 40 + 17).trimEnd()).toBe('📖 קורא')
   expect(seg(r1!, 40, 40 + 17)).toBe('✍️ כותב קובץ ארוך')
   expect(seg(r2!, 40, 40 + 17).trimEnd()).toBe('✅')   // a finished agent: its ✅ alone, never the word
-  // the tail: badges then the minutes at the far end (the room's widest tail is `❌⭐⏰12′` = 9 cells, right-aligned in its field)
-  // — but THE HEBREW RULE (5): the lead's row ends in a Hebrew activity with nothing Latin after it, so in LTR the minutes
-  // would glue to it; the badges stay, the minutes go. (An English activity, the LTR case, keeps them: below.)
-  expect(seg(r0!, 60, 69).trimStart()).toBe('❌⭐⏰')
+  // the tail: badges then the time at the far end (the room's widest tail is `❌⭐⏰ ⏱️ 12′` = 13 cells, right-aligned in its
+  // field) — but THE HEBREW RULE (5): the lead's row ends in a Hebrew activity with nothing Latin after it, so in LTR the
+  // time would glue to it; the badges stay, the time goes. (An English activity, the LTR case, keeps it: below.)
+  expect(seg(r0!, 59, 72).trimStart()).toBe('❌⭐⏰')
   expect(seg(r1!, 58, 72).trim()).toBe('')
   expect(seg(r2!, 58, 72).trim()).toBe('')
   const english = layoutOffice(props({ rtl: false, columns: 72, rooms: [room({ showDone: true, agents: [{ ...lead, act: '📖 Reading' }, { ...other, act: '✍️ Writing' }] })] }))
-  expect(text(english.rows[1]!).trimEnd().endsWith('❌⭐⏰12′')).toBe(true)
-  expect(text(english.rows[2]!).trimEnd().endsWith('<1′')).toBe(true)
+  expect(text(english.rows[1]!).trimEnd().endsWith('❌⭐⏰ ⏱️ 12′')).toBe(true)
+  expect(text(english.rows[2]!).trimEnd().endsWith('⏱️ <1′')).toBe(true)
   const primeAt = (row: Cells) => row.cells.findIndex(c => c.ch === '′')
   expect(primeAt(english.rows[1]!)).toBe(primeAt(english.rows[2]!))   // the minutes aligned down the room
   expect(primeAt(english.rows[1]!)).toBeGreaterThan(60)
@@ -512,16 +512,16 @@ test('the agent row (LTR): margin, emoji, the persona name (bold, status colour)
     expect(mergeSafe(latinName)).toBe(true)
     // THE HEBREW RULE (5): in LTR the minutes after a Hebrew name with nothing Latin between them would glue to it — the row keeps
     // the badges and drops the minutes; a Latin model word or an English activity parts them; RTL draws them (the tail comes first)
-    const glued = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...done, model: '?', act: '✅ סיים', startMin: 12, failed: true }] })] })).rows[1]!
+    const glued = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...running, model: '?', act: '✅ סיים', startMin: 12, failed: true }] })] })).rows[1]!
     expect(text(glued).includes('12′')).toBe(rtl)
     expect(text(glued)).toContain('❌')
     expect(mergeSafe(glued)).toBe(true)
-    const partedModel = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...done, model: 'nova-6-0', act: '✅ Done', startMin: 12 }] })] })).rows[1]!
+    const partedModel = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...running, model: 'nova-6-0', act: '✅ Done', startMin: 12 }] })] })).rows[1]!
     expect(text(partedModel)).toContain('12′')
     const partedAct = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...running, model: '?', act: '📖 Reading', startMin: 12 }] })] })).rows[1]!
     expect(text(partedAct)).toContain('12′')
     expect(mergeSafe(partedAct)).toBe(true)
-    const latinNameTail = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...done, name: 'Reviewer', model: '?', act: '', startMin: 12 }] })] })).rows[1]!
+    const latinNameTail = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...running, name: 'Reviewer', model: '?', act: '', startMin: 12 }] })] })).rows[1]!
     expect(text(latinNameTail)).toContain('12′')
   }
   for (const row of lay.rows) {
@@ -539,37 +539,190 @@ test('the agent row (LTR): margin, emoji, the persona name (bold, status colour)
   expect(modelText('nova-6-0')).toBe('nova-6-0')
   expect(firstGlyph('✍️ כותב')).toBe('✍️')
   expect(firstGlyph('')).toBe('')
-  expect(tailText(lead, false)).toBe('❌⭐⏰12′')
-  expect(tailText(lead, true)).toBe('12′❌⭐⏰')
-  expect(tailText(other, true)).toBe('<1′')
-  expect(tailText(done, true)).toBe('')
+  expect(tailText(lead, false, 'he')).toBe('❌⭐⏰ ⏱️ 12′')
+  expect(tailText(lead, false, 'en')).toBe('❌⭐⏰ ⏱️ 12 min')
+  expect(tailText(lead, true, 'he')).toBe('12′ ⏱️ ❌⭐⏰')
+  expect(tailText(lead, true, 'he', false)).toBe('❌⭐⏰')
+  expect(tailText(other, true, 'he')).toBe('<1′ ⏱️')
+  expect(tailText(done, true, 'he')).toBe('')
+  expect(tailText({ ...done, startMin: 12 }, true, 'he')).toBe('')   // a finished agent: never a time
   expect(MODEL_FULL_FROM).toBe(60)
 })
 
-test('the agent row (RTL): the same row mirrored — the emoji at the right edge, the name to its left, the model word, then the activity (its emoji first), the minutes at the left edge; the version only from MODEL_FULL_FROM columns', () => {
+test('the agent row (RTL): the same row mirrored — the emoji at the right edge, the name to its left, the model word, then the activity (its emoji first), the time at the left edge (its clock nearest the content: read first); the version only from MODEL_FULL_FROM columns', () => {
   const cast = [ag('lead', 0, { name: 'המנהל', act: '🤔 חושב', startMin: 1 }), ag('a1', 1, { emoji: '🦆', name: 'הברווז', act: '🤔 חושב', startMin: 7, status: 'stale' })]
-  // 34 columns: the family word alone (`Opus`), every field whole, the minutes GAP_MAX past the activity
+  // 34 columns: the family word alone (`Opus`), every field whole, the time GAP_MAX past the activity
   const lay = layoutOffice(props({ rtl: true, columns: 34, rooms: [room({ agents: cast })] }))
   const [, r0, r1] = lay.rows
-  expect(text(r0!)).toBe('      1′   חושב 🤔 Opus  המנהל 🦉 ')
-  expect(text(r1!)).toBe('      7′   חושב 🤔 Opus הברווז 🦆 ')
-  expect(rowRuns(r0!.cells).map(x => x.text)).toEqual(['      ', '1′', '   ', 'חושב', ' ', '🤔', ' ', 'Opus', '  ', 'המנהל', ' ', '🦉 '])
+  expect(text(r0!)).toBe('   1′ ⏱️   חושב 🤔 Opus  המנהל 🦉 ')
+  expect(text(r1!)).toBe('   7′ ⏱️   חושב 🤔 Opus הברווז 🦆 ')
+  expect(rowRuns(r0!.cells).map(x => x.text)).toEqual(['   ', '1′ ⏱️', '   ', 'חושב', ' ', '🤔', ' ', 'Opus', '  ', 'המנהל', ' ', '🦉 '])
   expect(rowRuns(r0!.cells).find(x => x.text === 'Opus')).toEqual({ text: 'Opus', fg: MODEL_FG.opus })
+  expect(rowRuns(r0!.cells).find(x => x.text === '1′ ⏱️')).toEqual({ text: '1′ ⏱️', dim: true })
   expect(r0!.cells[31]?.ch).toBe('🦉')
   expect(r1!.cells[31]?.ch).toBe('🦆')
-  expect(r0!.cells[6]?.ch).toBe('1')
-  expect(r1!.cells[6]?.ch).toBe('7')
-  // 28 columns: the content (4 + 6 + 1 + 4 + 1 + 7 = 23) and the tail field (2) fill the row: the minutes at the left edge
-  const tight = layoutOffice(props({ rtl: true, columns: 26, rooms: [room({ agents: cast })] })).rows[1]!
-  expect(text(tight)).toBe('1′ חושב 🤔 Opus  המנהל 🦉 ')
+  expect(r0!.cells[3]?.ch).toBe('1')
+  expect(r1!.cells[3]?.ch).toBe('7')
+  // 29 columns: the content (4 + 6 + 1 + 4 + 1 + 7 = 23) and the tail field (5) fill the row: the time at the left edge
+  const tight = layoutOffice(props({ rtl: true, columns: 29, rooms: [room({ agents: cast })] })).rows[1]!
+  expect(text(tight)).toBe('1′ ⏱️ חושב 🤔 Opus  המנהל 🦉 ')
+  // 26..28 columns: the time has no room beside the activity word — it goes whole, the word stays (the room has no badges: an empty tail field)
+  const noTime = layoutOffice(props({ rtl: true, columns: 26, rooms: [room({ agents: cast })] })).rows[1]!
+  expect(text(noTime)).toBe('   חושב 🤔 Opus  המנהל 🦉 ')
+  expect(text(layoutOffice(props({ rtl: true, columns: 28, rooms: [room({ agents: cast })] })).rows[1]!)).toBe('     חושב 🤔 Opus  המנהל 🦉 ')
   // 60 columns: the model with its version, the content at the right edge, the left of the row blank
   const wide = layoutOffice(props({ rtl: true, columns: 60, rooms: [room({ agents: cast })] })).rows[1]!
-  expect(text(wide).trimStart()).toBe('1′   חושב 🤔 Opus 5.5  המנהל 🦉 ')
+  expect(text(wide).trimStart()).toBe('1′ ⏱️   חושב 🤔 Opus 5.5  המנהל 🦉 ')
   expect(text(wide).length).toBe(60)
-  for (const row of [r0!, r1!, tight, wide]) { expect(mergeSafe(row)).toBe(true); expect(wellFormed(row)).toBe(true) }
+  for (const row of [r0!, r1!, tight, noTime, wide]) { expect(mergeSafe(row)).toBe(true); expect(wellFormed(row)).toBe(true) }
 })
 
-test('widths: at every width 24..200 the row shrinks in order — the activity to its emoji alone (never a cut word), the name to NAME_MIN, the activity away, the name to a glyph, the model away; the version only from MODEL_FULL_FROM; wider panes cap the gap before the minutes', () => {
+/**
+ * THE READER'S VIEW of a row drawn as one LTR paragraph, by the bidi rules mergeSafe models: a Hebrew glyph is R, another
+ * script's letter L, a digit takes the strong type before it (sos is L: AN after R through neutrals, else L), a stretch of
+ * neutrals between two of one direction takes it (a number after Hebrew counts as R), else the paragraph's L; the runs of R
+ * (with their numbers) are then mirrored in place. The visual row is read from the right, token by token: a token holding
+ * Hebrew back in logical order (it was mirrored), any other (a number, a Latin word, an emoji) as it is. The string a Hebrew
+ * reader sees, in reading order, a space between tokens.
+ */
+function visualRtlReading(row: Cells): string {
+  const gl = row.cells.map(c => c.ch).filter(ch => ch !== '')
+  type T = 'L' | 'R' | 'EN' | 'AN' | 'N'
+  const types: T[] = gl.map(ch => (HEB.test(ch) ? 'R' : OTHER_LETTER.test(ch) ? 'L' : DIGIT.test(ch) ? 'EN' : 'N'))
+  let strong: 'L' | 'R' = 'L'
+  for (let i = 0; i < types.length; i++) {
+    const t = types[i]!
+    if (t === 'R' || t === 'L') strong = t
+    else if (t === 'EN') types[i] = strong === 'R' ? 'AN' : 'L'
+  }
+  const dir = (t: T) => (t === 'R' || t === 'AN' ? 'R' : 'L')
+  const levels = types.map(t => (t === 'AN' ? 2 : t === 'R' ? 1 : 0))
+  for (let i = 0; i < types.length; i++) {
+    if (types[i] !== 'N') continue
+    let j = i
+    while (j < types.length && types[j] === 'N') j++
+    const lv = (i > 0 ? dir(types[i - 1]!) : 'L') === 'R' && (j < types.length ? dir(types[j]!) : 'L') === 'R' ? 1 : 0
+    for (let k = i; k < j; k++) levels[k] = lv
+    i = j - 1
+  }
+  const visual = [...gl]
+  for (const min of [2, 1]) {
+    let i = 0
+    while (i < visual.length) {
+      if (levels[i]! < min) { i++; continue }
+      let j = i
+      while (j < visual.length && levels[j]! >= min) j++
+      visual.splice(i, 0, ...visual.splice(i, j - i).reverse())
+      levels.splice(i, 0, ...levels.splice(i, j - i).reverse())
+      i = j
+    }
+  }
+  // the tokens: a mirrored stretch (level ≥ 1, its inner spaces with it) read back to logical order (the whole reversed, then
+  // its numbers reversed again); the rest split at spaces. The reader takes them from the right.
+  const tokens: string[] = []
+  let i = 0
+  while (i < visual.length) {
+    if (levels[i]! >= 1) {
+      let j = i
+      while (j < visual.length && levels[j]! >= 1) j++
+      const back = visual.slice(i, j).reverse()
+      const lv = levels.slice(i, j).reverse()
+      for (let k = 0; k < back.length; k++) {
+        if (lv[k]! < 2) continue
+        let m = k
+        while (m < back.length && lv[m]! >= 2) m++
+        back.splice(k, 0, ...back.splice(k, m - k).reverse())
+        k = m - 1
+      }
+      tokens.push(back.join('').replace(/ +/g, ' ').trim())
+      i = j
+    } else if (visual[i] === ' ') i++
+    else {
+      let j = i
+      while (j < visual.length && levels[j]! < 1 && visual[j] !== ' ') j++
+      tokens.push(visual.slice(i, j).join(''))
+      i = j
+    }
+  }
+  return tokens.reverse().join(' ')
+}
+
+test('visualRtlReading models the engine: a leading digit reads after the word, a digit after Hebrew rides inside, a Latin word parts two Hebrew words, a clock before a number at the row\'s left edge reads clock then number', () => {
+  const rowOf = (s: string) => { const row = blankRow('r', 40); put(row, 0, s); return row }
+  expect(visualRtlReading(rowOf('4 תמלילים'))).toBe('תמלילים 4')
+  expect(visualRtlReading(rowOf('עוד 5 שסיימו'))).toBe('עוד 5 שסיימו')
+  expect(visualRtlReading(rowOf('לבדיקה Code 4 קבצים של'))).toBe('קבצים של 4 Code לבדיקה')   // the head's blocks (cell order): the leading digit after its words, the Latin word parting the blocks
+  expect(visualRtlReading(rowOf('3′ ⏱️ ❌⭐'))).toBe('❌⭐ ⏱️ 3′')
+  expect(visualRtlReading(rowOf('⏱️ 3 דק׳'))).toBe('דק׳ 3 ⏱️')           // the unit after the number (logical order) lands BEFORE it for the reader: why the Hebrew row uses the prime
+  expect(visualRtlReading(rowOf('דק׳ 3 ⏱️'))).toBe('⏱️ דק׳ 3')           // ...and laid the other way the number glues to the unit and is mirrored with it
+  expect(visualRtlReading(rowOf('חושב   12′'))).toBe('′ חושב 12')         // LTR's glue: a number after Hebrew is mirrored with it, its prime left behind
+})
+
+test('the time field: a working agent\'s row ends in a labelled clock the reader reads as clock then number — `⏱️ 3′` in Hebrew (from the right), `⏱️ 3 min` in English — a finished agent carries its badges alone; the field is drawn whole or dropped, before the activity word', () => {
+  const cast = [
+    ag('lead', 0, { name: 'המנהל', act: '🤔 חושב', startMin: 3 }),
+    ag('a1', 1, { emoji: '🦆', name: 'הברווז', act: '📖 קורא', startMin: 0, status: 'stale' }),
+    ag('a2', 2, { name: 'גמור', act: '✅ סיים', startMin: 12, status: 'done', star: 1, failed: true, longRunning: true }),
+  ]
+  // (a) RTL, 40 columns: the reader sees the row from the right — the emoji, the name, the model, the activity, then the clock and the minutes
+  const lay = layoutOffice(props({ rtl: true, columns: 40, rooms: [room({ showDone: true, agents: cast })] }))
+  const [, r0, r1, r2] = lay.rows
+  expect(visualRtlReading(r0!)).toBe('🦉 המנהל Opus 🤔 חושב ⏱️ 3′')
+  expect(visualRtlReading(r1!)).toBe('🦆 הברווז Opus 📖 קורא ⏱️ <1′')
+  // (b) a finished agent: its badges, no clock, no digit anywhere on the row
+  expect(visualRtlReading(r2!)).toBe('🦉 גמור Opus ✅ ❌⭐⏰')
+  expect(text(r2!)).not.toContain('⏱')
+  expect(text(r2!)).not.toMatch(DIGIT)
+  for (const row of [r0!, r1!, r2!]) { expect(row.cells).toHaveLength(40); expect(mergeSafe(row)).toBe(true); expect(wellFormed(row)).toBe(true); for (const run of hebrewRuns(row)) expect(runOk(run, true)).toBe(true) }
+  // (c) English, LTR: `⏱️ 3 min` at the row's end, after the badges
+  const enCast = cast.map((a, i) => ({ ...a, name: ['Manager', 'Duck', 'Done'][i]!, act: ['🤔 Thinking', '📖 Reading', '✅ Done'][i]! }))
+  const en = layoutOffice(props({ lang: 'en', rtl: false, columns: 40, rooms: [room({ showDone: true, agents: enCast })] }))
+  expect(text(en.rows[1]!).trimEnd().endsWith('⏱️ 3 min')).toBe(true)
+  expect(text(en.rows[2]!).trimEnd().endsWith('⏱️ <1 min')).toBe(true)
+  expect(text(en.rows[3]!).trimEnd().endsWith('❌⭐⏰')).toBe(true)
+  expect(text(en.rows[3]!)).not.toContain('⏱')
+  expect(text(en.rows[3]!)).not.toMatch(DIGIT)
+  expect(en.rows.every(row => row.cells.length === 40 && wellFormed(row))).toBe(true)
+  // tailText: the badges and the time, the time outermost (first in RTL, last in LTR), a space between the two
+  expect(tailText(cast[2]!, true, 'he')).toBe('❌⭐⏰')
+  expect(tailText(cast[2]!, false, 'en')).toBe('❌⭐⏰')
+  expect(tailText({ ...cast[0]!, failed: true }, true, 'he')).toBe('3′ ⏱️ ❌')
+  expect(tailText({ ...cast[0]!, failed: true }, false, 'en')).toBe('❌ ⏱️ 3 min')
+  expect(tailText(cast[0]!, true, 'he')).toBe('3′ ⏱️')
+  expect(tailText(cast[1]!, false, 'en')).toBe('⏱️ <1 min')
+  expect(tailText({ ...cast[0]!, startMin: null }, true, 'he')).toBe('')
+  // (d) at every width 24..200 the field is drawn whole or not at all, and it goes before the activity word: with the clock
+  // drawn the word is whole, unless the word would not fit even without the clock (then the clock may use the room the emoji leaves)
+  for (const [lang, rtl, lead, other] of [
+    ['he', true, ag('lead', 1, { name: 'שם בינוני', model: 'Sonnet 5.5', modelFam: 'sonnet', act: '✍️ כותב קובץ ארוך', startMin: 12, failed: true }), ag('a1', 1, { name: 'קצר', act: '📖 קורא', startMin: 3 })],
+    ['en', false, ag('lead', 1, { name: 'Medium name', model: 'Sonnet 5.5', modelFam: 'sonnet', act: '✍️ Writing a file', startMin: 12, failed: true }), ag('a1', 1, { name: 'Short', act: '📖 Reading', startMin: 3 })],
+  ] as const) {
+    const r = room({ agents: [lead, other] })
+    const need = ROW_MARGIN + EMOJI_CELLS + 1 + textWidth(lead.name) + 1 + textWidth('Sonnet') + 1 + textWidth(lead.act)
+    const timeOnly = rtl ? '12′ ⏱️' : '⏱️ 12′'
+    const full = tailText(lead, rtl, lang)
+    const bare = '❌'
+    const wordFrom = need + 1 + textWidth(bare)      // the word whole without the clock from this width
+    const allFrom = need + 1 + textWidth(full)       // everything whole from this width
+    expect(full).toBe(rtl ? '12′ ⏱️ ❌' : '❌ ⏱️ 12 min')
+    for (let columns = 24; columns <= 200; columns++) {
+      const row = layoutOffice(props({ lang, rtl, columns, rooms: [r] })).rows[1]!
+      const t = text(row)
+      const clock = t.includes('⏱')
+      const word = t.includes(lang === 'he' ? 'כותב קובץ ארוך' : 'Writing a file')
+      const at = `${lang} ${columns}`
+      if (clock) expect(t, at).toContain(lang === 'he' ? timeOnly : '⏱️ 12 min')   // whole, never cut
+      expect(t, at).not.toContain('…⏱')
+      if (clock) expect(word || columns < wordFrom, at).toBe(true)
+      if (columns >= allFrom) { expect(clock, at).toBe(true); expect(word, at).toBe(true) }
+      if (columns >= wordFrom && columns < allFrom) { expect(word, at).toBe(true); expect(clock, at).toBe(false) }
+      expect(mergeSafe(row), at).toBe(true)
+      expect(wellFormed(row), at).toBe(true)
+    }
+  }
+})
+
+test('widths: at every width 24..200 the row shrinks in order — the time away whole, the activity to its emoji alone (never a cut word), the name to NAME_MIN, the activity away, the name to a glyph, the model away, the time back once the shrunk row leaves it room; the version only from MODEL_FULL_FROM; wider panes cap the gap before the tail', () => {
   const cast = (model: string, modelFam: OfficeAgent['modelFam']) => room({ agents: [ag('lead', 1, { name: 'שם בינוני', model, modelFam, act: '✍️ כותב קובץ ארוך', startMin: 12, failed: true }), ag('a1', 1, { name: 'קצר', act: '📖 קורא', startMin: 3 })] })
   const sonnet = cast('Sonnet 5.5', 'sonnet')
   const opus = cast('Opus 5.5', 'opus')
@@ -577,38 +730,47 @@ test('widths: at every width 24..200 the row shrinks in order — the activity t
     const row = layoutOffice(props({ columns, rtl, rooms: [r] })).rows[1]!
     const runs = rowRuns(row.cells).map(x => x.text)
     const pill = runs.find(x => /^(Sonnet|Opus)/.test(x)) ?? ''
-    return { row, runs, pill, word: runs.some(x => /^כותב קובץ ארוך$/.test(x)), emoji: runs.some(x => x === '✍️'), name: runs.find(x => /^…?שם/.test(x)) ?? '' }
+    return { row, runs, pill, word: runs.some(x => /^כותב קובץ ארוך$/.test(x)), emoji: runs.some(x => x === '✍️'), name: runs.find(x => /^…?שם/.test(x)) ?? '', time: runs.some(x => x.includes('⏱')) }
   }
   for (const rtl of [true, false]) {
-    // roomy: every field whole, the model with its version, the minutes GAP_MAX past the activity, the rest blank
+    // roomy: every field whole, the model with its version, the tail GAP_MAX past the activity, the rest blank
     const wide = have(120, rtl)
     expect(wide.pill).toBe('Sonnet 5.5')
     expect(wide.word).toBe(true)
     expect(wide.emoji).toBe(true)
     expect(wide.name).toBe('שם בינוני')
+    expect(wide.time).toBe(rtl)   // (LTR under this fixture's Hebrew activity: THE HEBREW RULE (5) drops the time on the row)
     expect(text(wide.row).trim()).toBe(text(have(200, rtl).row).trim())
-    expect(text(wide.row).trim().length).toBeLessThan(70)
+    expect(text(wide.row).trim().length).toBeLessThan(80)
     expect(have(60, rtl).pill).toBe('Sonnet 5.5')
-    // 59: the family word alone, the activity whole; 44: still whole; 43..26: the activity's emoji alone; 28: the name cut; 25, 24: no activity
+    // 59: the family word alone, the activity whole, the time (48 and up); 47..41: the word whole, the time gone (it goes first);
+    // 40..33: the activity's emoji alone and the time back in the room the word left; 32..26: the emoji, no time; 25, 24: the name cut
     expect(have(59, rtl).pill).toBe('Sonnet')
     expect(have(59, rtl).word).toBe(true)
-    expect(have(44, rtl).word).toBe(true)
-    expect(have(44, rtl).name).toBe('שם בינוני')
-    expect(have(43, rtl).word).toBe(false)
-    expect(have(43, rtl).emoji).toBe(true)
-    expect(have(43, rtl).name).toBe('שם בינוני')
-    expect(have(28, rtl).emoji).toBe(true)
-    expect(have(28, rtl).name).toBe(rtl ? '…שם בינו' : 'שם בינו…')
+    expect(have(48, rtl).word).toBe(true)
+    expect(have(48, rtl).time).toBe(rtl)
+    expect(have(47, rtl).word).toBe(true)
+    expect(have(47, rtl).time).toBe(false)
+    expect(have(41, rtl).word).toBe(true)
+    expect(have(41, rtl).name).toBe('שם בינוני')
+    expect(have(40, rtl).word).toBe(false)
+    expect(have(40, rtl).emoji).toBe(true)
+    expect(have(40, rtl).time).toBe(true)
+    expect(have(40, rtl).name).toBe('שם בינוני')
+    expect(have(33, rtl).time).toBe(true)
+    expect(have(32, rtl).time).toBe(false)
+    expect(have(32, rtl).emoji).toBe(true)
     expect(have(26, rtl).emoji).toBe(true)
-    expect(have(26, rtl).name).toBe(rtl ? '…שם בי' : 'שם בי…')
-    expect(have(25, rtl).emoji).toBe(false)
+    expect(have(26, rtl).name).toBe('שם בינוני')
+    expect(have(25, rtl).emoji).toBe(true)
+    expect(have(25, rtl).name).toBe(rtl ? '…שם בינו' : 'שם בינו…')
     expect(have(25, rtl).pill).toBe('Sonnet')
-    expect(have(24, rtl).emoji).toBe(false)
-    expect(have(24, rtl).name).toBe(rtl ? '…שם בי' : 'שם בי…')
+    expect(have(24, rtl).emoji).toBe(true)
+    expect(have(24, rtl).name).toBe(rtl ? '…שם בינ' : 'שם בינ…')
     expect(have(24, rtl, opus).pill).toBe('Opus')
   }
   // the whole sweep: exact width, whole glyphs, the model word whole or none, the activity whole or its emoji (never a cut word), the
-  // minutes always drawn, nothing the engine would merge
+  // time whole or none, nothing the engine would merge
   for (let columns = 24; columns <= 200; columns++) {
     for (const rtl of [true, false]) {
       for (const r of [sonnet, opus]) {
@@ -617,8 +779,10 @@ test('widths: at every width 24..200 the row shrinks in order — the activity t
         expect(wellFormed(row), `${columns}`).toBe(true)
         expect(runs.filter(x => /Sonnet|Opus|S…|O…/.test(x)).every(x => ['Sonnet 5.5', 'Sonnet', 'Opus 5.5', 'Opus'].includes(x)), `${columns}: ${runs.join('|')}`).toBe(true)
         expect(runs.some(x => /כ/.test(x) && x !== 'כותב קובץ ארוך'), `${columns}: ${runs.join('|')}`).toBe(false)
-        // (the minutes always, but in LTR under a drawn Hebrew activity — this fixture's, never the English UI's — THE HEBREW RULE (5) drops them)
-        if (rtl || !runs.some(x => /כ/.test(x))) expect(runs.some(x => x.includes('12′')), `${columns}`).toBe(true)
+        // (the time whole — one dim run with the badge — or none; from 48 columns always, but in LTR under a drawn Hebrew activity
+        // — this fixture's, never the English UI's — THE HEBREW RULE (5) drops it on the row)
+        if (runs.some(x => x.includes('⏱'))) expect(runs.some(x => x === (rtl ? '12′ ⏱️ ❌' : '❌ ⏱️ 12′')), `${columns}: ${runs.join('|')}`).toBe(true)
+        if (columns >= 48 && (rtl || !runs.some(x => /כ/.test(x)))) expect(runs.some(x => x.includes('12′')), `${columns}`).toBe(true)
         expect(mergeSafe(row), `${columns}`).toBe(true)
       }
     }
@@ -717,7 +881,7 @@ test('decor: the walk-in shifts the emoji and the name round((1 - p) × WALK_CEL
 test('decor: a narrow row leaves the emoji less room — the hop and the walk-in stop before the pill, never over it', () => {
   const r = room({ agents: [ag('x', 1, { name: 'א', startMin: 100, failed: true, longRunning: true })] })
   for (const rtl of [true, false]) {
-    for (const columns of [24, 26, 28]) {
+    for (const columns of [24, 26, 28, 36]) {
       const p = props({ rtl, columns, rooms: [r] })
       const plain = layoutOffice(p).rows[1]!
       const lay = layoutOffice(p, decor({ hop: ['x'], entering: [['x', 0]] })).rows[1]!
@@ -728,7 +892,10 @@ test('decor: a narrow row leaves the emoji less room — the hop and the walk-in
       const col = (r: Cells, ch: string) => r.cells.findIndex(c => c.ch === ch)
       expect(col(lay, 'O')).toBe(col(plain, 'O'))
       expect(col(lay, '′')).toBe(col(plain, '′'))
-      if (rtl) expect(col(lay, '′')).toBeGreaterThanOrEqual(0)   // (LTR under a cut Hebrew activity drops the minutes: THE HEBREW RULE (5))
+      expect(col(lay, '⏰')).toBe(col(plain, '⏰'))
+      expect(col(lay, '⏰')).toBeGreaterThanOrEqual(0)
+      // (the time `100′ ⏱️` needs 31 columns beside the activity word; LTR under a cut Hebrew activity drops it: THE HEBREW RULE (5))
+      expect(col(lay, '′') >= 0).toBe(rtl && columns >= 31)
     }
   }
 })

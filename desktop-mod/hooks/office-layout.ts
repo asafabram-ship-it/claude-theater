@@ -8,7 +8,7 @@
 // the ones it draws. A wide glyph (an emoji) takes EMOJI_CELLS. Every row is
 // exactly `columns` wide by construction: the desktop does not enforce
 // `wrap: 'truncate'`, so `put` clips and never lets a glyph spill past the last
-// column. No clock here: minutes come in the props.
+// column. No clock here: minutes come in the props (a working agent's time field, `tailText`).
 //
 // THE HEBREW RULE (i18n.ts): the desktop draws a whole row as ONE Text = one
 // LTR paragraph, whatever the runs inside it, and the bidi algorithm then
@@ -319,19 +319,45 @@ export function firstGlyph(text: string): string {
   return glyphs(text)[0]?.ch ?? ''
 }
 
+/** The clock of a working agent's time field (with its emoji presentation selector: U+23F1 alone is a text-style glyph). */
+export const CLOCK = '⏱️'
 /**
- * The row's end: the minutes (`7′`, `<1′`, nothing when unknown) and the badges ❌⭐⏰, the minutes
- * outermost in both directions — in cell order `❌⭐⏰7′` in LTR (the minutes at the right edge),
- * `7′❌⭐⏰` in RTL (the minutes at the left edge). (The lead carries no mark on its row: Asaf's cleanup.)
+ * What follows the minutes in a row's time field, per language: ` min` in English (`⏱️ 3 min`); the prime in Hebrew
+ * (`⏱️ 3′`, read from the right as the clock then the number). Not `דק׳`: under THE HEBREW RULE (one LTR paragraph, no
+ * control marks) a Hebrew unit can never land after its number for the reader — laid after the number in cells, the
+ * engine leaves the number at the left (`⏱️ 3 דק׳` reads "דק׳ 3 ⏱️"); laid before it, the number glues to the unit and
+ * is mirrored with it ("⏱️ דק׳ 3"). The number always lands at the unit's left, whichever way the cells go: derived
+ * from the bidi rules the tests model (office-layout.test.ts visualRtlReading). (i18n.ts rowMinutes carries the same.)
  */
-export function tailText(a: OfficeAgent, rtl: boolean): string {
-  const badges = `${a.failed ? '❌' : ''}${a.star ? '⭐' : ''}${a.longRunning ? '⏰' : ''}`
-  const mins = a.startMin === null ? '' : a.startMin < 1 ? '<1′' : `${a.startMin}′`
-  return rtl ? `${mins}${badges}` : `${badges}${mins}`
+export const ROW_MINUTES: Readonly<Record<OfficeProps['lang'], string>> = { en: ' min', he: '′' }
+
+/**
+ * The time of a working agent (`status` not `done`, minutes known): `⏱️ 3 min` / `⏱️ <1 min` in English, `⏱️ 3′` /
+ * `⏱️ <1′` in Hebrew — in cell order the clock first in LTR, LAST in RTL (`3′ ⏱️`: the reader, from the right, sees the
+ * clock then the number; the number at the row's left edge, after nothing Hebrew, stays left-to-right). A finished
+ * agent has no time on its row (its duration is the drawer's); unknown minutes none either.
+ */
+export function timeText(a: OfficeAgent, rtl: boolean, lang: OfficeProps['lang']): string {
+  if (a.status === 'done' || a.startMin === null) return ''
+  const n = `${a.startMin < 1 ? '<1' : a.startMin}${ROW_MINUTES[lang]}`
+  return rtl ? `${n} ${CLOCK}` : `${CLOCK} ${n}`
 }
 
-/** The widths a room's rows share (so names, models, activities and minutes line up down the room), resolved for `columns`. */
-type Fields = { name: number; pill: 'full' | 'short' | 'none'; pillW: number; act: number; tail: number; tailAt: number }
+/**
+ * The row's end: the badges ❌⭐⏰ and, `withTime` (the room's field has room for it), the time (`timeText`), the time
+ * outermost in both directions, a space between the two — in cell order `❌⭐⏰ ⏱️ 7 min` in LTR (the time at the right
+ * edge), `7′ ⏱️ ❌⭐⏰` in RTL (the time at the left edge). A finished agent: its badges alone. (The lead carries no
+ * mark on its row: Asaf's cleanup.)
+ */
+export function tailText(a: OfficeAgent, rtl: boolean, lang: OfficeProps['lang'], withTime = true): string {
+  const badges = `${a.failed ? '❌' : ''}${a.star ? '⭐' : ''}${a.longRunning ? '⏰' : ''}`
+  const time = withTime ? timeText(a, rtl, lang) : ''
+  const gap = badges && time ? ' ' : ''
+  return rtl ? `${time}${gap}${badges}` : `${badges}${gap}${time}`
+}
+
+/** The widths a room's rows share (so names, models, activities and minutes line up down the room), resolved for `columns`; `time`: the tail field holds the time. */
+type Fields = { name: number; pill: 'full' | 'short' | 'none'; pillW: number; act: number; tail: number; tailAt: number; time: boolean }
 
 /** The cells before a row's name: the margin, the emoji, a space. */
 const HEAD = ROW_MARGIN + EMOJI_CELLS + 1
@@ -347,43 +373,54 @@ function actText(a: OfficeAgent, cells: number, wordAllowed: boolean): string {
 /**
  * The fields of a room's rows at `columns`: each the widest of the room (capped) — the name field
  * never past what the model word and an activity emoji leave it — then shrunk until every row fits,
- * in this order: (1) the activity to its emoji alone (an activity is drawn whole or as its emoji,
- * never cut mid-word), (2) the name down to NAME_MIN, (3) the activity away, (4) the name to a glyph,
- * (5) the model away. The model word carries its version only from MODEL_FULL_FROM columns and when
- * every field still fits. The minutes keep a field of the room's widest tail at the far end, or
- * GAP_MAX past the last field when the pane is wider than the content (the rest of the row stays
- * blank: no gap grows with the pane).
+ * in this order: (0) the time away, whole (an agent's time field is drawn whole or not at all, and
+ * gives way before the activity word), (1) the activity to its emoji alone (an activity is drawn
+ * whole or as its emoji, never cut mid-word), (2) the name down to NAME_MIN, (3) the activity away,
+ * (4) the name to a glyph, (5) the model away — then the time back when the shrunk fields leave it
+ * room (the word did not fit even without it). The model word carries its version only from
+ * MODEL_FULL_FROM columns and when every field, the time with them, still fits. The tail keeps a
+ * field of the room's widest tail at the far end, or GAP_MAX past the last field when the pane is
+ * wider than the content (the rest of the row stays blank: no gap grows with the pane).
  */
-function roomFields(room: OfficeRoom, columns: number, rtl: boolean): Fields {
+function roomFields(room: OfficeRoom, columns: number, rtl: boolean, lang: OfficeProps['lang']): Fields {
   let name0 = 0
   let full = 0
   let short = 0
   let act0 = 0
-  let tail = 0
+  let tailFull = 0   // the widest tail with the time
+  let tailBare = 0   // the widest tail of badges alone
   for (const a of room.agents) {
     name0 = Math.max(name0, Math.min(NAME_MAX, width(a.name)))
     full = Math.max(full, width(modelText(a.model, true)))
     short = Math.max(short, width(modelText(a.model)))
     act0 = Math.max(act0, Math.min(ACT_MAX, width(a.status === 'done' ? firstGlyph(a.act) : a.act)))
-    tail = Math.max(tail, width(tailText(a, rtl)))
+    tailFull = Math.max(tailFull, width(tailText(a, rtl, lang)))
+    tailBare = Math.max(tailBare, width(tailText(a, rtl, lang, false)))
   }
-  const budget = columns - HEAD - (tail > 0 ? 1 + tail : 0)
   const need = (n: number, p: number, a: number) => n + (p > 0 ? 1 + p : 0) + (a > 0 ? 1 + a : 0)
-  let name = Math.min(name0, Math.max(NAME_MIN, budget - short - 1 - EMOJI_CELLS - 1))
+  const budgetOf = (t: number) => columns - HEAD - (t > 0 ? 1 + t : 0)
+  const hasTime = room.agents.some(a => timeText(a, rtl, lang) !== '')   // a working agent with known minutes in the room
+  let time = hasTime
+  let tail = tailFull
+  let budget = budgetOf(tail)
+  const cap = () => Math.min(name0, Math.max(NAME_MIN, budget - short - 1 - EMOJI_CELLS - 1))
+  let name = cap()
   let act = act0
   let pill: Fields['pill'] = columns >= MODEL_FULL_FROM && need(name, full, act) <= budget ? 'full' : 'short'
   let pillW = pill === 'full' ? full : short
   const over = () => need(name, pillW, act) > budget
+  if (over() && time) { time = false; tail = tailBare; budget = budgetOf(tail); name = cap() }                   // (0)
   if (over()) act = Math.min(act0, EMOJI_CELLS)                                                           // (1)
   if (over()) name = Math.max(Math.min(NAME_MIN, name0), Math.min(name, budget - 1 - pillW - 1 - act))   // (2)
   if (over()) act = 0                                                                                     // (3)
   if (over()) name = Math.max(0, Math.min(name0, budget - 1 - pillW))                                     // (4)
   if (name < 1 || over()) { pill = 'none'; pillW = 0; name = Math.max(0, Math.min(name0, budget)) }      // (5)
+  if (hasTime && !time && need(name, pillW, act) <= budgetOf(tailFull)) { time = true; tail = tailFull }   // the time back
   const content = HEAD + need(name, pillW, act)
   // the tail field: at the far end while that leaves at most 2 × GAP_MAX + 1 blank cells, else GAP_MAX past the content
   const far = columns - tail
   const tailAt = far - content - 1 <= 2 * GAP_MAX ? Math.max(content, far) : content + 1 + GAP_MAX
-  return { name, pill, pillW, act, tail, tailAt }
+  return { name, pill, pillW, act, tail, tailAt, time }
 }
 
 /** The cell `x` of a field of `w` cells at reading offset `r` (0 at the reading edge). */
@@ -394,11 +431,11 @@ function at(r: number, w: number, columns: number, rtl: boolean): number {
 /**
  * One agent row: in reading order the margin, the emoji (⭐ before it during the hop; both shifted
  * inside by the walk-in), the name (bold, status colour; it gives way to the decor), the model word
- * (its family colour), the activity (status colour), then the minutes and badges (dim) at the room's
+ * (its family colour), the activity (status colour), then the badges and the time (dim) at the room's
  * tail field. A finished agent's row is dim, its activity its ✅ alone. The hover lays HOVER_BG across
  * the whole row. The decor moves nothing but this row's own cells.
  */
-function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, selected: boolean, rtl: boolean, decor: OfficeDecor): void {
+function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, selected: boolean, rtl: boolean, lang: OfficeProps['lang'], decor: OfficeDecor): void {
   const fg = STATUS_FG[a.status]
   const dimmed = a.status === 'done' ? { dim: true as const } : {}
   const glyph = decor.hop.has(a.id) ? `${HOP_STAR}${a.emoji}` : a.emoji
@@ -427,10 +464,10 @@ function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, sele
     r += 1 + f.act
   }
   // THE HEBREW RULE (5), LTR only: digits after a Hebrew block with nothing Latin between them join it (the engine keeps a
-  // number after Hebrew right-to-left, through any neutrals), so the minutes would be mirrored next to the name — the row
-  // keeps its badges and drops the minutes then (a Latin pill or an English activity parts them; in RTL the tail comes first)
-  let tail = tailText(a, rtl)
-  if (!rtl && DIGIT_RE.test(tail) && hebrewUnparted(nameDrawn, pill, act)) tail = tailText({ ...a, startMin: null }, rtl)
+  // number after Hebrew right-to-left, through any neutrals), so the time would be mirrored next to the name — the row
+  // keeps its badges and drops the time then (a Latin pill or an English activity parts them; in RTL the tail comes first)
+  let tail = tailText(a, rtl, lang, f.time)
+  if (!rtl && DIGIT_RE.test(tail) && hebrewUnparted(nameDrawn, pill, act)) tail = tailText(a, rtl, lang, false)
   const tw = width(tail)
   if (tw > 0) put(row, at(f.tailAt + f.tail - tw, tw, columns, rtl), tail, { dim: true }, true)
   if (decor.hover === a.id) for (let i = 0; i < row.cells.length; i++) row.cells[i] = { ...row.cells[i]!, bg: HOVER_BG }
@@ -477,7 +514,7 @@ export function rowCount(props: OfficeProps): number {
 export function layoutOffice(props: OfficeProps, decor: OfficeDecor = NO_DECOR): OfficeLayout {
   const rows: CellRow[] = []
   const hits: Hit[] = []
-  const { columns, rtl } = props
+  const { columns, rtl, lang } = props
   for (let r = 0; r < props.rooms.length; r++) {
     const room = props.rooms[r]!
     if (r > 0) rows.push(blankRow(`room:${props.rooms[r - 1]!.id}:gap`, columns))
@@ -497,10 +534,10 @@ export function layoutOffice(props: OfficeProps, decor: OfficeDecor = NO_DECOR):
     hits.push({ kind: 'pin', id: room.id, x: Math.max(0, px), y, w: EMOJI_CELLS, h: 1 })
     if (room.done) hits.push({ kind: 'roomDone', id: room.id, x: cx, y, w: cw, h: 1 })
     rows.push(head)
-    const fields = roomFields(room, columns, rtl)
+    const fields = roomFields(room, columns, rtl, lang)
     room.agents.forEach((a, i) => {
       const row = blankRow(`room:${room.id}:a:${i}`, columns)
-      agentRow(row, a, fields, columns, props.selected === a.id, rtl, decor)
+      agentRow(row, a, fields, columns, props.selected === a.id, rtl, lang, decor)
       hits.push({ kind: 'agent', id: a.id, x: 0, y: rows.length, w: columns, h: 1 })
       rows.push(row)
     })

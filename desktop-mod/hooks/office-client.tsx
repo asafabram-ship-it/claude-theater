@@ -52,7 +52,7 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, overlayInWindow, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { NO_DECOR, cut, hitAt, layoutOffice, lineRow, rowRuns, textWidth, windowRows } from './office-layout'
+import { NO_DECOR, cut, ellipsisFirst, hitAt, layoutOffice, lineRow, rowRuns, textWidth, windowRows } from './office-layout'
 import type { Cell, CellRow, Hit, OfficeDecor, OfficeLayout, Part } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort } from './usage'
@@ -331,6 +331,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const sp = name.indexOf(' ')
     return sp > 0 && !/\p{L}/u.test(name.slice(0, sp)) ? [name.slice(0, sp), name.slice(sp + 1)] : [name]
   }
+  /** A plain Text's text: in RTL a cut Hebrew text carries its ellipsis first (drawn after the word — office-layout.ts ellipsisFirst). */
+  const plain = (s: string): string => (props.rtl ? ellipsisFirst(s) : s)
   /** One chrome line of parts, `columns` cells wide, in reading order (office-layout.ts lineRow). */
   const partsLine = (id: string, parts: readonly Part[], columns: number, rtl: boolean): RenderElement => rowText(lineRow(id, columns, parts, rtl).cells)
   try {
@@ -433,8 +435,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     let overlay: RenderElement | null = null
     if (props.helpOpen) {
       overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', paddingX: 1, height: HELP_ROWS, overflow: 'hidden', children: [
-        line([Text({ bold: true, children: [cut(lbl('helpTitle'), Math.max(1, inner - 3))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between' }),
-        ...HELP.map(([k, keys]) => line([Text({ children: [cut(lbl(k), Math.max(1, inner - keys.length - 1))] }), Text({ color: 'cyan', children: [keys] })], { justifyContent: 'space-between' })),
+        line([Text({ bold: true, children: [plain(cut(lbl('helpTitle'), Math.max(1, inner - 3)))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between' }),
+        ...HELP.map(([k, keys]) => line([Text({ children: [plain(cut(lbl(k), Math.max(1, inner - keys.length - 1)))] }), Text({ color: 'cyan', children: [keys] })], { justifyContent: 'space-between' })),
       ] })
     } else if (props.drawer) {
       const items: RenderElement[] = inst.drawer.map((l, i) => {
@@ -444,9 +446,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (l.kind === 'chips') return line((l.chips ?? []).map(ch => Text({ inverse: true, children: [` ${ch} `] })))
         // a line of parts (the model line, the ✂ note): THE HEBREW RULE's runs; a heading or a body line is one Text
         if (l.parts) return partsLine(`d${i}`, l.parts.map(text => (l.kind === 'head' ? { text, bold: true as const } : { text, dim: true as const })), inner, props.rtl)
-        if (l.kind === 'head') return Text({ bold: true, children: [l.text] })
-        if (l.kind === 'dim' || l.kind === 'note') return Text({ dimColor: true, children: [l.text] })
-        return Text({ children: [l.text] })
+        if (l.kind === 'head') return Text({ bold: true, children: [plain(l.text)] })
+        if (l.kind === 'dim' || l.kind === 'note') return Text({ dimColor: true, children: [plain(l.text)] })
+        return Text({ children: [plain(l.text)] })
       })
       overlay = Box({ key: 'drawer', flexDirection: 'column', borderStyle: 'double', paddingX: 1, height: 2 + inst.drawer.length, overflow: 'hidden', alignItems: props.rtl ? 'flex-end' : 'flex-start', children: items })
     }
@@ -458,8 +460,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const e = emptyLines(props)
       kids.push(Box({ key: 'empty', flexDirection: 'column', alignItems: 'center', marginTop: 1, children: [
         Text({ children: ['🏢'] }),
-        ...e.msg.map(t => Text({ bold: true, children: [t] })),
-        ...e.sub.map(t => Text({ dimColor: true, children: [t] })),
+        ...e.msg.map(t => Text({ bold: true, children: [plain(t)] })),
+        ...e.sub.map(t => Text({ dimColor: true, children: [plain(t)] })),
         ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: lbl('watchDemo'), onPress: () => send(surface, { t: 'demo' }) })] : []),
       ] }))
     } else {

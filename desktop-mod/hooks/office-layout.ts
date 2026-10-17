@@ -221,11 +221,18 @@ function layBlocks(row: CellRow, x: number, w: number, blocks: readonly Block[],
   let r = 0
   for (const b of blocks) {
     r += b.gap
-    let text = b.text
-    if (rtl && text.endsWith(ELLIPSIS) && HEBREW_RE.test(text)) text = ELLIPSIS + text.slice(0, -ELLIPSIS.length)
-    put(row, rtl ? x + w - r - b.w : x + r, text, b.style, true)
+    put(row, rtl ? x + w - r - b.w : x + r, rtl ? ellipsisFirst(b.text) : b.text, b.style, true)
     r += b.w
   }
+}
+
+/**
+ * A cut Hebrew text with its ellipsis moved to its start — for an RTL Text: a leading neutral lands at
+ * the left of the mirrored block, after the word for the reader; a trailing one before it. A text without
+ * Hebrew, or not ending in an ellipsis, is returned as it is. (The Client applies it to its plain Texts.)
+ */
+export function ellipsisFirst(text: string): string {
+  return text.endsWith(ELLIPSIS) && HEBREW_RE.test(text) ? ELLIPSIS + text.slice(0, -ELLIPSIS.length) : text
 }
 
 /**
@@ -389,9 +396,11 @@ function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, sele
   const shift = Math.max(0, Math.min(p === undefined ? 0 : walkShift(p), f.name + HEAD - ROW_MARGIN - gw))
   const extra = shift + gw - EMOJI_CELLS
   put(row, at(ROW_MARGIN + shift, gw, columns, rtl), glyph, selected ? { fg: '#ffffff', bold: true } : {}, true)
-  if (f.name - extra > 0) place(row, at(HEAD + extra, f.name - extra, columns, rtl), f.name - extra, a.name, { fg, bold: true }, rtl)
+  const nameDrawn = f.name - extra > 0 ? cut(a.name, f.name - extra) : ''
+  if (nameDrawn) place(row, at(HEAD + extra, f.name - extra, columns, rtl), f.name - extra, a.name, { fg, bold: true }, rtl)
   let r = HEAD + f.name
   let parted = false   // a Latin pill between the name and the activity: the engine keeps two Hebrew words apart only across it
+  let drawnAct = false
   if (f.pill !== 'none') {
     const pill = pillText(a.model, f.pill === 'short')
     put(row, at(r + 1, width(pill), columns, rtl), pill, { fg: a.modelFam === 'other' ? '#e8ecff' : '#ffffff', bg: MODEL_BG[a.modelFam] }, true)
@@ -401,14 +410,29 @@ function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, sele
   if (f.act > 0) {
     // THE HEBREW RULE (3): a Hebrew activity beside a Hebrew name with no Latin between them would be mirrored with it as one
     // block (`?` pill, or none): the row keeps its field blank instead
-    const drawn = !(HEBREW_RE.test(a.act) && HEBREW_RE.test(a.name) && !parted)
-    if (drawn) place(row, at(r + 1, f.act, columns, rtl), f.act, a.act, a.status === 'done' ? { fg, dim: true } : { fg }, rtl)
+    drawnAct = !(HEBREW_RE.test(a.act) && HEBREW_RE.test(a.name) && !parted)
+    if (drawnAct) place(row, at(r + 1, f.act, columns, rtl), f.act, a.act, a.status === 'done' ? { fg, dim: true } : { fg }, rtl)
     r += 1 + f.act
   }
-  const tail = tailText(a, rtl)
+  // THE HEBREW RULE (5), LTR only: digits after a Hebrew block with nothing Latin between them join it (the engine keeps a
+  // number after Hebrew right-to-left, through any neutrals), so the minutes would be mirrored next to the name — the row
+  // keeps its badges and drops the minutes then (a Latin pill or an English activity parts them; in RTL the tail comes first)
+  let tail = tailText(a, rtl)
+  if (!rtl && DIGIT_RE.test(tail) && hebrewUnparted(nameDrawn, f.pill === 'none' ? '' : pillText(a.model, f.pill === 'short'), drawnAct ? cut(a.act, f.act) : '')) tail = tailText({ ...a, startMin: null }, rtl)
   const tw = width(tail)
   if (tw > 0) put(row, at(f.tailAt + f.tail - tw, tw, columns, rtl), tail, { dim: true }, true)
   if (decor.hover === a.id) for (let i = 0; i < row.cells.length; i++) row.cells[i] = { ...row.cells[i]!, bg: HOVER_BG }
+}
+
+/** Whether the row's last drawn Hebrew letter (in its name, its pill or its activity, as cut) has no letter of another script drawn after it. */
+function hebrewUnparted(...drawn: string[]): boolean {
+  let hebrew = false
+  let parted = false
+  for (const s of drawn) {
+    const last = [...s.matchAll(/\p{Script=Hebrew}/gu)].pop()
+    if (last) { hebrew = true; parted = LETTER_RE.test(s.slice(last.index)) } else if (LETTER_RE.test(s)) parted = true
+  }
+  return hebrew && !parted
 }
 
 /** Whether a room draws the "more / hide finished" row under its agents. */
@@ -453,8 +477,10 @@ export function layoutOffice(props: OfficeProps, decor: OfficeDecor = NO_DECOR):
     const y = rows.length
     const px = at(0, EMOJI_CELLS, columns, rtl)
     put(head, px, pin, {}, true)
-    place(head, at(EMOJI_CELLS + 1, titleW, columns, rtl), titleW, room.title, { bold: true }, rtl)
-    const cx = rtl ? 0 : columns - cw
+    // RTL: the pin at the right edge, the title against it, the counts at the left edge. LTR: the pin, the counts, THEN the
+    // title (a Hebrew title before the counts would take their digits into its mirrored block: THE HEBREW RULE (5))
+    const cx = rtl ? 0 : EMOJI_CELLS + 1
+    place(head, rtl ? at(EMOJI_CELLS + 1, titleW, columns, rtl) : cx + cw + 1, titleW, room.title, { bold: true }, rtl)
     put(head, cx, counts, {}, true)
     hits.push({ kind: 'pin', id: room.id, x: Math.max(0, px), y, w: EMOJI_CELLS, h: 1 })
     if (room.done) hits.push({ kind: 'roomDone', id: room.id, x: cx, y, w: cw, h: 1 })

@@ -60,13 +60,17 @@ export type OfficeLayout = { rows: CellRow[]; hits: Hit[] }
 
 /**
  * What the surface module lays on the rows from its local state (spec §7.4), by agent id:
- *   hover    the row under the pointer: HOVER_BG across the whole row;
- *   hop      a `done` fx: ⭐ beside the emoji, the name giving way to it;
- *   entering an `enter` fx and its progress 0 → 1: the emoji and the name walk to the reading
- *            edge from `walkShift(p)` cells inside the row (the name cut by as much).
+ *   hover     the row under the pointer: HOVER_BG across the whole row;
+ *   hoverRoom the room whose HEAD row is under the pointer (by room id): a dim 📌 at the pin cell of an
+ *             unpinned room, the affordance of the pin click (a pinned room's 📌 is drawn anyway);
+ *   hop       a `done` fx: ⭐ beside the emoji, the name giving way to it;
+ *   entering  an `enter` fx and its progress 0 → 1: the emoji and the name walk to the reading
+ *             edge from `walkShift(p)` cells inside the row (the name cut by as much).
  */
-export type OfficeDecor = { hover: string | null; hop: ReadonlySet<string>; entering: ReadonlyMap<string, number> }
-export const NO_DECOR: OfficeDecor = { hover: null, hop: new Set(), entering: new Map() }
+export type OfficeDecor = { hover: string | null; hoverRoom: string | null; hop: ReadonlySet<string>; entering: ReadonlyMap<string, number> }
+export const NO_DECOR: OfficeDecor = { hover: null, hoverRoom: null, hop: new Set(), entering: new Map() }
+/** The room head's pin glyph: drawn bright when the room is pinned, dim under the pointer, not at all otherwise (no ○). */
+export const PIN = '📌'
 /** The hover highlight: a background across the row (a coloured "frame" around a colour emoji does not show). */
 export const HOVER_BG = '#2b3350'
 /** How far off home a walk-in starts, in cells. */
@@ -232,6 +236,23 @@ function layBlocks(row: CellRow, x: number, w: number, blocks: readonly Block[],
  */
 export function ellipsisFirst(text: string): string {
   return text.endsWith(ELLIPSIS) && HEBREW_RE.test(text) ? ELLIPSIS + text.slice(0, -ELLIPSIS.length) : text
+}
+
+/**
+ * The label of a control that reads ICON THEN WORD — a Button's one string, drawn as one LTR paragraph. For
+ * the Hebrew reader (`rtl`, a Hebrew word) the icon TRAILS the word in the string: the bidi algorithm takes
+ * a neutral at the paragraph's end (between the Hebrew and eos = L) as left-to-right and leaves it at the
+ * right edge, where the reader starts — a leading icon would land at the left, after the word (the text
+ * cards' `✕ סגירה` reads "סגירה ✕"). Two icons (`🎬 ✕`) are met in reverse there, so they are reversed in
+ * the string. Any other word (Latin in either pane, or the English pane's one Hebrew word, read left to
+ * right) takes the icon first. Derived from the UBA rules the tests model (office-layout.test.ts
+ * visualRtlReading); no control mark involved.
+ */
+export function iconLabel(icon: string, word: string, rtl: boolean): string {
+  if (!icon) return word
+  if (!word) return icon
+  if (rtl && HEBREW_RE.test(word)) return `${word} ${icon.split(' ').reverse().join(' ')}`
+  return `${icon} ${word}`
 }
 
 /**
@@ -509,7 +530,7 @@ export function rowCount(props: OfficeProps): number {
  * room shows), the "more / hide finished" row when the room has one, and one blank row between
  * rooms. Row ids: `room:<id>:head`, `room:<id>:a:<n>`, `room:<id>:more`, `room:<id>:gap`. An
  * agent's hit is its whole row; so is the more row's. The decor changes only the cells of the
- * agent rows it names; never a hit, never a row's width.
+ * agent rows it names and the pin cell of the head it hovers; never a hit, never a row's width.
  */
 export function layoutOffice(props: OfficeProps, decor: OfficeDecor = NO_DECOR): OfficeLayout {
   const rows: CellRow[] = []
@@ -521,11 +542,13 @@ export function layoutOffice(props: OfficeProps, decor: OfficeDecor = NO_DECOR):
     const head = blankRow(`room:${room.id}:head`, columns)
     const counts = `🟢${room.run}${room.stale ? ` ⏳${room.stale}` : ''}${room.done ? ` ✅${room.done}` : ''}`
     const cw = Math.min(width(counts), columns)
-    const pin = room.pinned ? '📌' : '○'
+    // the pin cell (EMOJI_CELLS at the reading edge, the hit whether or not a glyph is drawn): 📌 pinned, a dim 📌 while the
+    // pointer is over the head (the click's affordance), blank otherwise — no ○ (Asaf's live check 3)
+    const pin = room.pinned || decor.hoverRoom === room.id ? PIN : ''
     const titleW = columns - EMOJI_CELLS - 1 - cw - 1
     const y = rows.length
     const px = at(0, EMOJI_CELLS, columns, rtl)
-    put(head, px, pin, {}, true)
+    if (pin) put(head, px, pin, room.pinned ? {} : { dim: true }, true)
     // RTL: the pin at the right edge, the title against it, the counts at the left edge. LTR: the pin, the counts, THEN the
     // title (a Hebrew title before the counts would take their digits into its mirrored block: THE HEBREW RULE (5))
     const cx = rtl ? 0 : EMOJI_CELLS + 1

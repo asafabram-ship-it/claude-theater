@@ -20,12 +20,19 @@ export const COMPACT_BELOW = 60
 /** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested). */
 export const TASK_LINES = 4
 export const RESULT_LINES = 3
-/** The help rows: a label key and the keys shown beside it (spec §6.4). */
+/** The help rows: a label key and the keys shown beside it (spec §6.4; the still toggle's `s` since Task 2.8b-3). */
 export const HELP: ReadonlyArray<readonly [string, string]> = [
-  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x · Esc'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scHelp', 'h'],
+  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x · Esc'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scStill', 's'], ['scHelp', 'h'],
 ]
-/** The help popover's height: the border, the title row, one row per shortcut. */
-export const HELP_ROWS = 2 + 1 + HELP.length
+/** The help popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
+export const HELP_BUTTON_ROWS = 1
+/** The help popover's height: the border, the title row, the Buttons row, one row per shortcut. */
+export const HELP_ROWS = 2 + 1 + HELP_BUTTON_ROWS + HELP.length
+
+/** Whether `labels`, a cell apart, fit in `width` cells: the toolbar and the help's Buttons row draw their words only then, else their icons alone. */
+export function labelsFit(labels: readonly string[], width: number): boolean {
+  return labels.reduce((n, l, i) => n + (i ? 1 : 0) + textWidth(l), 0) <= width
+}
 /**
  * The window's byte budget. A drawn row serializes to about ROW_CHARS_PER_COLUMN characters per
  * column (measured 2026-10-11: 57,033 for a 200 × 40 window with the drawer open); the Client's

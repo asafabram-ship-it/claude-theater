@@ -96,7 +96,7 @@ function laidRow(p: OfficeProps, d: OfficeDecor, y: number): string {
 
 /** The decor of `id` walking in at `progress` (0 → 1). */
 function walking(id: string, progress: number): OfficeDecor {
-  return { hover: null, hop: new Set(), entering: new Map([[id, progress]]) }
+  return { hover: null, hoverRoom: null, hop: new Set(), entering: new Map([[id, progress]]) }
 }
 
 /** The LAYOUT rows (0 = the first room head) whose drawn Text carries a run with `bg` as its backgroundColor. */
@@ -128,7 +128,9 @@ test('DESKTOP (2.4): the pane is one Client; it draws the room head, the agent r
   expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^🟢$/ }), 'the counts icon').toBeDefined()   // the header's counts, a Text per run (THE HEBREW RULE)
   expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^2$/ }), 'the count').toBeDefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'showDone' }), 'showDone').toBeDefined()
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' }), 'still').toBeDefined()
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'mute' }), 'mute').toBeDefined()
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'help' }), 'help').toBeDefined()
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' }), 'still: in the help popover, not the toolbar').toBeUndefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), 'search').toBeDefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^Opus$/ }), 'the model word').toBeDefined()   // the model's family word (the version from 60 columns)
   expect(await withBg(ui, FX_BG.focus)).toBe(false)

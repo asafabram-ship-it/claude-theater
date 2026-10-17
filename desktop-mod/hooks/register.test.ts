@@ -107,15 +107,19 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect(await writesOf(captured, () => ui.press({ key: 'mute' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
   expect((captured.store.prefs as { muted: boolean }).muted).toBe(true)
   expect((await propsOf(ui)).prefs.muted).toBe(true)
-  expect(await writesOf(captured, () => ui.press({ key: 'still' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
+  // (the still Button lives in the help popover since Task 2.8b-3: its letter with the help closed, its Button with it open)
+  expect(await writesOf(captured, () => ui.key({ in: OFFICE_KEY, key: 's' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
   expect((await propsOf(ui)).prefs.still).toBe(true)
-  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('🖼')
-  await ui.press({ key: 'still' })
-  expect((await propsOf(ui)).prefs.still).toBe(false)
+  expect(await ui.find({ in: OFFICE_KEY, key: 'still' })).toBeUndefined()
 
-  // help: one view write each way
+  // help: one view write each way; open, it holds the still / demo / language Buttons
   expect(await writesOf(captured, () => ui.press({ key: 'help' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).helpOpen).toBe(true)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('תנועה 🖼')
+  expect(await writesOf(captured, () => ui.press({ key: 'still' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
+  expect((await propsOf(ui)).prefs.still).toBe(false)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('תנועה 🎞')
+  expect((await propsOf(ui)).helpOpen).toBe(true)   // a pref flip leaves the help open
   await ui.press({ key: 'help' })
   expect((await propsOf(ui)).helpOpen).toBe(false)
 
@@ -160,20 +164,33 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect(await writesOf(captured, () => ui.input({ key: 'search', text: '', kind: 'submit' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).search).toBe('')
 
-  // the demo: view.demo on and off
+  // the demo: view.demo on and off — its Button in the help popover (`דמו 🎬`, then `יציאה ✕ 🎬`), its letter with the help closed
+  await ui.press({ key: 'help' })
+  expect((await ui.find({ in: OFFICE_KEY, key: 'demo' }))?.text).toBe('דמו 🎬')
   expect(await writesOf(captured, () => ui.press({ key: 'demo' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).demo).toBe(true)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'demo' }))?.text).toBe('יציאה ✕ 🎬')
   await ui.press({ key: 'demo' })
   expect((await propsOf(ui)).demo).toBe(false)
 
   // the language: the pref (+ mirror) and the pane retitled in English with the working count; the module's labels follow
+  // (the Button in the help popover: `🌐 English`, then `🌐 עברית`)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'lang' }))?.text).toBe('🌐 English')
   expect(await writesOf(captured, () => ui.press({ key: 'lang' }))).toEqual({ prefs: 1, 'store:prefs': 1 }) // the retitle is a ui.open, not a write
   expect((captured.store.prefs as { lang: string }).lang).toBe('en')
   expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 Theater')
   expect((await propsOf(ui)).lang).toBe('en')
   expect((await propsOf(ui)).rtl).toBe(false)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'lang' }))?.text).toBe('🌐 עברית')
+  expect((await ui.find({ in: OFFICE_KEY, key: 'showDone' }))?.text).toBe('☐ Finished')
+  await ui.press({ key: 'help' })
   await ui.key({ in: OFFICE_KEY, key: 'l' })
   expect((await propsOf(ui)).lang).toBe('he')
+  expect((await ui.find({ in: OFFICE_KEY, key: 'showDone' }))?.text).toBe('שסיימו ☐')
+  expect(await writesOf(captured, () => ui.key({ in: OFFICE_KEY, key: 'd' }))).toEqual({ view: 1 })
+  expect((await propsOf(ui)).demo).toBe(true)
+  await ui.key({ in: OFFICE_KEY, key: 'd' })
+  expect((await propsOf(ui)).demo).toBe(false)
 
   // j / k move the module's own keyboard focus and post nothing: no write (a write would redraw the pane per key)
   await click(ui, 'agent', 'lead-a')

@@ -35,6 +35,19 @@
 // are ONE run in logical order (the engine mirrors it whole — a count after
 // its word, `עובדים 2`, stays with it), the rest laid by cell. A label's mark
 // (✕, ✂, 🔍, ❌) leads the word: a leading mark is drawn after a Hebrew word.
+// A labelled CONTROL (the toolbar's `☐ שסיימו`, `🔔 צליל`, `? עזרה`, the help's
+// `🎬 דמו`, `🎞 תנועה`) must read icon THEN word, so its icon trails the Hebrew
+// word in the Button's string (office-layout.ts iconLabel): each Button is a
+// paragraph of its own, and a trailing neutral lands at its right edge.
+//
+// THE TOOLBAR (Task 2.8b-3): three Buttons in words — finished, sound, help —
+// their words whenever the three fit the row (Hebrew from 24 columns, English
+// from 26), the icons alone under that. The rare controls (demo, the motion
+// toggle, the language) are Buttons in the help popover, under its title; their
+// letters d / s / l work whether the help is open or not (KEY_MESSAGES). A room
+// head draws 📌 only when pinned, a dim 📌 while the pointer is over the head
+// (state.hoverRoom → decor.hoverRoom), nothing otherwise; a click on the pin
+// cell toggles the pin as before.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while an fx is active and is stopped when the last one ends; the render
@@ -50,9 +63,9 @@
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, overlayInWindow, windowOf } from './office-chrome'
+import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, cleanSearch, drawerLines, emptyLines, labelsFit, overlayInWindow, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { NO_DECOR, cut, ellipsisFirst, hitAt, layoutOffice, lineRow, rowRuns, textWidth, windowRows } from './office-layout'
+import { NO_DECOR, cut, ellipsisFirst, hitAt, iconLabel, layoutOffice, lineRow, rowRuns, textWidth, windowRows } from './office-layout'
 import type { Cell, CellRow, Hit, OfficeDecor, OfficeLayout, Part } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort } from './usage'
@@ -93,6 +106,8 @@ export type OfficeInst = {
   layout: OfficeLayout
   hitById: Map<string, Hit>
   order: string[]
+  /** Layout row y → the room whose head row it is (from the pin hits): the head hover. */
+  headAt: Map<number, string>
   /** The layout rows last drawn: [from, from + count). The pointer answers on these alone. */
   win: { from: number; count: number }
   drawerKey: string
@@ -105,8 +120,8 @@ export type OfficeInst = {
   posted: string | null
   debounce: (() => void) | null
 }
-/** The local state: what a redraw reads (`setState` only from events). */
-export type OfficeState = { hover: string | null; focus: string | null; frame: number; inst: OfficeInst }
+/** The local state: what a redraw reads (`setState` only from events). `hover` is the agent row under the pointer, `hoverRoom` the room whose head row is. */
+export type OfficeState = { hover: string | null; hoverRoom: string | null; focus: string | null; frame: number; inst: OfficeInst }
 
 type Surface = ClientSurface<OfficeState>
 
@@ -120,12 +135,12 @@ function send(surface: Surface, m: OfficeMessage): void {
 
 /** The layout's memo key: the props that shape it and the decor laid on it. */
 function layoutKeyOf(p: OfficeProps, d: OfficeDecor): string {
-  return JSON.stringify([p.columns, p.rtl, p.selected, p.rooms, d.hover, [...d.hop], [...d.entering]])
+  return JSON.stringify([p.columns, p.rtl, p.selected, p.rooms, d.hover, d.hoverRoom, [...d.hop], [...d.entering]])
 }
 
 /**
- * The decor from the local state: the hover, the agents hopping (a `done` fx) and each walk-in's
- * progress, 0 when its `enter` fx starts → 1 at FX_ENTER_MS (`1 - left / FX_ENTER_MS`).
+ * The decor from the local state: the hover (an agent row, a room head), the agents hopping (a `done` fx)
+ * and each walk-in's progress, 0 when its `enter` fx starts → 1 at FX_ENTER_MS (`1 - left / FX_ENTER_MS`).
  */
 function decorOf(s: OfficeState): OfficeDecor {
   const hop = new Set<string>()
@@ -134,7 +149,7 @@ function decorOf(s: OfficeState): OfficeDecor {
     if (f.kind === 'done') hop.add(f.id)
     else if (f.kind === 'enter') entering.set(f.id, 1 - f.left / FX_ENTER_MS)
   }
-  return { hover: s.hover, hop, entering }
+  return { hover: s.hover, hoverRoom: s.hoverRoom, hop, entering }
 }
 
 /** The layout memo: computed first, the key assigned last, so a throw never leaves a stale layout under a new key. */
@@ -142,7 +157,10 @@ function setLayout(inst: OfficeInst, p: OfficeProps, d: OfficeDecor, key: string
   const layout = layoutOffice(p, d)
   const hitById = new Map<string, Hit>()
   const order: string[] = []
+  const headAt = new Map<number, string>()
   for (const hit of layout.hits) {
+    // (every room head carries its pin hit, drawn glyph or not: its row is the head's)
+    if (hit.kind === 'pin') headAt.set(hit.y, hit.id)
     if (hit.kind !== 'agent') continue
     hitById.set(hit.id, hit)
     order.push(hit.id)
@@ -150,12 +168,13 @@ function setLayout(inst: OfficeInst, p: OfficeProps, d: OfficeDecor, key: string
   inst.layout = layout
   inst.hitById = hitById
   inst.order = order
+  inst.headAt = headAt
   inst.layoutKey = key
 }
 
 function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
-    props: p, chrome: 0, layoutKey: '', layout: { rows: [], hits: [] }, hitById: new Map(), order: [], win: { from: 0, count: 0 }, drawerKey: '', drawer: [],
+    props: p, chrome: 0, layoutKey: '', layout: { rows: [], hits: [] }, hitById: new Map(), order: [], headAt: new Map(), win: { from: 0, count: 0 }, drawerKey: '', drawer: [],
     fx: [], stop: null, seen: null, query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
   }
   setLayout(inst, p, NO_DECOR, layoutKeyOf(p, NO_DECOR))
@@ -231,7 +250,8 @@ function listen(surface: Surface): void {
       // only the rows drawn answer: not the chrome, not the spacer above the window, not a row past it
       // (the byte budget leaves the rows past `from + count` blank, so `y >= chrome + from + count` is nothing)
       const y = ev.y - inst.chrome
-      const hit = y >= inst.win.from && y < inst.win.from + inst.win.count ? hitAt(inst.layout, ev.x, y) : undefined
+      const drawn = y >= inst.win.from && y < inst.win.from + inst.win.count
+      const hit = drawn ? hitAt(inst.layout, ev.x, y) : undefined
       if (ev.type === 'down') {
         if (ev.button !== 'left' || !hit) return
         if (hit.kind === 'agent') {
@@ -240,8 +260,10 @@ function listen(surface: Surface): void {
         } else if (hit.kind === 'pin') send(surface, { t: 'pin', room: hit.id })
         else send(surface, { t: 'roomDone', room: hit.id })   // the head's ✅ counts and the "more / hide finished" row: the room's toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
+        // the agent row under the pointer (HOVER_BG), or the room head under it (its dim 📌): one setState when either changes
         const id = ev.type === 'leave' ? null : hit?.kind === 'agent' ? hit.id : null
-        if (id !== cur.hover) surface.setState({ ...cur, hover: id })
+        const room = ev.type === 'leave' || !drawn ? null : inst.headAt.get(y) ?? null
+        if (id !== cur.hover || room !== cur.hoverRoom) surface.setState({ ...cur, hover: id, hoverRoom: room })
       }
     } catch {
       // a listener must never throw (the instance would unmount)
@@ -340,7 +362,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     let s = surface.state
     if (s === undefined) {
       listen(surface)
-      s = { hover: null, focus: null, frame: 0, inst: newInst(props) }
+      s = { hover: null, hoverRoom: null, focus: null, frame: 0, inst: newInst(props) }
       surface.setState(s)
     }
     const inst = s.inst
@@ -404,15 +426,16 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     if (meter) head.push('·', meter.slice(3))
     kids.push(partsLine('header', head.map(text => ({ text, bold: true as const })), props.columns, props.rtl))
 
-    // --- toolbar: the same keys as today's pane ---
+    // --- toolbar: three Buttons in words (THE TOOLBAR, above) — the state in the icon, the word from i18n (tbDone, tbSound,
+    //     tbHelp); the words whenever the three fit the row a cell apart, else the icons alone (never a cut word) ---
+    // (☑ while the finished are shown: the pref, or the demo, which shows them without touching it — the text cards' rule)
+    const icons = [props.prefs.showDone || props.demo ? '☑' : '☐', props.prefs.muted ? '🔕' : '🔔', '?']
+    const worded = icons.map((icon, i) => iconLabel(icon, lbl(['tbDone', 'tbSound', 'tbHelp'][i]!), props.rtl))
+    const tb = labelsFit(worded, props.columns) ? worded : icons
     kids.push(line([
-      // (☑ while the finished are shown: the pref, or the demo, which shows them without touching it — the text cards' rule)
-      Button({ key: 'showDone', ...hk('f'), plain: true, label: props.prefs.showDone || props.demo ? '☑' : '☐', onPress: () => send(surface, { t: 'showDone' }) }),
-      Button({ key: 'mute', ...hk('m'), plain: true, label: props.prefs.muted ? '🔕' : '🔔', onPress: () => send(surface, { t: 'mute' }) }),
-      Button({ key: 'lang', ...hk('l'), plain: true, label: props.lang === 'he' ? 'EN' : 'עב', onPress: () => send(surface, { t: 'lang' }) }),
-      Button({ key: 'help', ...hk('h'), plain: true, label: '?', onPress: () => send(surface, { t: 'help' }) }),
-      Button({ key: 'demo', ...hk('d'), plain: true, label: props.demo ? '🎬 ✕' : '🎬', onPress: () => send(surface, { t: 'demo' }) }),
-      Button({ key: 'still', ...hk('s'), plain: true, label: props.prefs.still ? '🖼' : '🎞', onPress: () => send(surface, { t: 'still' }) }),
+      Button({ key: 'showDone', ...hk('f'), plain: true, label: tb[0]!, onPress: () => send(surface, { t: 'showDone' }) }),
+      Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, { t: 'mute' }) }),
+      Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, { t: 'help' }) }),
     ]))
 
     // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS. (The glass leads: drawn after a Hebrew word.) ---
@@ -434,8 +457,20 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     top, or under the fixed chrome ---
     let overlay: RenderElement | null = null
     if (props.helpOpen) {
+      // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs), the
+      // motion toggle (🎞 running, 🖼 frozen), the language (the other language's name) — their words when the three fit the
+      // popover's inner width, else the icons alone (the language as EN / עב); their letters d / s / l are KEY_MESSAGES' either way
+      const hIcons = [props.demo ? '🎬 ✕' : '🎬', props.prefs.still ? '🖼' : '🎞', '🌐']
+      const hWords = [props.demo ? lbl('exitDemo') : lbl('demoLabel'), lbl('hbMotion'), lbl('switchTo')]
+      const hWorded = hIcons.map((icon, i) => iconLabel(icon, hWords[i]!, props.rtl))
+      const hb = labelsFit(hWorded, inner) ? hWorded : ['🎬', hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
       overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', paddingX: 1, height: HELP_ROWS, overflow: 'hidden', children: [
         line([Text({ bold: true, children: [plain(cut(lbl('helpTitle'), Math.max(1, inner - 3)))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between' }),
+        line([
+          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, { t: 'demo' }) }),
+          Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, { t: 'still' }) }),
+          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, { t: 'lang' }) }),
+        ]),
         ...HELP.map(([k, keys]) => line([Text({ children: [plain(cut(lbl(k), Math.max(1, inner - keys.length - 1)))] }), Text({ color: 'cyan', children: [keys] })], { justifyContent: 'space-between' })),
       ] })
     } else if (props.drawer) {

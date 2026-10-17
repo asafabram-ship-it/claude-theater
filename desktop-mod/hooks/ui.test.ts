@@ -894,12 +894,12 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS])
   const w5 = { ...captured.writes }
   const s5 = { ...captured.storeWrites }
-  await ui.press({ key: 'demo' })
+  await ui.key({ in: OFFICE_KEY, key: 'd' })   // (the demo Button lives in the help popover; its letter is the module's)
   await clock.advance(POLL_MS)
   expect(captured.payload?.demo).toBe(true)
   expect((await officePropsOf(ui))?.demo).toBe(true)
   expect(captured.writes.payload).toBeGreaterThan(w5.payload)
-  await ui.press({ key: 'demo' })
+  await ui.key({ in: OFFICE_KEY, key: 'd' })
   ageOut(files, `${QPROJ}/${QSESS}.jsonl`, clock.now())
   ageOut(files, Q2, clock.now())
   await clock.advance(POLL_MS)
@@ -1200,20 +1200,30 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   await term.unmount()
 })
 
-test('DESKTOP 🎞/🖼: the still toggle is the office Client\'s toolbar Button (its post writes prefs.still, which reaches the module as props.prefs.still); desktop only', async ($, on) => {
+test('DESKTOP 🎞/🖼: the still toggle is the office Client\'s Button in its help popover — `תנועה 🎞`, 🖼 once frozen (its post writes prefs.still, which reaches the module as props.prefs.still); its letter s works with the help closed; desktop only', async ($, on) => {
   const { captured, clock } = beneath(on, () => fixture(), { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
-  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('🎞')
+  expect(await ui.find({ in: OFFICE_KEY, key: 'still' })).toBeUndefined()   // not on the toolbar: in the help (Task 2.8b-3)
   expect((await officePropsOf(ui))?.prefs.still).toBe(false)
   expect(await ui.find({ key: 'still' })).toBeUndefined() // not in the plugin's own tree: the toggle is the Client's
+  await ui.press({ key: 'help' })
+  expect((await officePropsOf(ui))?.helpOpen).toBe(true)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('תנועה 🎞')   // (the icon trails the Hebrew word: read first)
   // its press posts `still`: the hook writes the pref (+ its store mirror), the next props carry it, the Button draws 🖼
   await ui.press({ key: 'still' })
   expect((await officePropsOf(ui))?.prefs.still).toBe(true)
-  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('🖼')
+  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('תנועה 🖼')
   expect((captured.store.prefs as { still?: boolean }).still).toBe(true)
   await ui.press({ key: 'still' })
+  expect((await officePropsOf(ui))?.prefs.still).toBe(false)
+  // the help closed: the letter still flips it
+  await ui.press({ key: 'help' })
+  expect((await officePropsOf(ui))?.helpOpen).toBe(false)
+  await ui.key({ in: OFFICE_KEY, key: 's' })
+  expect((await officePropsOf(ui))?.prefs.still).toBe(true)
+  await ui.key({ in: OFFICE_KEY, key: 's' })
   expect((await officePropsOf(ui))?.prefs.still).toBe(false)
   await ui.unmount()
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })

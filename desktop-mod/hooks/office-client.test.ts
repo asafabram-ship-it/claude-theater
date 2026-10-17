@@ -10,8 +10,8 @@
 import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { I18N } from './i18n'
-import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, overlayInWindow, overlayRows, windowOf } from './office-chrome'
+import { I18N, hebrewRuleOk } from './i18n'
+import { CHROME_ROWS, COMPACT_BELOW, HELP, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
 import { HOVER_BG, MODEL_FG, NO_DECOR, layoutOffice, textWidth, walkShift } from './office-layout'
@@ -247,12 +247,12 @@ test('render: the chrome, the windowed rows as run-merged Texts, blank space abo
   expect(texts(tree)).toMatch(/^🟢$/m)
   expect(texts(tree)).toMatch(/^2$/m)
   const keys = all.filter(n => n.type === 'Button').map(n => n.props.key)
-  expect(keys).toEqual(['showDone', 'mute', 'lang', 'help', 'demo', 'still'])
+  expect(keys).toEqual(['showDone', 'mute', 'help'])   // (demo, still and the language live in the help popover: Task 2.8b-3)
   expect(all.find(n => n.type === 'Input')?.props.key).toBe('search')
   // hotkeys only from COMPACT_BELOW columns, today's rule (the desktop draws a key chip per hotkey, which would wrap the toolbar)
   expect(all.filter(n => n.type === 'Button').every(n => n.props.hotkey === undefined)).toBe(true)
   const wide = nodes(Office({ ...p, columns: COMPACT_BELOW }, fake(COMPACT_BELOW).surface))
-  expect(wide.filter(n => n.type === 'Button').map(n => n.props.hotkey)).toEqual(['f', 'm', 'l', 'h', 'd', 's'])
+  expect(wide.filter(n => n.type === 'Button').map(n => n.props.hotkey)).toEqual(['f', 'm', 'h'])
   // the room head and the agent rows are rows of the layout, one Text per row with a Text per run
   const layout = layoutOffice(p)
   const rowTexts = all[0]!.children.slice(CHROME_ROWS) as Node[]
@@ -310,7 +310,7 @@ test('render: equal props draw with no setState and no timer; the layout is memo
   Office({ ...p, columns: 60 }, f.surface)
   const hovered = f.surface.state!.inst.layout
   expect(hovered).not.toBe(wide)
-  expect(hovered).toEqual(layoutOffice({ ...p, columns: 60 }, { hover: 'a1', hop: new Set(), entering: new Map() }))
+  expect(hovered).toEqual(layoutOffice({ ...p, columns: 60 }, { hover: 'a1', hoverRoom: null, hop: new Set(), entering: new Map() }))
   Office({ ...p, columns: 60 }, f.surface)
   expect(f.surface.state!.inst.layout).toBe(hovered)
   f.surface.setState({ ...f.surface.state!, hover: null })
@@ -327,7 +327,7 @@ test('fx: a newcomer walks in (its emoji 3 → 2 → 1 cells inside the reading 
   expect(f.timers).toHaveLength(0)
   /** Layout row `y` as drawn (one Text per run), as its cells' glyphs. */
   const rowAt = (t: unknown, y: number) => texts((t as Node).children[CHROME_ROWS + y]).replace(/\n/g, '')
-  const walk = (progress: number): OfficeDecor => ({ hover: null, hop: new Set(), entering: new Map([['n1', progress]]) })
+  const walk = (progress: number): OfficeDecor => ({ hover: null, hoverRoom: null, hop: new Set(), entering: new Map([['n1', progress]]) })
   const laid = (q: OfficeProps, d: OfficeDecor, y: number) => layoutOffice(q, d).rows[y]!.cells.map(c => c.ch).join('')
   // a newcomer with a stamp → enter fx: n1 is the third agent (layout row 3); its emoji starts WALK_CELLS inside the right edge
   // (RTL reads from the right) and walks out to it
@@ -370,7 +370,7 @@ test('fx: a newcomer walks in (its emoji 3 → 2 → 1 cells inside the reading 
   const pulse = (t: unknown) => withBg(t, FX_BG.done).length + withBg(t, FX_BG.doneAlt).length
   tree = Office(shown, f.surface)
   expect(rowAt(tree, 2)).toContain('⭐🦉')
-  expect(rowAt(tree, 2)).toBe(laid(shown, { hover: null, hop: new Set(['a1']), entering: new Map() }, 2))
+  expect(rowAt(tree, 2)).toBe(laid(shown, { hover: null, hoverRoom: null, hop: new Set(['a1']), entering: new Map() }, 2))
   expect(pulse(tree)).toBeGreaterThan(0)
   expect(withBg(tree, FX_BG.status)).toHaveLength(0)   // the pulse paints over the flash: a finish shows gold
   expect(f.timers).toHaveLength(2)
@@ -715,18 +715,18 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   const closeHelp = nodes(tree).find(n => n.type === 'Button' && n.props.key === 'closeHelp')!
   ;(closeHelp.props.onPress as () => void)()
   expect(f.posts[1]).toEqual({ t: 'help' })
-  // the toolbar
-  for (const [key, t2] of [['showDone', 'showDone'], ['mute', 'mute'], ['lang', 'lang'], ['help', 'help'], ['demo', 'demo'], ['still', 'still']] as const) {
+  // the toolbar, and the help's own Buttons (the help is open here)
+  for (const [key, t2] of [['showDone', 'showDone'], ['mute', 'mute'], ['help', 'help'], ['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
     const b = nodes(tree).find(n => n.type === 'Button' && n.props.key === key)!
     ;(b.props.onPress as () => void)()
     expect(f.posts[f.posts.length - 1]).toEqual({ t: t2 })
   }
   // the show-finished box: ☑ while the finished are shown — the pref, or the demo (which shows them without touching the
-  // pref: the text cards' rule); its press still flips the pref alone
+  // pref: the text cards' rule); its press still flips the pref alone. (The icon trails the Hebrew word: read first, office-layout.ts iconLabel.)
   const doneBox = (q: OfficeProps) => nodes(Office(q, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!
-  expect(doneBox(props()).props.label).toBe('☐')
-  expect(doneBox(props({ prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('☑')
-  expect(doneBox(props({ demo: true })).props.label).toBe('☑')
+  expect(doneBox(props()).props.label).toBe('שסיימו ☐')
+  expect(doneBox(props({ prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('שסיימו ☑')
+  expect(doneBox(props({ demo: true })).props.label).toBe('שסיימו ☑')
   const g = fake()
   ;(nodes(Office(props({ demo: true }), g.surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!.props.onPress as () => void)()
   expect(g.posts).toEqual([{ t: 'showDone' }])
@@ -740,6 +740,152 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   // the header: the usage meter when given
   expect(texts(Office({ ...p, usage: { pct: 42.4, resetsAt: '2026-10-10T14:30:00Z' } }, fake().surface))).toMatch(/⏳ 5h 42%/)
   expect(texts(Office({ ...p, usage: { pct: 85, resetsAt: '' } }, fake().surface))).toMatch(/⚠ 5h 85%/)
+})
+
+test('toolbar: three Buttons in words — ☐ שסיימו / 🔔 צליל / ? עזרה, EN ☐ Finished / 🔔 Sound / ? Help — each reading icon-then-word (the icon trails a Hebrew word: office-layout.ts iconLabel); the state in the icon (☑, 🔕); the words whenever the three fit the row, else the icons alone', () => {
+  const TB = ['showDone', 'mute', 'help']
+  const labelsOf = (q: OfficeProps) => nodes(Office(q, fake(q.columns).surface)).filter(n => n.type === 'Button' && TB.includes(n.props.key as string)).map(n => n.props.label as string)
+  const en = (over: Partial<OfficeProps> = {}) => props({ rtl: false, lang: 'en', labels: LABELS_EN, ...over })
+  // (props() is muted; the chime on → 🔔)
+  expect(labelsOf(props())).toEqual(['שסיימו ☐', 'צליל 🔕', 'עזרה ?'])
+  expect(labelsOf(props({ prefs: { showDone: true, muted: false, still: false } }))).toEqual(['שסיימו ☑', 'צליל 🔔', 'עזרה ?'])
+  expect(labelsOf(props({ demo: true }))).toEqual(['שסיימו ☑', 'צליל 🔕', 'עזרה ?'])
+  expect(labelsOf(en())).toEqual(['☐ Finished', '🔕 Sound', '? Help'])
+  expect(labelsOf(en({ prefs: { showDone: true, muted: false, still: false } }))).toEqual(['☑ Finished', '🔔 Sound', '? Help'])
+  // the words are the labels of i18n (LABEL_KEYS: tbDone, tbSound, tbHelp), each passing THE HEBREW RULE on its own
+  for (const k of ['tbDone', 'tbSound', 'tbHelp']) { expect(LABELS[k]).toBeTruthy(); expect(hebrewRuleOk(LABELS[k]!)).toBe(true); expect(LABELS_EN[k]).toBeTruthy() }
+  expect(labelsOf(props()).every(l => !REFUSED_RE.test(l))).toBe(true)
+  // the words from the width where the three labels and their two gaps fit the row (Hebrew: 23 cells, so from 24 columns, the
+  // narrowest pane; English, 3 cells longer: from 26), the icons alone under it — never a cut word
+  const wordsHe = ['שסיימו ☐', 'צליל 🔕', 'עזרה ?']
+  const wordsEn = ['☐ Finished', '🔕 Sound', '? Help']
+  const need = (ls: string[]) => ls.reduce((n, l, i) => n + (i ? 1 : 0) + textWidth(l), 0)
+  expect(need(wordsHe)).toBe(23)
+  expect(need(wordsEn)).toBe(26)
+  for (let columns = 24; columns <= 200; columns++) {
+    expect(labelsOf(props({ columns })), `he ${columns}`).toEqual(columns >= need(wordsHe) ? wordsHe : ['☐', '🔕', '?'])
+    expect(labelsOf(en({ columns })), `en ${columns}`).toEqual(columns >= need(wordsEn) ? wordsEn : ['☐', '🔕', '?'])
+  }
+})
+
+test('help: the popover holds the demo, motion and language Buttons in words (🎬 דמו / 🎞 תנועה / 🌐 English; ✕ יציאה and 🖼 for the states), their hotkeys d / s / l from COMPACT_BELOW, then the shortcut rows with an s row; HELP_ROWS counts the Buttons row; closed, no such Button is drawn but d / s / l still post', () => {
+  const f = fake()
+  const open = (over: Partial<OfficeProps> = {}) => props({ helpOpen: true, ...over })
+  let tree = Office(open(), f.surface)
+  const btn = (k: string, t: unknown = tree) => nodes(t).find(n => n.type === 'Button' && n.props.key === k)
+  expect(btn('demo')?.props.label).toBe('דמו 🎬')
+  expect(btn('still')?.props.label).toBe('תנועה 🎞')
+  expect(btn('lang')?.props.label).toBe('🌐 English')
+  // the Buttons row sits right under the title, inside the help Box; the hotkeys only when wide (the desktop draws a chip per hotkey)
+  const box = nodes(tree).find(n => n.type === 'Box' && n.props.key === 'help')!
+  expect(box.props.height).toBe(HELP_ROWS)
+  expect(HELP_ROWS).toBe(2 + 1 + 1 + HELP.length)
+  expect(HELP.map(([, keys]) => keys)).toContain('s')
+  expect(HELP.map(([k]) => k)).toContain('scStill')
+  expect(LABELS.scStill).toBeTruthy()
+  expect(texts(tree)).toMatch(/^s$/m)
+  const rows = box.children as Node[]
+  expect(rows.length).toBe(1 + 1 + HELP.length)
+  expect(nodes(rows[1]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['demo', 'still', 'lang'])
+  expect(nodes(rows[0]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['closeHelp'])
+  for (const k of ['demo', 'still', 'lang']) expect(btn(k)?.props.hotkey).toBeUndefined()
+  const wide = Office(open({ columns: COMPACT_BELOW }), fake(COMPACT_BELOW).surface)
+  expect(['demo', 'still', 'lang'].map(k => btn(k, wide)?.props.hotkey)).toEqual(['d', 's', 'l'])
+  // their presses post
+  for (const [k, t] of [['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
+    ;(btn(k)!.props.onPress as () => void)()
+    expect(f.posts[f.posts.length - 1]).toEqual({ t })
+  }
+  // the states: the demo on → ✕ יציאה with the clapper; the motion frozen → 🖼; English: the icon leads, the language Button names Hebrew
+  expect(btn('demo', Office(open({ demo: true }), fake().surface))?.props.label).toBe('יציאה ✕ 🎬')
+  expect(btn('still', Office(open({ prefs: { showDone: false, muted: true, still: true } }), fake().surface))?.props.label).toBe('תנועה 🖼')
+  const en = Office(open({ rtl: false, lang: 'en', labels: LABELS_EN }), fake().surface)
+  expect(['demo', 'still', 'lang'].map(k => btn(k, en)?.props.label)).toEqual(['🎬 Demo', '🎞 Motion', '🌐 עברית'])
+  expect(btn('demo', Office(open({ rtl: false, lang: 'en', labels: LABELS_EN, demo: true }), fake().surface))?.props.label).toBe('🎬 ✕ Exit')
+  // narrow: when the three words do not fit the popover's inner width, the icons alone — the language as EN / עב
+  const narrow = Office(open({ columns: 28 }), fake(28).surface)
+  expect(['demo', 'still', 'lang'].map(k => btn(k, narrow)?.props.label)).toEqual(['🎬', '🎞', 'EN'])
+  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: 28, rtl: false, lang: 'en', labels: LABELS_EN }), fake(28).surface))?.props.label)).toEqual(['🎬', '🎞', 'עב'])
+  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: 30 }), fake(30).surface))?.props.label)).toEqual(['דמו 🎬', 'תנועה 🎞', '🌐 English'])
+  // the help closed: no demo / still / lang Button anywhere, and the letters still post
+  const g = fake()
+  tree = Office(props(), g.surface)
+  for (const k of ['demo', 'still', 'lang']) expect(btn(k)).toBeUndefined()
+  for (const [k, t] of [['d', 'demo'], ['s', 'still'], ['l', 'lang']] as const) {
+    g.key({ key: k })
+    expect(g.posts[g.posts.length - 1]).toEqual({ t })
+  }
+  expect(g.posts).toHaveLength(3)
+})
+
+test('room head: the pointer over a head row sets hoverRoom (a redraw with a dim 📌 at the pin cell), a move to an agent row or a leave clears it; the pin cell posts pin on a click; a pinned head draws its 📌 whether hovered or not', () => {
+  const f = fake()
+  const p = props({ rooms: [room('A', [ag('lead', { isLead: true }), ag('a1')]), room('B', [ag('b1')], { pinned: true })] })
+  let tree = Office(p, f.surface)
+  const C = chromeRows(p)
+  const rowAt = (t: unknown, y: number) => texts((t as Node).children[C + y]).replace(/\n/g, '')
+  const lay = layoutOffice(p)
+  const headB = lay.hits.find(h => h.kind === 'pin' && h.id === 'B')!.y
+  // at rest: room A's head has no glyph at the pin cell (no ○), room B's its 📌
+  expect(rowAt(tree, 0)).not.toContain('📌')
+  expect(rowAt(tree, 0)).not.toContain('○')
+  expect(rowAt(tree, headB)).toContain('📌')
+  expect(f.surface.state!.hoverRoom).toBeNull()
+  // a move over A's head (its title cells, in the middle of the row): hoverRoom = A, one setState, no post
+  const sets = f.setStates()
+  f.pointer({ type: 'move', x: 20, y: C })
+  expect(f.surface.state!.hoverRoom).toBe('A')
+  expect(f.surface.state!.hover).toBeNull()
+  expect(f.setStates()).toBe(sets + 1)
+  f.pointer({ type: 'move', x: 25, y: C })
+  expect(f.setStates()).toBe(sets + 1)
+  expect(f.posts).toEqual([])
+  tree = Office(p, f.surface)
+  expect(rowAt(tree, 0)).toContain('📌')
+  expect(rowAt(tree, 0)).toBe(layoutOffice(p, { hover: null, hoverRoom: 'A', hop: new Set(), entering: new Map() }).rows[0]!.cells.map(c => c.ch).join(''))
+  /** Whether layout row `y` draws its 📌 dim (a dimColor Text run of the glyph alone); a bright 📌 is a plain string run. */
+  const dimPin = (t: unknown, y: number) => nodes((t as Node).children[C + y] as Node).some(n => n.type === 'Text' && n.props.dimColor === true && texts(n) === '📌')
+  expect(dimPin(tree, 0)).toBe(true)
+  expect(dimPin(tree, headB)).toBe(false)
+  expect(rowAt(tree, headB)).toContain('📌')
+  // over the pin cell itself (the right edge in RTL) the hover holds; a click there posts pin
+  f.pointer({ type: 'move', x: p.columns - 1, y: C })
+  expect(f.surface.state!.hoverRoom).toBe('A')
+  f.pointer({ type: 'down', x: p.columns - 1, y: C, button: 'left' })
+  expect(f.posts).toEqual([{ t: 'pin', room: 'A' }])
+  // down to an agent row: the row hover takes over, the head hover ends — one setState for both
+  const sets2 = f.setStates()
+  f.pointer({ type: 'move', x: 20, y: C + 1 })
+  expect(f.surface.state!.hoverRoom).toBeNull()
+  expect(f.surface.state!.hover).toBe('lead')
+  expect(f.setStates()).toBe(sets2 + 1)
+  tree = Office(p, f.surface)
+  expect(rowAt(tree, 0)).not.toContain('📌')
+  // B's head: hovered, its 📌 stays bright; a leave clears
+  f.pointer({ type: 'move', x: 20, y: C + headB })
+  expect(f.surface.state!.hoverRoom).toBe('B')
+  tree = Office(p, f.surface)
+  expect(dimPin(tree, headB)).toBe(false)
+  expect(rowAt(tree, headB)).toContain('📌')
+  f.pointer({ type: 'leave', x: 0, y: 0 })
+  expect(f.surface.state!.hoverRoom).toBeNull()
+  expect(f.surface.state!.hover).toBeNull()
+  // a head row scrolled out of the window answers nothing (the spacer): no hover
+  const many = withAgents(p, Array.from({ length: 30 }, (_, i) => ag(`g${i}`)))
+  const h = fake(45, 0)
+  Office({ ...many, offset: 12, rows: 10 }, h.surface)
+  h.pointer({ type: 'move', x: 20, y: chromeRows(many) })
+  expect(h.surface.state!.hoverRoom).toBeNull()
+  // the layout memo keys on the hovered room: the same hover draws from the memo, a new one lays out again
+  const i = fake()
+  Office(p, i.surface)
+  const before = i.surface.state!.inst.layout
+  i.pointer({ type: 'move', x: 20, y: C })
+  Office(p, i.surface)
+  const hovered = i.surface.state!.inst.layout
+  expect(hovered).not.toBe(before)
+  Office(p, i.surface)
+  expect(i.surface.state!.inst.layout).toBe(hovered)
 })
 
 // (2,832 renders: about 0.5 s alone, 1.8 s in a full run, and a loaded machine stretches the suite tenfold — the 5 s
@@ -906,7 +1052,7 @@ test('limits: 100 agents with the drawer open at every width 24..200 stay under 
     Office(hp, hf.surface)
     hover.push(performance.now() - t0)
   }
-  expect(hf.surface.state!.inst.layout).toEqual(layoutOffice(hp, { hover: 'agent-1', hop: new Set(), entering: new Map() }))
+  expect(hf.surface.state!.inst.layout).toEqual(layoutOffice(hp, { hover: 'agent-1', hoverRoom: null, hop: new Set(), entering: new Map() }))
   expect(median(hover)).toBeLessThan(100)
   // the widest 40-row window with the drawer open serialized to 57,033 characters on 2026-10-11; with the byte budget a
   // 200 × 80 or 250 × 80 pane draws WINDOW_CHARS of rows plus the chrome and the drawer: a regression guard under the bound

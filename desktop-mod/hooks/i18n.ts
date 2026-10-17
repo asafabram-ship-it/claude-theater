@@ -47,7 +47,14 @@ export type Strings = {
   emptyOffice: string; emptySub: string; watchDemo: string; demoLabel: string; exitDemo: string
   langHint: string; close: string; loading: string; helpTitle: string; helpHint: string
   scSearch: string; scFinished: string; scMove: string; scOpen: string; scClose: string
-  scMute: string; scLang: string; scDemo: string; scHelp: string; scPrev: string; scNext: string
+  scMute: string; scLang: string; scDemo: string; scStill: string; scHelp: string; scPrev: string; scNext: string
+  /**
+   * The office toolbar's words (Task 2.8b-3): `☐ שסיימו`, `🔔 צליל`, `? עזרה` — the word alone here, the icon laid by the
+   * Client so the reader meets it first (office-layout.ts iconLabel: after a Hebrew word in the string, before any other).
+   */
+  tbDone: string; tbSound: string; tbHelp: string
+  /** The help popover's motion toggle word (🎞 motion on, 🖼 frozen); the demo and language Buttons use demoLabel / exitDemo and switchTo. */
+  hbMotion: string
   resultTruncated: string; searchPlaceholder: string; emptyNoMatch: string
   mute: string; unmute: string; finishedToast: string; officeFailed: string
   /** The five-hour usage toast (80% / 95%): the rounded percent and the reset's local HH:MM ('' when unknown). One line. */
@@ -83,8 +90,9 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     loading: 'Loading…', helpTitle: 'Keyboard shortcuts', helpHint: 'Keyboard shortcuts',
     scSearch: 'Search', scFinished: 'Show / hide finished', scMove: 'Move between agents',
     scOpen: 'Open details', scClose: 'Close panel',
-    scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scHelp: 'This help',
+    scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scStill: 'Freeze / release the motion', scHelp: 'This help',
     scPrev: 'Previous agent', scNext: 'Next agent',
+    tbDone: 'Finished', tbSound: 'Sound', tbHelp: 'Help', hbMotion: 'Motion',
     resultTruncated: 'Result shortened — open the terminal for the full output',
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
     mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished',
@@ -115,8 +123,9 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     loading: 'טוען…', helpTitle: 'קיצורי מקלדת', helpHint: 'קיצורי מקלדת',
     scSearch: 'חיפוש', scFinished: 'הצג / הסתר שהושלמו', scMove: 'מעבר בין סוכנים',
     scOpen: 'פתיחת פרטים', scClose: 'סגירת החלונית',
-    scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scHelp: 'העזרה הזו',
+    scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scStill: 'תנועה: הקפאה / שחרור', scHelp: 'העזרה הזו',
     scPrev: 'הסוכן הקודם', scNext: 'הסוכן הבא',
+    tbDone: 'שסיימו', tbSound: 'צליל', tbHelp: 'עזרה', hbMotion: 'תנועה',
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש',
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',

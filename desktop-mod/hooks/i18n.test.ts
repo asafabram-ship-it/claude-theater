@@ -51,6 +51,16 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   check('close', `✕ ${L.close}`)
   check('note', `✂ ${L.resultTruncated}`)
   check('model line', `${L.dAction} 🤔 חושב`)
+  // the toolbar's and the help's labelled controls (Task 2.8b-3): the WORD passes on its own; the icon is laid after it in the
+  // string so the reader meets it first (office-layout.ts iconLabel, proven by office-layout.test.ts visualRtlReading) — a
+  // trailing icon is the one trailing neutral the rule allows for, because it is meant to be read before the word
+  for (const k of ['tbDone', 'tbSound', 'tbHelp', 'hbMotion', 'demoLabel', 'exitDemo', 'scStill'] as const) check(k, L[k])
+  expect(L.tbDone).toBe('שסיימו')
+  expect(L.tbSound).toBe('צליל')
+  expect(L.tbHelp).toBe('עזרה')
+  expect(I18N.en.tbDone).toBe('Finished')
+  expect(I18N.en.tbSound).toBe('Sound')
+  expect(I18N.en.tbHelp).toBe('Help')
   // the tool table: an emoji leads every entry (the layout draws it as a run of its own); the Hebrew after it must pass alone
   for (const [tool, label] of Object.entries(L.tools)) check(`tools.${tool}`, label.replace(/^\S+\s/, ''))
   for (const k of ['actDone', 'actStale', 'actThinking', 'actMcp'] as const) check(k, L[k].replace(/^\S+\s/, ''))

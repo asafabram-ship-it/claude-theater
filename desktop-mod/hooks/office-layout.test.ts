@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, EMOJI_CELLS, HOVER_BG, MODEL_FG, MODEL_FULL_FROM, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, blocksOfParts, cut, ellipsisFirst, firstGlyph, hitAt, layoutOffice, lineRow, modelText, place, put, rowCount, rowRuns, segments, tailText, textWidth, walkShift, windowRows } from './office-layout'
+import { ACT_MAX, EMOJI_CELLS, HOVER_BG, MODEL_FG, MODEL_FULL_FROM, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, blocksOfParts, cut, ellipsisFirst, firstGlyph, hitAt, iconLabel, layoutOffice, lineRow, modelText, place, put, rowCount, rowRuns, segments, tailText, textWidth, walkShift, windowRows } from './office-layout'
 import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -46,9 +46,9 @@ const WIDE = /^\p{Extended_Pictographic}/u
 function wellFormed(row: Cells): boolean {
   return row.cells.every((c, i) => c.ch === ' ' || (WIDE.test(c.ch) ? row.cells[i + 1]?.ch === '' : c.ch !== '' || (i > 0 && WIDE.test(row.cells[i - 1]!.ch))))
 }
-/** A decor with the given hop ids, walk-in progresses and hover. */
-function decor(over: { hover?: string | null; hop?: string[]; entering?: Array<[string, number]> } = {}): OfficeDecor {
-  return { hover: over.hover ?? null, hop: new Set(over.hop ?? []), entering: new Map(over.entering ?? []) }
+/** A decor with the given hop ids, walk-in progresses, hover and hovered room head. */
+function decor(over: { hover?: string | null; hoverRoom?: string | null; hop?: string[]; entering?: Array<[string, number]> } = {}): OfficeDecor {
+  return { hover: over.hover ?? null, hoverRoom: over.hoverRoom ?? null, hop: new Set(over.hop ?? []), entering: new Map(over.entering ?? []) }
 }
 type StyledCells = Cells & { cells: ReadonlyArray<{ ch: string; fg?: string; bg?: string; bold?: true; dim?: true; brk?: true }> }
 const HEB = /\p{Script=Hebrew}/u
@@ -375,7 +375,7 @@ test('sweep: 100 agents at widths 24..200 (every one to 60, then every 4th), bot
   expect(bad).toEqual([])
 })
 
-test('the room head: pin glyph, title and counts, LTR flush right and RTL flush left; the ✅ button covers the counts; the title is a Hebrew run of its own', () => {
+test('the room head: the pin (📌 pinned, a dim 📌 under the pointer, else blank — never ○), title and counts, LTR flush right and RTL flush left; the ✅ button covers the counts; the title is a Hebrew run of its own', () => {
   const r = room({ pinned: true, run: 2, stale: 1, done: 3 })
   const counts = '🟢2 ⏳1 ✅3'                                  // 11 cells: three wide glyphs, eight narrow
   const ltr = layoutOffice(props({ rtl: false, rooms: [r] }))
@@ -406,12 +406,34 @@ test('the room head: pin glyph, title and counts, LTR flush right and RTL flush 
   expect(rtl.hits.find(hit => hit.kind === 'roomDone')).toEqual({ kind: 'roomDone', id: 'sess-a', x: 0, y: 0, w: 11, h: 1 })
   expect(hitAt(rtl, 10, 0)?.kind).toBe('roomDone')
   expect(hitAt(rtl, 11, 0)).toBeUndefined()
-  // no ✅ button without done agents; the unpinned glyph; stale and done counts only when non-zero
+  // no ✅ button without done agents; an unpinned room draws NO pin glyph (no ○): its cells stay blank, the pin hit stays
+  // where it is; stale and done counts only when non-zero
   const plain = layoutOffice(props({ rtl: false }))
   expect(plain.hits.some(hit => hit.kind === 'roomDone')).toBe(false)
-  expect(plain.rows[0]?.cells[0]?.ch).toBe('○')
-  expect(text(plain.rows[0]!).startsWith('○  🟢2 ')).toBe(true)
+  expect(plain.rows[0]?.cells[0]?.ch).toBe(' ')
+  expect(text(plain.rows[0]!).startsWith('   🟢2 ')).toBe(true)
+  expect(text(plain.rows[0]!)).not.toContain('○')
+  expect(text(plain.rows[0]!)).not.toContain('📌')
+  expect(hitAt(plain, 0, 0)).toEqual({ kind: 'pin', id: 'sess-a', x: 0, y: 0, w: EMOJI_CELLS, h: 1 })
   expect(text(plain.rows[0]!)).not.toContain('⏳')
+  // the pointer over the head (decor.hoverRoom): a dim 📌 at the pin cell, the title where it was; a pinned room's 📌 stays bright
+  const hovLtr = layoutOffice(props({ rtl: false }), decor({ hoverRoom: 'sess-a' }))
+  expect(hovLtr.rows[0]?.cells[0]).toEqual({ ch: '📌', dim: true, brk: true })
+  expect(text(hovLtr.rows[0]!).startsWith('📌 🟢2 ')).toBe(true)
+  expect(seg(hovLtr.rows[0]!, 7, 7 + 13)).toBe('תקרא את המסמך')
+  expect(seg(plain.rows[0]!, 7, 7 + 13)).toBe('תקרא את המסמך')
+  expect(hovLtr.hits).toEqual(plain.hits)
+  const hovRtl = layoutOffice(props(), decor({ hoverRoom: 'sess-a' }))
+  expect(hovRtl.rows[0]?.cells[43]).toEqual({ ch: '📌', dim: true, brk: true })
+  expect(hovRtl.rows[0]?.cells[44]?.ch).toBe('')
+  expect(text(layoutOffice(props()).rows[0]!).endsWith('תקרא את המסמך   ')).toBe(true)
+  expect(text(hovRtl.rows[0]!).endsWith('תקרא את המסמך 📌')).toBe(true)
+  expect(rowRuns(hovRtl.rows[0]!.cells).find(x => x.text === '📌')).toEqual({ text: '📌', dim: true })
+  expect(rowRuns(rh.cells).find(x => x.text === '📌')).toEqual({ text: '📌' })
+  expect(layoutOffice(props({ rooms: [r] }), decor({ hoverRoom: 'sess-a' })).rows[0]?.cells[43]).toEqual({ ch: '📌', brk: true })
+  // another room's hover draws nothing here
+  expect(layoutOffice(props({ rtl: false }), decor({ hoverRoom: 'other' }))).toEqual(plain)
+  for (const lay of [plain, hovLtr, hovRtl]) for (const row of lay.rows) { expect(wellFormed(row)).toBe(true); expect(mergeSafe(row)).toBe(true) }
   // the title is one run (a single Hebrew string, bold, starting with a Hebrew letter), never split by the renderer
   const titleRun = rowRuns(lh.cells).find(r => r.text.includes('תקרא'))
   expect(titleRun).toEqual({ text: 'תקרא את המסמך', bold: true })
@@ -423,7 +445,7 @@ test('the room head: pin glyph, title and counts, LTR flush right and RTL flush 
   for (const run of hebrewRuns(mixed)) expect(hebrewRuleOk(run)).toBe(true)
   const mixedLtr = layoutOffice(props({ rtl: false, rooms: [room({ title: '4 קבצים של Claude Code לבדיקה', done: 3 })] })).rows[0]!
   expect(rowRuns(mixedLtr.cells).filter(r => r.bold).map(r => r.text)).toEqual(['4 קבצים של', 'Claude Code', 'לבדיקה'])
-  expect(text(mixedLtr).startsWith('○  🟢2 ✅3 4 קבצים של')).toBe(true)
+  expect(text(mixedLtr).startsWith('   🟢2 ✅3 4 קבצים של')).toBe(true)
   expect(mergeSafe(mixedLtr)).toBe(true)
   // ellipsisFirst, the Client's helper for its plain Texts
   expect(ellipsisFirst('שם ארוך…')).toBe('…שם ארוך')
@@ -658,6 +680,36 @@ test('visualRtlReading models the engine: a leading digit reads after the word, 
   expect(visualRtlReading(rowOf('חושב   12′'))).toBe('′ חושב 12')         // LTR's glue: a number after Hebrew is mirrored with it, its prime left behind
 })
 
+test('iconLabel: a labelled control reads icon-then-word — for the Hebrew reader the icon TRAILS the word in logical order (a trailing neutral lands at the paragraph\'s right, where the reader starts); a leading icon would read after the word; any other word takes the icon first', () => {
+  const rowOf = (s: string) => { const row = blankRow('r', 40); put(row, 0, s); return row }
+  // the toolbar's three, the help's three, in Hebrew: the word first in the string, the icon after it — and the reader sees the icon first
+  expect(iconLabel('☐', 'שסיימו', true)).toBe('שסיימו ☐')
+  expect(visualRtlReading(rowOf(iconLabel('☐', 'שסיימו', true)))).toBe('☐ שסיימו')
+  expect(visualRtlReading(rowOf(iconLabel('☑', 'שסיימו', true)))).toBe('☑ שסיימו')
+  expect(visualRtlReading(rowOf(iconLabel('🔔', 'צליל', true)))).toBe('🔔 צליל')
+  expect(visualRtlReading(rowOf(iconLabel('🔕', 'צליל', true)))).toBe('🔕 צליל')
+  expect(visualRtlReading(rowOf(iconLabel('?', 'עזרה', true)))).toBe('? עזרה')
+  expect(visualRtlReading(rowOf(iconLabel('🎬', 'דמו', true)))).toBe('🎬 דמו')
+  expect(visualRtlReading(rowOf(iconLabel('🎞', 'תנועה', true)))).toBe('🎞 תנועה')
+  expect(visualRtlReading(rowOf(iconLabel('🖼', 'תנועה', true)))).toBe('🖼 תנועה')
+  // two icons: the reader meets trailing neutrals in reverse, so they are reversed in the string
+  expect(iconLabel('🎬 ✕', 'יציאה', true)).toBe('יציאה ✕ 🎬')
+  expect(visualRtlReading(rowOf(iconLabel('🎬 ✕', 'יציאה', true)))).toBe('🎬 ✕ יציאה')
+  // why: the leading icon of the text cards' rule (`✕ סגירה`) lands at the left — AFTER the word for the reader
+  expect(visualRtlReading(rowOf('☐ שסיימו'))).toBe('שסיימו ☐')
+  expect(visualRtlReading(rowOf('🎬 ✕ יציאה'))).toBe('יציאה ✕ 🎬')
+  // a Latin word in the Hebrew pane (`🌐 English`) is read left to right: the icon leads; so is every word in the English pane,
+  // the one Hebrew word among them too (`🌐 עברית`: an English reader scans left to right)
+  expect(iconLabel('🌐', 'English', true)).toBe('🌐 English')
+  expect(iconLabel('☐', 'Finished', false)).toBe('☐ Finished')
+  expect(iconLabel('🎬 ✕', 'Exit', false)).toBe('🎬 ✕ Exit')
+  expect(iconLabel('🌐', 'עברית', false)).toBe('🌐 עברית')
+  // the word alone obeys THE HEBREW RULE (i18n.test.ts walks the labels); the label holds one Hebrew run, so a row of it is merge-safe
+  for (const w of ['שסיימו', 'צליל', 'עזרה', 'דמו', 'תנועה', 'יציאה']) { expect(hebrewRuleOk(w)).toBe(true); expect(mergeSafe(rowOf(iconLabel('☐', w, true)))).toBe(true) }
+  expect(iconLabel('', 'שסיימו', true)).toBe('שסיימו')
+  expect(iconLabel('☐', '', true)).toBe('☐')
+})
+
 test('the time field: a working agent\'s row ends in a labelled clock the reader reads as clock then number — `⏱️ 3′` in Hebrew (from the right), `⏱️ 3 min` in English — a finished agent carries its badges alone; the field is drawn whole or dropped, before the activity word', () => {
   const cast = [
     ag('lead', 0, { name: 'המנהל', act: '🤔 חושב', startMin: 3 }),
@@ -875,7 +927,7 @@ test('decor: the walk-in shifts the emoji and the name round((1 - p) × WALK_CEL
   expect(hov.rows[2]!.cells[1]).toEqual({ ch: '🦉', fg: '#ffffff', bold: true, bg: HOVER_BG, brk: true })
   expect(rowRuns(hov.rows[2]!.cells).every(r => r.bg === HOVER_BG)).toBe(true)
   // an id the office does not hold decorates nothing
-  expect(layoutOffice(ltr, decor({ hover: 'ghost', hop: ['ghost'], entering: [['ghost', 0]] }))).toEqual(plain)
+  expect(layoutOffice(ltr, decor({ hover: 'ghost', hoverRoom: 'ghost', hop: ['ghost'], entering: [['ghost', 0]] }))).toEqual(plain)
 })
 
 test('decor: a narrow row leaves the emoji less room — the hop and the walk-in stop before the pill, never over it', () => {

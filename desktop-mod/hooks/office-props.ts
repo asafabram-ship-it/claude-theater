@@ -125,7 +125,7 @@ export const DRAWER_TEXT_TIGHT = 600
 const wholeMinutes = (el: number | null): number | null => el === null ? null : Math.max(0, Math.floor(el / 60_000))
 
 /** The i18n strings the Client draws (toolbar, help rows, drawer headings, the empty office); every Hebrew one is worded to THE HEBREW RULE (i18n.ts hebrewRuleOk, checked by i18n.test.ts). */
-export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'helpTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scHelp', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone'] as const
+export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'helpTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scStill', 'scHelp', 'tbDone', 'tbSound', 'tbHelp', 'hbMotion', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone'] as const
 
 /**
  * Throws `undefined at <path>` for the first `undefined` anywhere in `v`

@@ -23,9 +23,9 @@ import type { Payload, Prefs, View } from './model'
 import { ACT_MAX, NAME_MAX, cut } from './office-layout'
 import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
 import { personaName } from './personas'
-import { RECENT_DONE, agentElapsed, cardName, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
+import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
 
-/** The family colour token of a model id (i18n.ts): office-layout.ts colours the model pill by it (MODEL_BG). */
+/** The family colour token of a model id (i18n.ts): office-layout.ts colours the model word by it (MODEL_FG). */
 export { modelFamily } from './i18n'
 
 /** The Client's key and the `ui.message` matcher. */
@@ -165,7 +165,8 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     const el = agentElapsed(a, nowMin)
     const starAt = stars[a.id]
     const card: OfficeAgent = {
-      id: a.id, emoji: a.emoji, name: cut(cardName(a, lang), NAME_MAX), status: a.status, fam: toolFamily(a.tool),
+      // the row's name is the persona's, always (the role / task stays in the drawer: Asaf's cleanup, 2026-10-17)
+      id: a.id, emoji: a.emoji, name: cut(personaName(a.persona_id, lang), NAME_MAX), status: a.status, fam: toolFamily(a.tool),
       act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL, modelFam: modelFamily(a.model),
       startMin: wholeMinutes(el),
       isLead: a.is_session, failed: a.failed === true, longRunning: isLongRunning(a, now),

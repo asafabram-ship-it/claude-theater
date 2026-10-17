@@ -64,7 +64,8 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(p.rooms).toHaveLength(1)
   expect(p.rooms[0]?.showDone).toBe(true)
   expect(p.rooms[0]?.agents.map(a => a.id)).toEqual(['a1', 'a2'])
-  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'Reviewer', status: 'running', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 2, isLead: false, failed: false, longRunning: false, star: 0, enteredAt: 0 })
+  // the row's name is the persona's (persona 3), never the role — that is the drawer's subtitle (Asaf's cleanup, 2026-10-17)
+  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 2, isLead: false, failed: false, longRunning: false, star: 0, enteredAt: 0 })
   expect(JSON.stringify(p)).not.toContain('xxxxxxxxxx')
   expect(p.drawer).toBeNull()
   const withDrawer = buildOfficeProps(input([agent({ id: 'a1', task_short: 'Read the spec' })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
@@ -106,7 +107,7 @@ test('buildOfficeProps: star while the stamp is alive, enteredAt from firstSeen,
   const a = p.rooms[0]?.agents[0]
   expect(a?.star).toBe(T0 - 3000)
   expect(a?.enteredAt).toBe(T0 - 500)
-  expect(a?.name).toHaveLength(24)
+  expect(a?.name).toBe('החוקר')   // the persona's name, whatever the role's length (the role is the drawer's subtitle)
   expect(p.offset).toBe(0)
   const expired = buildOfficeProps(input([done], { payload: { ...EMPTY_PAYLOAD, agents: [done], stars: { a1: T0 - JUST_FINISHED_MS } }, prefs: shown }))
   expect(expired.rooms[0]?.agents[0]?.star).toBe(0)

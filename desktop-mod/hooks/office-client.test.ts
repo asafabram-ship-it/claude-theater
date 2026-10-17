@@ -14,7 +14,7 @@ import { I18N } from './i18n'
 import { CHROME_ROWS, COMPACT_BELOW, HELP_ROWS, REFUSED_RE, RESULT_LINES, ROW_CHARS_PER_COLUMN, SEARCH_MAX, TASK_LINES, WINDOW_CHARS, chromeRows, cleanAgentText, cleanSearch, drawerLines, officeHeight, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_ENTER_MS, FX_STATUS_FRAMES, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
 import type { OfficeState } from './office-client'
-import { HOVER_BG, NO_DECOR, layoutOffice, textWidth, walkShift } from './office-layout'
+import { HOVER_BG, MODEL_FG, NO_DECOR, layoutOffice, textWidth, walkShift } from './office-layout'
 import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
 import { usageLabel, usageShort } from './usage'
@@ -259,8 +259,10 @@ test('render: the chrome, the windowed rows as run-merged Texts, blank space abo
   expect(rowTexts.length).toBe(layout.rows.length)   // 30 body rows ≥ the 3 rows of one room
   expect(texts(rowTexts[0])).toMatch(/room A/)
   expect(texts(rowTexts[1])).toMatch(/💼/)
-  expect(withBg(rowTexts[1], '#7b5cf0').length).toBe(1)   // one Opus pill per agent row
-  expect(withBg(rowTexts[2], '#7b5cf0').length).toBe(1)
+  // the model is coloured text, no pill: no background on a plain row (Asaf's cleanup); its family colour on one run per row
+  expect(withBg(rowTexts[1], '#7b5cf0')).toHaveLength(0)
+  expect(nodes(rowTexts[1]).filter(n => n.props.color === MODEL_FG.opus)).toHaveLength(1)
+  expect(nodes(rowTexts[2]).filter(n => n.props.color === MODEL_FG.opus)).toHaveLength(1)
   // a window further down: a spacer Box of `from` rows, then the rows, then nothing
   const many = withAgents(p, Array.from({ length: 30 }, (_, i) => ag(`a${i}`)))
   const L2 = layoutOffice(many)
@@ -337,7 +339,7 @@ test('fx: a newcomer walks in (its emoji 3 → 2 → 1 cells inside the reading 
   expect(f.timers).toHaveLength(1)
   expect(f.timers[0]!.ms).toBe(FX_TICK_MS)
   // motion, no colour overlay: the only backgrounds drawn are the layout's own (the Opus pills)
-  expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string' && n.props.backgroundColor !== '#7b5cf0')).toBe(false)
+  expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   // the same props again: nothing new starts, the emoji does not move without a tick
   Office(p, f.surface)
   tree = Office({ ...p }, f.surface)

@@ -626,7 +626,7 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(p.rooms.map(r => r.title)).toEqual(['Ship the v2 config migration.', 'research'])
     expect(p.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1', 'a2'], ['b1']])
     expect(p.rooms[0]).toMatchObject({ moreDone: 0, moreLabel: '' })
-    expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'map session-token valid…', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 0, isLead: false }) // the name capped at 24 cells (office-props.ts)
+    expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'הבנאי', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 0, isLead: false }) // the row's name is the persona's (persona 7); the role stays in the drawer
     expect(await cardOf(ui, 'b1')).toMatchObject({ act: '🔌 github', model: '?', modelFam: 'other', fam: 'agent' })
     expect(await cardOf(ui, 'lead-a')).toMatchObject({ isLead: true })
     expect(p.counts).toEqual({ run: 3, idle: 0, done: 1 })
@@ -1109,7 +1109,7 @@ test('AGENT TEXT reaches every surface clean: an ANSI colour code and an RLM in 
   expect(p.drawer?.id).toBe('qx')
   expect(p.drawer?.task).toBe('Fix the red test. בדקו שוב\nואז דווחו')
   expect(p.rooms.find(r => r.id === QSESS)?.title).toBe('Quiet office test.')
-  expect(p.rooms.flatMap(r => r.agents).find(a => a.id === 'live-t1')?.name).toBe('ring bell')
+  expect(p.rooms.flatMap(r => r.agents).find(a => a.id === 'live-t1')?.name).toBe('העקרב')   // (the row's name is the persona's; the cleaned description is the drawer's)
   for (const s of strings(p)) expect(clean(s)).toBe(true)
   for (const el of await desk.findAll({ in: OFFICE_KEY })) expect(clean(el.text)).toBe(true)
   // the cleaning is deterministic: quiet polls publish nothing and hand the Client the same props (the flicker guard's key holds)

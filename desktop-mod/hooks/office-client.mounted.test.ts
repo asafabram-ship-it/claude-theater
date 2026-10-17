@@ -130,8 +130,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the room head, the agent r
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'showDone' }), 'showDone').toBeDefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' }), 'still').toBeDefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), 'search').toBeDefined()
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /💬/ }), 'the lead mark').toBeDefined()         // the lead's mark (with its minutes)
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /Opus 5\.5/ }), 'the pill').toBeDefined()   // the model pill
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^Opus$/ }), 'the model word').toBeDefined()   // the model's family word (the version from 60 columns)
   expect(await withBg(ui, FX_BG.focus)).toBe(false)
   // the lead is the first row under the room head (layout row 1), the whole row its hit
   const x = 5
@@ -156,14 +155,14 @@ test('DESKTOP (2.4): the pane is one Client; it draws the room head, the agent r
   const p1 = await officeProps(ui)
   const n1 = p1.rooms[0]?.agents.find(a => a.id === 'n1')
   expect(n1?.enteredAt).toBeGreaterThan(0)
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /index the …/ })).toBeDefined()   // (its name gives the walk-in its cells: cut by WALK_CELLS at the start)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^…ה/ })).toBeDefined()   // (its persona name gives the walk-in its cells: cut by WALK_CELLS at the start; the ellipsis leads in RTL)
   expect(await drawnRow(ui, p1, 3)).toBe(laidRow(p1, walking('n1', 0), 3))
   expect(await drawnRow(ui, p1, 3)).not.toBe(laidRow(p1, NO_DECOR, 3))
   await ui.advance(FX_TICK_MS)
   expect(await drawnRow(ui, p1, 3)).toBe(laidRow(p1, walking('n1', FX_TICK_MS / FX_ENTER_MS), 3))
   await ui.advance(FX_ENTER_MS)
   expect(await drawnRow(ui, p1, 3)).toBe(laidRow(p1, NO_DECOR, 3))   // home
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^index the docs$/ })).toBeDefined()   // ... and the name whole once home
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^הנווט$/ })).toBeDefined()   // ... and the persona name (persona 5) whole once home; the role stays in the drawer
   await ui.advance(FX_TICK_MS * 8)   // the clock is stopped: nothing else happens
   expect(await drawnRow(ui, p1, 3)).toBe(laidRow(p1, NO_DECOR, 3))
   expect(await bgRows(ui, p1, FX_BG.focus)).toEqual([1])      // the focus survived the publish

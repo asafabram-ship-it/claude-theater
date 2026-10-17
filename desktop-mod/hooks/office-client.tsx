@@ -72,8 +72,8 @@ export const SEARCH_DEBOUNCE_MS = 150
  * motion are the layout's (office-layout.ts HOVER_BG, OfficeDecor).
  */
 export const FX_BG = {
-  focus: '#3b4f8a', selected: '#4a3f8a',
-  done: '#8a6a10', doneAlt: '#5a4a10', status: '#4b5563',
+  focus: '#2e3a5c', selected: '#2a3150',
+  done: '#3a3620', doneAlt: '#2d2a1c', status: '#2c3340',
 } as const
 
 /** The letter keys that are the toolbar (spec §6.4). */

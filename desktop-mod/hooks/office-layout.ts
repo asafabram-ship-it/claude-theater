@@ -38,14 +38,12 @@ export const EMOJI_CELLS = 2
 export const ROW_MARGIN = 1
 /** The caps of the props' texts (office-props.ts cuts to them): a card's name, its activity, the model pill's text. */
 export const NAME_MAX = 24
-export const ACT_MAX = 16
+export const ACT_MAX = 18   // (the widest activity label whole: `🔎 Searching code` is 17 cells — a row draws an activity whole or as its emoji alone)
 export const PILL_MAX = 12
 /** A name narrower than this gives way: the pill shortens to its family before the name shrinks further. */
 const NAME_MIN = 6
-/** The activity's cells a row keeps before the name and the pill give way (an emoji, a space, five letters). */
-const ACT_KEEP = 8
-/** The activity needs this many cells to be worth drawing (an emoji and an ellipsis), else the row drops it. */
-const ACT_MIN = 3
+/** The model's version rides its family word from this many columns (`Opus 5.5`); under it the family alone (`Opus`). */
+export const MODEL_FULL_FROM = 60
 /**
  * The widest gap between a row's last field and its minutes: the tail field sits at the far end while
  * that leaves at most 2 × GAP_MAX + 1 blank cells, else GAP_MAX past the content (wider panes leave
@@ -81,7 +79,8 @@ export function walkShift(p: number): number {
   return Math.round((1 - Math.max(0, Math.min(1, p))) * WALK_CELLS)
 }
 
-export const MODEL_BG: Record<OfficeAgent['modelFam'], string> = { opus: '#7b5cf0', sonnet: '#2f7fe8', haiku: '#1fa876', fable: '#d9872b', other: '#3a4470' }
+/** The model word's colour by family (coloured text, no background — Asaf's cleanup, 2026-10-17). */
+export const MODEL_FG: Record<OfficeAgent['modelFam'], string> = { opus: '#a78bfa', sonnet: '#60a5fa', haiku: '#34d399', fable: '#fbbf24', other: '#8b93a8' }
 export const STATUS_FG: Record<OfficeAgent['status'], string> = { running: '#7ee29a', stale: '#e6c07e', done: '#9fb0e6' }
 const EMOJI_RE = /^\p{Extended_Pictographic}/u
 /** Code points that take no cell of their own: combining marks (Hebrew points among them), the variation selectors, the ZWJ, the skin tones. */
@@ -309,37 +308,51 @@ export function rowRuns(cells: readonly Cell[]): Run[] {
   return runs
 }
 
-/** The model pill's text: ` Opus 5.5 ` (the label cut to PILL_MAX); `short`: the family alone, ` Opus ` (an unknown label stays whole). */
-export function pillText(model: string, short = false): string {
-  const label = short ? model.split(' ')[0] ?? model : model
-  return ` ${cut(label || '?', PILL_MAX)} `
+/** The model's word: the family alone (`Opus`; `?` unknown) or, `full`, the label with its version (`Opus 5.5`, cut to PILL_MAX). */
+export function modelText(model: string, full = false): string {
+  const label = full ? model : model.split(' ')[0] ?? model
+  return cut(label || '?', PILL_MAX)
+}
+
+/** The first glyph of a text: an activity's emoji, drawn alone when the word has no room (or a finished agent's ✅). */
+export function firstGlyph(text: string): string {
+  return glyphs(text)[0]?.ch ?? ''
 }
 
 /**
- * The row's end: the minutes (`7′`, `<1′`, nothing when unknown) and the badges ❌⭐⏰ (💬 marks the
- * lead), the minutes outermost in both directions — in cell order `❌⭐⏰7′` in LTR (the minutes at the
- * right edge), `7′❌⭐⏰` in RTL (the minutes at the left edge).
+ * The row's end: the minutes (`7′`, `<1′`, nothing when unknown) and the badges ❌⭐⏰, the minutes
+ * outermost in both directions — in cell order `❌⭐⏰7′` in LTR (the minutes at the right edge),
+ * `7′❌⭐⏰` in RTL (the minutes at the left edge). (The lead carries no mark on its row: Asaf's cleanup.)
  */
 export function tailText(a: OfficeAgent, rtl: boolean): string {
-  const badges = `${a.failed ? '❌' : ''}${a.star ? '⭐' : ''}${a.longRunning ? '⏰' : ''}${a.isLead ? '💬' : ''}`
+  const badges = `${a.failed ? '❌' : ''}${a.star ? '⭐' : ''}${a.longRunning ? '⏰' : ''}`
   const mins = a.startMin === null ? '' : a.startMin < 1 ? '<1′' : `${a.startMin}′`
   return rtl ? `${mins}${badges}` : `${badges}${mins}`
 }
 
-/** The widths a room's rows share (so names, pills, activities and minutes line up down the room), resolved for `columns`. */
+/** The widths a room's rows share (so names, models, activities and minutes line up down the room), resolved for `columns`. */
 type Fields = { name: number; pill: 'full' | 'short' | 'none'; pillW: number; act: number; tail: number; tailAt: number }
 
 /** The cells before a row's name: the margin, the emoji, a space. */
 const HEAD = ROW_MARGIN + EMOJI_CELLS + 1
 
+/** What a row draws of its activity: the label whole, its emoji alone, or nothing (a finished agent's is its ✅ alone). */
+function actText(a: OfficeAgent, cells: number, wordAllowed: boolean): string {
+  const whole = a.status === 'done' ? firstGlyph(a.act) : a.act
+  if (cells >= width(whole) && (wordAllowed || whole === firstGlyph(a.act))) return whole
+  const emoji = firstGlyph(a.act)
+  return cells >= width(emoji) && !/\p{L}/u.test(emoji) ? emoji : ''
+}
+
 /**
  * The fields of a room's rows at `columns`: each the widest of the room (capped) — the name field
- * never past what the short pill and a kept activity leave it — then shrunk until every row fits, in
- * this order: (1) the activity down to ACT_KEEP, (2) the name down to NAME_MIN, (3) the pill to its
- * family, (4) the activity down to ACT_MIN then away, (5) the name to a glyph, (6) the pill away.
- * The minutes keep a field of the room's widest tail at the far end, or GAP_MAX past the last field
- * when the pane is wider than the content (the rest of the row stays blank: no gap grows with the
- * pane).
+ * never past what the model word and an activity emoji leave it — then shrunk until every row fits,
+ * in this order: (1) the activity to its emoji alone (an activity is drawn whole or as its emoji,
+ * never cut mid-word), (2) the name down to NAME_MIN, (3) the activity away, (4) the name to a glyph,
+ * (5) the model away. The model word carries its version only from MODEL_FULL_FROM columns and when
+ * every field still fits. The minutes keep a field of the room's widest tail at the far end, or
+ * GAP_MAX past the last field when the pane is wider than the content (the rest of the row stays
+ * blank: no gap grows with the pane).
  */
 function roomFields(room: OfficeRoom, columns: number, rtl: boolean): Fields {
   let name0 = 0
@@ -349,25 +362,23 @@ function roomFields(room: OfficeRoom, columns: number, rtl: boolean): Fields {
   let tail = 0
   for (const a of room.agents) {
     name0 = Math.max(name0, Math.min(NAME_MAX, width(a.name)))
-    full = Math.max(full, width(pillText(a.model)))
-    short = Math.max(short, width(pillText(a.model, true)))
-    act0 = Math.max(act0, Math.min(ACT_MAX, width(a.act)))
+    full = Math.max(full, width(modelText(a.model, true)))
+    short = Math.max(short, width(modelText(a.model)))
+    act0 = Math.max(act0, Math.min(ACT_MAX, width(a.status === 'done' ? firstGlyph(a.act) : a.act)))
     tail = Math.max(tail, width(tailText(a, rtl)))
   }
   const budget = columns - HEAD - (tail > 0 ? 1 + tail : 0)
   const need = (n: number, p: number, a: number) => n + (p > 0 ? 1 + p : 0) + (a > 0 ? 1 + a : 0)
-  const keep = Math.min(ACT_KEEP, act0)
-  let name = Math.min(name0, Math.max(NAME_MIN, budget - short - 1 - keep - 1))
+  let name = Math.min(name0, Math.max(NAME_MIN, budget - short - 1 - EMOJI_CELLS - 1))
   let act = act0
-  let pill: Fields['pill'] = 'full'
-  let pillW = full
+  let pill: Fields['pill'] = columns >= MODEL_FULL_FROM && need(name, full, act) <= budget ? 'full' : 'short'
+  let pillW = pill === 'full' ? full : short
   const over = () => need(name, pillW, act) > budget
-  if (over()) act = Math.max(keep, Math.min(act0, budget - name - 1 - pillW - 1))                      // (1)
+  if (over()) act = Math.min(act0, EMOJI_CELLS)                                                           // (1)
   if (over()) name = Math.max(Math.min(NAME_MIN, name0), Math.min(name, budget - 1 - pillW - 1 - act))   // (2)
-  if (over()) { pill = 'short'; pillW = short }                                                           // (3)
-  if (over()) { act = budget - name - 1 - pillW - 1; if (act < ACT_MIN) act = 0 }                        // (4)
-  if (over()) name = Math.max(0, Math.min(name0, budget - 1 - pillW))                                     // (5)
-  if (name < 1 || over()) { pill = 'none'; pillW = 0; name = Math.max(0, Math.min(name0, budget)) }      // (6)
+  if (over()) act = 0                                                                                     // (3)
+  if (over()) name = Math.max(0, Math.min(name0, budget - 1 - pillW))                                     // (4)
+  if (name < 1 || over()) { pill = 'none'; pillW = 0; name = Math.max(0, Math.min(name0, budget)) }      // (5)
   const content = HEAD + need(name, pillW, act)
   // the tail field: at the far end while that leaves at most 2 × GAP_MAX + 1 blank cells, else GAP_MAX past the content
   const far = columns - tail
@@ -382,13 +393,14 @@ function at(r: number, w: number, columns: number, rtl: boolean): number {
 
 /**
  * One agent row: in reading order the margin, the emoji (⭐ before it during the hop; both shifted
- * inside by the walk-in), the name (bold, status colour; it gives way to the decor), the model pill
- * (on the family colour), the activity (status colour, dim once done), then the minutes and badges
- * (dim) at the room's tail field. The lead's mark 💬 rides with the badges. The hover lays HOVER_BG
- * across the whole row. The decor moves nothing but this row's own cells.
+ * inside by the walk-in), the name (bold, status colour; it gives way to the decor), the model word
+ * (its family colour), the activity (status colour), then the minutes and badges (dim) at the room's
+ * tail field. A finished agent's row is dim, its activity its ✅ alone. The hover lays HOVER_BG across
+ * the whole row. The decor moves nothing but this row's own cells.
  */
 function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, selected: boolean, rtl: boolean, decor: OfficeDecor): void {
   const fg = STATUS_FG[a.status]
+  const dimmed = a.status === 'done' ? { dim: true as const } : {}
   const glyph = decor.hop.has(a.id) ? `${HOP_STAR}${a.emoji}` : a.emoji
   const gw = width(glyph)
   const p = decor.entering.get(a.id)
@@ -397,28 +409,28 @@ function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, sele
   const extra = shift + gw - EMOJI_CELLS
   put(row, at(ROW_MARGIN + shift, gw, columns, rtl), glyph, selected ? { fg: '#ffffff', bold: true } : {}, true)
   const nameDrawn = f.name - extra > 0 ? cut(a.name, f.name - extra) : ''
-  if (nameDrawn) place(row, at(HEAD + extra, f.name - extra, columns, rtl), f.name - extra, a.name, { fg, bold: true }, rtl)
+  if (nameDrawn) place(row, at(HEAD + extra, f.name - extra, columns, rtl), f.name - extra, a.name, { fg, bold: true, ...dimmed }, rtl)
   let r = HEAD + f.name
-  let parted = false   // a Latin pill between the name and the activity: the engine keeps two Hebrew words apart only across it
-  let drawnAct = false
-  if (f.pill !== 'none') {
-    const pill = pillText(a.model, f.pill === 'short')
-    put(row, at(r + 1, width(pill), columns, rtl), pill, { fg: a.modelFam === 'other' ? '#e8ecff' : '#ffffff', bg: MODEL_BG[a.modelFam] }, true)
+  let parted = false   // a Latin model word between the name and the activity: the engine keeps two Hebrew words apart only across it
+  const pill = f.pill === 'none' ? '' : modelText(a.model, f.pill === 'full')
+  if (pill) {
+    put(row, at(r + 1, width(pill), columns, rtl), pill, { fg: MODEL_FG[a.modelFam], ...dimmed }, true)
     parted = LETTER_RE.test(pill)
     r += 1 + f.pillW
   }
+  let act = ''
   if (f.act > 0) {
     // THE HEBREW RULE (3): a Hebrew activity beside a Hebrew name with no Latin between them would be mirrored with it as one
-    // block (`?` pill, or none): the row keeps its field blank instead
-    drawnAct = !(HEBREW_RE.test(a.act) && HEBREW_RE.test(a.name) && !parted)
-    if (drawnAct) place(row, at(r + 1, f.act, columns, rtl), f.act, a.act, a.status === 'done' ? { fg, dim: true } : { fg }, rtl)
+    // block (`?` model, or none): the row draws the activity's emoji alone then — as it does when the word has no room
+    act = actText(a, f.act, !(HEBREW_RE.test(a.act) && HEBREW_RE.test(a.name) && !parted))
+    if (act) place(row, at(r + 1, f.act, columns, rtl), f.act, act, { fg, ...dimmed }, rtl)
     r += 1 + f.act
   }
   // THE HEBREW RULE (5), LTR only: digits after a Hebrew block with nothing Latin between them join it (the engine keeps a
   // number after Hebrew right-to-left, through any neutrals), so the minutes would be mirrored next to the name — the row
   // keeps its badges and drops the minutes then (a Latin pill or an English activity parts them; in RTL the tail comes first)
   let tail = tailText(a, rtl)
-  if (!rtl && DIGIT_RE.test(tail) && hebrewUnparted(nameDrawn, f.pill === 'none' ? '' : pillText(a.model, f.pill === 'short'), drawnAct ? cut(a.act, f.act) : '')) tail = tailText({ ...a, startMin: null }, rtl)
+  if (!rtl && DIGIT_RE.test(tail) && hebrewUnparted(nameDrawn, pill, act)) tail = tailText({ ...a, startMin: null }, rtl)
   const tw = width(tail)
   if (tw > 0) put(row, at(f.tailAt + f.tail - tw, tw, columns, rtl), tail, { dim: true }, true)
   if (decor.hover === a.id) for (let i = 0; i < row.cells.length; i++) row.cells[i] = { ...row.cells[i]!, bg: HOVER_BG }

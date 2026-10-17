@@ -38,6 +38,7 @@ import {
   resolvePersonas,
   scanAll,
   sessionSummary,
+  shortTitle,
   stripInjectedBlocks,
   tailLines,
   taskNotificationsFor,
@@ -447,6 +448,12 @@ test('parseLastTitle: the last custom-title wins over every ai-title; the last a
   expect(parseLastTitle([ai('one'), msg, ai('two')].join('\n'))).toEqual({ custom: '', ai: 'two' })
   expect(parseLastTitle([msg, 'not json', JSON.stringify({ type: 'custom-title', customTitle: 7 }), JSON.stringify({ type: 'custom-title' })].join('\n'))).toEqual({ custom: '', ai: '' })
   expect(parseLastTitle('')).toEqual({ custom: '', ai: '' })
+  // the key quoted inside a message's TEXT is no record: the line's own type decides
+  expect(parseLastTitle([
+    custom('real'),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'the engine writes {"type":"custom-title","customTitle":"fake"} on a rename' } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'and {"type":"ai-title","aiTitle":"fake ai"} every turn' }] } }),
+  ].join('\n'))).toEqual({ custom: 'real', ai: '' })
 })
 
 test('scanAll (2.1.288 journals): a hand-back ends an agent at once; a parent task-notification ends one whose file ends in a tool_result; a final text without stop_reason ends once idle; a resumed agent is live again', async () => {
@@ -1061,6 +1068,80 @@ test("the room's title: the conversation's own title record (the last one, also 
   fs2.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
   const withTail = fs2.io({ tail: async (path, bytes) => fs2.files.get(path)!.text.slice(-bytes) })
   expect(byId((await scanAll(withTail, NOW)).agents, 'sess-ffff-6666').topic).toBe('שיחה גדולה')
+})
+
+test('sessionSummary: a head window read FULL (81 lines) without a typed prompt is final — a chatty lead opened with commands alone is not re-read whole every poll; its title comes from the tail (a title record) or stays empty for the folder name', async () => {
+  resetScannerCaches()
+  const fs = office()
+  const f = `${PROJ}/sess-ffff-6666.jsonl`
+  const user = (content: string) => JSON.stringify({ type: 'user', sessionId: 'sess-ffff-6666', cwd: '/home/dev/demo-project', message: { role: 'user', content } }) + '\n'
+  const toolResult = (i: number) => JSON.stringify({ type: 'user', sessionId: 'sess-ffff-6666', message: { role: 'user', content: [{ type: 'tool_result', content: `r${i}` }] } }) + '\n'
+  const chat = (text: string) => JSON.stringify({ type: 'assistant', sessionId: 'sess-ffff-6666', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text }] } }) + '\n'
+  const custom = (t: string) => JSON.stringify({ type: 'custom-title', customTitle: t, sessionId: 'sess-ffff-6666' }) + '\n'
+  // 93 lines: two commands, then tool traffic without a typed prompt — the window is full and holds no topic
+  let body = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 'sess-ffff-6666' }) + '\n' + user('/theater') + user('/model opus')
+  for (let i = 0; i < 45; i++) body += chat(`step ${i}`) + toolResult(i)
+  fs.put(f, body, NOW - 2 * MIN)
+  fs.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
+  const io = fs.io()
+  let lead = byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666')
+  expect(lead.topic).toBe('')
+  expect(lead.task_short).toBe('')
+  expect(lead.cwd).toBe('/home/dev/demo-project')
+  // the file grows under every poll (a new mtime each time): the head is never read again — the only read
+  // is the tail's, once (then throttled for GLOB_TTL_SEC)
+  const before = fs.reads.length
+  for (let i = 1; i <= 4; i++) {
+    fs.put(f, fs.files.get(f)!.text + chat(`more ${i}`), NOW + i * POLL_MS - 1000)
+    lead = byId((await scanAll(io, NOW + i * POLL_MS)).agents, 'sess-ffff-6666')
+    expect(lead.topic).toBe('')
+    expect(lead.model).toBe('claude-opus-5-5')
+  }
+  expect(fs.reads.slice(before)).toEqual([f])
+  // a prompt typed past the window cannot become the topic (the window is final) — a title record can: the next tail read carries it
+  fs.put(f, fs.files.get(f)!.text + user('עכשיו תבנה') + custom('בניית הפאנל'), NOW + 2 * TTL - 1000)
+  lead = byId((await scanAll(io, NOW + 2 * TTL)).agents, 'sess-ffff-6666')
+  expect(lead.topic).toBe('בניית הפאנל')
+  expect(lead.task_short).toBe('בניית הפאנל')
+  expect(fs.reads.slice(before)).toEqual([f, f])
+  // a window one line SHORT of full is not final: the prompt typed as its last line is found on the next read
+  resetScannerCaches()
+  let short = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 'sess-ffff-6666' }) + '\n' + user('/theater')
+  for (let i = 0; i < 39; i++) short += chat(`step ${i}`) + toolResult(i) // 80 lines
+  fs.put(f, short, NOW - MIN)
+  expect(byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666').topic).toBe('')
+  fs.put(f, short + user('תריץ 4 סוכני משנה'), NOW + 2 * TTL - 1000)
+  expect(byId((await scanAll(io, NOW + 2 * TTL)).agents, 'sess-ffff-6666').topic).toBe('תריץ 4 סוכני משנה')
+})
+
+test("a conversation's title is drawn whole — never cut to its first sentence as a typed prompt is — and at most 90 characters", async () => {
+  resetScannerCaches()
+  const fs = office()
+  const f = `${PROJ}/sess-ffff-6666.jsonl`
+  const user = (content: string) => JSON.stringify({ type: 'user', sessionId: 'sess-ffff-6666', cwd: '/home/dev/demo-project', message: { role: 'user', content } }) + '\n'
+  const chat = (text: string) => JSON.stringify({ type: 'assistant', sessionId: 'sess-ffff-6666', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text }] } }) + '\n'
+  const custom = (t: string) => JSON.stringify({ type: 'custom-title', customTitle: t, sessionId: 'sess-ffff-6666' }) + '\n'
+  fs.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
+  const io = fs.io()
+  fs.put(f, user('Fix the login bug. Then add a test.') + chat('ok') + custom('Task 2: real titles'), NOW - MIN)
+  let lead = byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666')
+  expect(lead.task_short).toBe('Task 2: real titles')
+  expect(lead.topic).toBe('Task 2: real titles')
+  expect(lead.task).toBe('Fix the login bug. Then add a test.') // the drawer keeps the typed prompt
+  // a typed prompt without a title record keeps shortTask's first-sentence cut
+  resetScannerCaches()
+  fs.put(f, user('Fix the login bug. Then add a test.') + chat('ok'), NOW - MIN)
+  lead = byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666')
+  expect(lead.task_short).toBe('Fix the login bug.')
+  expect(lead.topic).toBe('Fix the login bug. Then add a test.')
+  // a long title: whitespace collapsed, 90 characters and an ellipsis
+  resetScannerCaches()
+  const long = 'x'.repeat(50) + ' ' + 'y'.repeat(50)
+  fs.put(f, user('hi') + custom('  ' + 'x'.repeat(50) + '\n   ' + 'y'.repeat(50) + ' '), NOW - MIN)
+  lead = byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666')
+  expect(lead.task_short).toBe(long.slice(0, 90) + '…')
+  expect(shortTitle(long)).toBe(long.slice(0, 90) + '…')
+  expect(shortTitle(' Task 2:  real titles ')).toBe('Task 2: real titles')
 })
 
 test('demoPayload: every demo agent names a plausible model', async () => {

@@ -730,9 +730,12 @@ export function parentSessionFile(agentPath: string, sessionId: string): string 
 
 type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo>; notices: Map<string, number | null> }
 type ProjectCacheEntry = { mtimeMs: number; oversized: boolean; cwd: string }
-type SessionCacheEntry = { mtimeMs: number; oversized: boolean; topic: string; cwd: string }
+/** `full`: the head read returned the whole 81-line window — a later append cannot change what the window holds. */
+type SessionCacheEntry = { mtimeMs: number; oversized: boolean; full: boolean; topic: string; cwd: string }
+/** One session file's tail facts: the lead's model and the conversation's title records, with where the search stopped. */
 type ModelCacheEntry = {
   mtimeMs: number
+  /** The lead's model: `message.model` of the latest assistant record, "" when none. */
   model: string
   /** The conversation's own title: the latest `custom-title` record's text (the person's rename), "" when none. */
   custom: string
@@ -748,12 +751,14 @@ const NAME_CACHE = new Map<string, NameCacheEntry>() // parent file → Agent/Ta
 const PROJECT_CACHE = new Map<string, ProjectCacheEntry>() // parent file → the conversation's real working dir
 const SESSION_CACHE = new Map<string, SessionCacheEntry>() // session file → (topic, cwd)
 /**
- * session file → the lead's model (latest assistant record). Read by
- * sessionModelFor (the file's tail, mtime-cached, throttled) and also filled
- * opportunistically whenever a scan reads the whole session file anyway
- * (nameMapFor for a parent with subagents, sessionSummary's head read on a
- * file that fits), so the dedicated tail read is skipped while that mtime is
- * current. Evicted with the session (scanSessions).
+ * session file → the lead's model (latest assistant record) AND the
+ * conversation's title records (the latest custom-title and ai-title — the
+ * room's title, sessionTitle). Read by sessionTailFor (the file's tail,
+ * mtime-cached, throttled) and also filled opportunistically whenever a scan
+ * reads the whole session file anyway (nameMapFor for a parent with
+ * subagents, sessionSummary's head read on a file that fits), so the
+ * dedicated tail read is skipped while that mtime is current. Evicted with
+ * the session (scanSessions).
  */
 const SESSION_MODEL_CACHE = new Map<string, ModelCacheEntry>()
 
@@ -799,6 +804,12 @@ function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | 
 /** The conversation's title for its room: the person's rename, else the engine's naming, else "" (the caller falls back to the first typed prompt). */
 export function sessionTitle(entry: TitleRecords | undefined): string {
   return entry?.custom || entry?.ai || ''
+}
+
+/** A conversation's title for the room head: whitespace collapsed, whole up to 90 characters (a typed prompt goes through shortTask's first-sentence cut instead). */
+export function shortTitle(title: string): string {
+  const flat = normPrompt(title)
+  return flat.length > 90 ? flat.slice(0, 90).trim() + '…' : flat
 }
 
 /**
@@ -1056,12 +1067,15 @@ function firstUserText(rec: Record<string, unknown>): string {
  */
 const SLASH_COMMAND_RE = /^[\s\p{Cf}]*\/[\w:-]+(?:\s|$)/u
 
-/** Python session_summary's parse over the first 81 lines: (topic = first typed user text that is not a slash command, cwd = first cwd). */
+/** The head window of a conversation file the summary reads (Python: the first 81 lines). */
+const SUMMARY_HEAD_LINES = 81
+
+/** Python session_summary's parse over the first SUMMARY_HEAD_LINES lines: (topic = first typed user text that is not a slash command, cwd = first cwd). */
 export function parseSessionSummary(text: string): { topic: string; cwd: string } {
   let topic = ''
   let cwd = ''
   const lines = text.split('\n')
-  for (let i = 0; i < lines.length && i <= 80; i++) {
+  for (let i = 0; i < lines.length && i < SUMMARY_HEAD_LINES; i++) {
     const ln = lines[i] ?? ''
     if (!ln.includes('"cwd"') && !ln.includes('"type":"user"')) continue
     const rec = parseJsonObject(ln)
@@ -1080,11 +1094,21 @@ export function parseSessionSummary(text: string): { topic: string; cwd: string 
   return { topic, cwd }
 }
 
+/** Does a head text fill the whole SUMMARY_HEAD_LINES window (its last line present and not blank)? */
+function headFull(text: string): boolean {
+  const ls = text.split('\n')
+  return ls.length >= SUMMARY_HEAD_LINES && (ls[SUMMARY_HEAD_LINES - 1] ?? '') !== ''
+}
+
 /**
  * Python session_summary: (topic, cwd) of a top-level conversation — the first
  * user text (the UI shortens it). Cached by mtime, and for good once both are
- * known (an oversized file: once either is, its 81-line head cannot change),
- * for the same reason as projectCwdFor.
+ * known, or once the head window was read FULL (an append past it cannot
+ * change it: a conversation opened with commands alone — `/theater`,
+ * `/model …` — would otherwise be re-read whole on every poll while it
+ * chats; its title then comes from the tail cache or the folder name), or,
+ * on an oversized file, once either is known — for the same reason as
+ * projectCwdFor.
  */
 export async function sessionSummary(
   io: ScanIo,
@@ -1096,12 +1120,12 @@ export async function sessionSummary(
   const cached = SESSION_CACHE.get(sessionFile)
   const settled =
     cached !== undefined &&
-    (cached.mtimeMs === st.mtimeMs || (cached.topic !== '' && cached.cwd !== '') ||
+    (cached.mtimeMs === st.mtimeMs || cached.full || (cached.topic !== '' && cached.cwd !== '') ||
       (st.size > FS_READ_LIMIT && (cached.topic !== '' || cached.cwd !== '')))
   if (cached && settled) return { topic: cached.topic, cwd: cached.cwd }
-  const read = await readHead(io, sessionFile, st.size, 81)
+  const read = await readHead(io, sessionFile, st.size, SUMMARY_HEAD_LINES)
   const parsed = read.text === null ? { topic: '', cwd: '' } : parseSessionSummary(read.text)
-  SESSION_CACHE.set(sessionFile, { mtimeMs: st.mtimeMs, oversized: read.oversized, ...parsed })
+  SESSION_CACHE.set(sessionFile, { mtimeMs: st.mtimeMs, oversized: read.oversized, full: read.text !== null && headFull(read.text), ...parsed })
   if (read.text !== null) noteSessionModel(sessionFile, st.mtimeMs, read.whole)
   return parsed
 }
@@ -1783,7 +1807,8 @@ async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<st
       tool: '',
       phase: 'thinking',
       task: prompt || topic,
-      task_short: shortTask(topic),
+      // a title is drawn whole (never cut to its first sentence: `Task 2: real titles` is not `Task 2:`); a typed prompt as before
+      task_short: tail.title ? shortTitle(topic) : shortTask(topic),
       result: null,
       start_ms: mtimeMs,
       end_ms: closed ? mtimeMs : null,

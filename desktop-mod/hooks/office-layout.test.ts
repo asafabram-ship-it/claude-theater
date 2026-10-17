@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, EMOJI_CELLS, HOVER_BG, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, cut, hitAt, layoutOffice, lineRow, pillText, place, put, rowCount, rowRuns, segments, tailText, walkShift, windowRows } from './office-layout'
+import { ACT_MAX, EMOJI_CELLS, HOVER_BG, NAME_MAX, NO_DECOR, ROW_MARGIN, WALK_CELLS, blankRow, blocksOfParts, cut, hitAt, layoutOffice, lineRow, pillText, place, put, rowCount, rowRuns, segments, tailText, walkShift, windowRows } from './office-layout'
 import type { OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -50,8 +50,38 @@ function wellFormed(row: Cells): boolean {
 function decor(over: { hover?: string | null; hop?: string[]; entering?: Array<[string, number]> } = {}): OfficeDecor {
   return { hover: over.hover ?? null, hop: new Set(over.hop ?? []), entering: new Map(over.entering ?? []) }
 }
+type StyledCells = Cells & { cells: ReadonlyArray<{ ch: string; fg?: string; bg?: string; bold?: true; dim?: true; brk?: true }> }
+const HEB = /\p{Script=Hebrew}/u
+const OTHER_LETTER = /(?!\p{Script=Hebrew})\p{L}/u
 /** The runs of a row that hold a Hebrew letter. */
-const hebrewRuns = (row: Cells & { cells: ReadonlyArray<{ ch: string; fg?: string; bg?: string; bold?: true; dim?: true; brk?: true }> }) => rowRuns(row.cells).map(r => r.text).filter(t => /\p{Script=Hebrew}/u.test(t))
+const hebrewRuns = (row: StyledCells) => rowRuns(row.cells).map(r => r.text).filter(t => HEB.test(t))
+/**
+ * THE HEBREW RULE on one drawn run: no letter of another script in a Hebrew run (both directions); in RTL the run must not end
+ * with a mark either (hebrewRuleOk) — in LTR a trailing ellipsis is read after the word, as it should be.
+ */
+const runOk = (run: string, rtl: boolean) => (rtl ? hebrewRuleOk(run) : !OTHER_LETTER.test(run))
+/**
+ * THE MERGE MODEL: a row is one LTR paragraph, and the bidi algorithm takes two stretches of Hebrew with nothing but neutrals
+ * (spaces, digits, emoji, punctuation) between them as ONE block and mirrors it whole — so two Hebrew-holding runs laid by cell
+ * with no letter of another script between them would come out swapped. True when no such pair exists on the row.
+ */
+function mergeSafe(row: StyledCells): boolean {
+  let seenHebrew = false   // a Hebrew letter was drawn before
+  let boundary = false     // a run boundary was crossed since the last Hebrew letter
+  let parted = false       // a letter of another script was drawn since the last Hebrew letter
+  let style = ''
+  for (const c of row.cells) {
+    const key = `${c.fg}|${c.bg}|${c.bold}|${c.dim}`
+    if (c.brk || key !== style) { boundary = true; style = key }
+    if (HEB.test(c.ch)) {
+      if (seenHebrew && boundary && !parted) return false
+      seenHebrew = true
+      boundary = false
+      parted = false
+    } else if (OTHER_LETTER.test(c.ch)) parted = true
+  }
+  return true
+}
 
 test('cells: put clips to the row and an emoji takes EMOJI_CELLS; a brk marks the first glyph', () => {
   const row = blankRow('r', 6)
@@ -115,11 +145,13 @@ test('cells: a variation selector, a ZWJ sequence, a skin tone and Hebrew points
   expect(wellFormed(r1)).toBe(true)
 })
 
-test('THE HEBREW RULE: segments splits a text into runs by script — a Hebrew run starts with a Hebrew letter and holds no other script\'s letter, digits ride inside, the spaces between runs are gaps', () => {
+test('THE HEBREW RULE: segments splits a text into runs by script — a Hebrew run holds no other script\'s letter, digits ride inside (a run of digits before it too), a leading emoji is a run of its own, the spaces between runs are gaps', () => {
   const texts = (s: string) => segments(s).map(x => [x.gap, x.text])
   expect(texts('📖 קורא')).toEqual([[0, '📖'], [1, 'קורא']])
   expect(texts('עוד 5 שסיימו')).toEqual([[0, 'עוד 5 שסיימו']])
-  expect(texts('4 תמלילים מעל 4MiB דולגו')).toEqual([[0, '4'], [1, 'תמלילים מעל 4'], [0, 'MiB'], [1, 'דולגו']])
+  expect(texts('4 תמלילים מעל 4MiB דולגו')).toEqual([[0, '4 תמלילים מעל 4'], [0, 'MiB'], [1, 'דולגו']])
+  expect(texts('4 קבצים של Claude Code לבדיקה')).toEqual([[0, '4 קבצים של'], [1, 'Claude Code'], [1, 'לבדיקה']])
+  expect(texts('…שם')).toEqual([[0, '…'], [0, 'שם']])   // (a mark before the word stays its own run: a digit would join)
   expect(texts('שם Reviewer')).toEqual([[0, 'שם'], [1, 'Reviewer']])
   expect(texts('שם - Reviewer')).toEqual([[0, 'שם -'], [1, 'Reviewer']])
   expect(texts('Opus 5.5')).toEqual([[0, 'Opus 5.5']])
@@ -130,9 +162,16 @@ test('THE HEBREW RULE: segments splits a text into runs by script — a Hebrew r
   expect(texts('')).toEqual([])
   expect(texts('   ')).toEqual([])
   expect(texts('שם ארוך…')).toEqual([[0, 'שם ארוך…']])
-  // every Hebrew run passes the rule, whatever the text
-  for (const s of ['📖 קורא', '4 תמלילים מעל 4MiB דולגו', 'שם Reviewer', 'abc דף 12 x', '12 דף', 'דף — Claude Code — דף']) {
-    for (const x of segments(s)) expect(hebrewRuleOk(x.text), `${s} → ${x.text}`).toBe(true)
+  // no Hebrew run holds another script's letter, whatever the text; two Hebrew runs are always parted by a Latin one
+  for (const s of ['📖 קורא', '4 תמלילים מעל 4MiB דולגו', 'שם Reviewer', 'abc דף 12 x', '12 דף', 'דף — Claude Code — דף', 'שם - 4 - שם']) {
+    const segs = segments(s)
+    for (const x of segs) expect(OTHER_LETTER.test(x.text) && HEB.test(x.text), `${s} → ${x.text}`).toBe(false)
+    let heAt = -1
+    segs.forEach((x, i) => {
+      if (!HEB.test(x.text)) return
+      if (heAt >= 0) expect(segs.slice(heAt + 1, i).some(y => OTHER_LETTER.test(y.text)), `${s}: "${segs[heAt]!.text}" | "${x.text}"`).toBe(true)
+      heAt = i
+    })
   }
 })
 
@@ -145,16 +184,24 @@ test('place: the runs of a text in reading order — from the left in LTR, from 
   place(rtl, 1, 10, '📖 קורא', { fg: '#0f0' }, true)
   expect(text(rtl)).toBe('    קורא 📖 ')             // the emoji at the field's right edge, the word to its left
   expect(rowRuns(rtl.cells)).toEqual([{ text: '    ' }, { text: 'קורא', fg: '#0f0' }, { text: ' ' }, { text: '📖', fg: '#0f0' }, { text: ' ' }])
-  // a leading digit becomes a run of its own, so the Hebrew run starts with a letter
+  // a leading digit stays with its Hebrew run, in logical order (the engine would mirror two runs as one and swap them)
   const d = blankRow('d', 14)
   place(d, 0, 14, '4 תמלילים', {}, true)
-  expect(text(d)).toBe('     תמלילים 4')
-  expect(rowRuns(d.cells).map(r => r.text)).toEqual(['     ', 'תמלילים ', '4'])   // (the unstyled gap merges into the unstyled run before it: trailing, never leading)
-  // cut to the field, whole glyphs, the ellipsis on the last run; a field off the row draws nothing
+  expect(text(d)).toBe('     4 תמלילים')
+  expect(rowRuns(d.cells).map(r => r.text)).toEqual(['     ', '4 תמלילים'])
+  // cut to the field, whole glyphs, the ellipsis on the last run — at its logical START in RTL when the run is Hebrew (a leading
+  // mark is drawn after the mirrored word); a field off the row draws nothing
   const c = blankRow('c', 8)
   place(c, 0, 8, '🦉 שם ארוך מאוד', { bold: true }, false)
   expect(text(c)).toBe('🦉 שם א…')
   expect(wellFormed(c)).toBe(true)
+  const e = blankRow('e', 8)
+  place(e, 0, 8, '🦉 שם ארוך מאוד', { bold: true }, true)
+  expect(text(e)).toBe('…שם א 🦉')
+  expect(rowRuns(e.cells).map(r => r.text)).toEqual(['…שם א', ' ', '🦉'])
+  const l = blankRow('l', 8)
+  place(l, 0, 8, 'Reviewer name', {}, true)
+  expect(text(l)).toBe('Reviewe…')   // a Latin run keeps its ellipsis at its end
   const n = blankRow('n', 8)
   place(n, -1, 4, 'abc', {}, true)
   place(n, 8, 4, 'abc', {}, false)
@@ -162,21 +209,37 @@ test('place: the runs of a text in reading order — from the left in LTR, from 
   expect(text(n)).toBe('        ')
 })
 
-test('lineRow: a chrome line of parts a space apart in reading order, each its own run, the last part that does not fit cut', () => {
-  const parts = [{ text: '🎭', bold: true as const }, { text: '🟢', bold: true as const }, { text: '2', bold: true as const }, { text: 'עובדים', bold: true as const }, { text: '·', bold: true as const }, { text: '⏳ 5h 42%', bold: true as const }]
-  const ltr = lineRow('h', 30, parts, false)
-  expect(text(ltr)).toBe('🎭 🟢 2 עובדים · ⏳ 5h 42%    ')
-  expect(rowRuns(ltr.cells).filter(r => r.bold).map(r => r.text)).toEqual(['🎭', '🟢', '2', 'עובדים', '·', '⏳ 5h 42%'])
-  const rtl = lineRow('h', 30, parts, true)
-  expect(text(rtl)).toBe('    ⏳ 5h 42% · עובדים 2 🟢 🎭')
-  expect(rowRuns(rtl.cells).filter(r => r.bold).map(r => r.text)).toEqual(['⏳ 5h 42%', '·', 'עובדים', '2', '🟢', '🎭'])
-  for (const row of [ltr, rtl]) for (const run of hebrewRuns(row)) expect(hebrewRuleOk(run)).toBe(true)
-  // narrow: the parts that fit, the next one cut, nothing after it
-  const narrow = lineRow('h', 12, parts, false)
-  expect(text(narrow)).toBe('🎭 🟢 2 עוב…')
-  expect(narrow.cells).toHaveLength(12)
+test('lineRow / blocksOfParts: the Hebrew parts that nothing Latin separates are ONE run in logical order (the count after its word inside it), the rest laid by cell in reading order; what does not fit is cut', () => {
+  const P = (...texts: string[]) => texts.map(text => ({ text, bold: true as const }))
+  const parts = P('🎭', '🟢', 'עובדים', '2', '·', '⏳', 'ממתינים', '1', '·', '✅', 'סיימו', '6', '·', '⏳ 5h 42%')
+  expect(blocksOfParts(parts).map(b => [b.gap, b.text])).toEqual([[0, '🎭'], [1, '🟢'], [1, 'עובדים 2 · ⏳ ממתינים 1 · ✅ סיימו 6'], [1, '·'], [1, '⏳ 5h 42%']])
+  const ltr = lineRow('h', 60, parts, false)
+  expect(text(ltr).trimEnd()).toBe('🎭 🟢 עובדים 2 · ⏳ ממתינים 1 · ✅ סיימו 6 · ⏳ 5h 42%')
+  const rtl = lineRow('h', 60, parts, true)
+  expect(text(rtl).trimStart()).toBe('⏳ 5h 42% · עובדים 2 · ⏳ ממתינים 1 · ✅ סיימו 6 🟢 🎭')
+  expect(rowRuns(rtl.cells).filter(r => r.bold).map(r => r.text)).toEqual(['⏳ 5h 42%', '·', 'עובדים 2 · ⏳ ממתינים 1 · ✅ סיימו 6', '🟢', '🎭'])
+  for (const row of [ltr, rtl]) { expect(mergeSafe(row)).toBe(true); for (const run of hebrewRuns(row)) expect(hebrewRuleOk(run)).toBe(true) }
+  // the drawer's model line: the Latin value parts the two labels; the activity's emoji rides inside its Hebrew block
+  const model = P('מודל', '🧠', 'Opus 5.5', '·', 'פעולה', '🤔', 'חושב')
+  expect(blocksOfParts(model).map(b => b.text)).toEqual(['מודל', '🧠', 'Opus 5.5', '·', 'פעולה 🤔 חושב'])
+  expect(text(lineRow('m', 36, model, true)).trimStart()).toBe('פעולה 🤔 חושב · Opus 5.5 🧠 מודל')
+  expect(mergeSafe(lineRow('m', 36, model, true))).toBe(true)
+  // a Hebrew note, a dot, an English note: two runs parted by the dot, which is laid by cell between them
+  const notes = [{ text: 'עוד 400 סוכנים לא מוצגים', dim: true as const }, { text: '·', dim: true as const }, { text: 'דולגו 4 תמלילים גדולים מדי', dim: true as const }, { text: '·', dim: true as const }, { text: 'env.get failed', dim: true as const }]
+  expect(blocksOfParts(notes).map(b => b.text)).toEqual(['עוד 400 סוכנים לא מוצגים · דולגו 4 תמלילים גדולים מדי', '·', 'env.get failed'])
+  expect(mergeSafe(lineRow('f', 80, notes, true))).toBe(true)
+  // no Hebrew at all (the narrow header): every part its own run
+  expect(blocksOfParts(P('🎭', '🟢', '2', '·', '✅', '6')).map(b => b.text)).toEqual(['🎭', '🟢', '2', '·', '✅', '6'])
+  // a trailing digit part joins the block, a trailing mark does not
+  expect(blocksOfParts(P('סיימו', '6', '·')).map(b => b.text)).toEqual(['סיימו 6', '·'])
+  // narrow: the blocks that fit, the next one cut, nothing after it; in RTL the cut block's ellipsis leads it
+  const narrow = lineRow('h', 14, parts, false)
+  expect(text(narrow)).toBe('🎭 🟢 עובדים …')
+  expect(narrow.cells).toHaveLength(14)
+  expect(text(lineRow('h', 14, parts, true))).toBe('…עובדים  🟢 🎭')
   expect(lineRow('h', 0, parts, true).cells).toHaveLength(0)
   expect(text(lineRow('e', 5, [], true))).toBe('     ')
+  expect(blocksOfParts([])).toEqual([])
 })
 
 test('layoutOffice: a room head row, then one row per agent; an agent hit covers its whole row, the pin its glyph', () => {
@@ -281,7 +344,8 @@ test('sweep: 100 agents at widths 24..200 (every one to 60, then every 4th), bot
         if (row.cells.length !== columns) bad.push(`${at}: row ${y} has ${row.cells.length} cells`)
         if (!wellFormed(row)) bad.push(`${at}: row ${y} breaks a wide glyph: ${text(row)}`)
         if (row.cells.some(c => LONE_SURROGATE.test(c.ch))) bad.push(`${at}: row ${y} holds a lone surrogate`)
-        for (const run of hebrewRuns(row)) if (!hebrewRuleOk(run)) bad.push(`${at}: row ${y} run "${run}" breaks THE HEBREW RULE`)
+        for (const run of hebrewRuns(row)) if (!runOk(run, rtl)) bad.push(`${at}: row ${y} run "${run}" breaks THE HEBREW RULE`)
+        if (!mergeSafe(row)) bad.push(`${at}: row ${y} lays two Hebrew runs the engine would merge: ${text(row)}`)
       }
       const agents = lay.hits.filter(hit => hit.kind === 'agent')
       if (agents.length !== 100) bad.push(`${at}: ${agents.length} agent hits`)
@@ -341,10 +405,20 @@ test('the room head: pin glyph, title and counts, LTR flush right and RTL flush 
   // the title is one run (a single Hebrew string, bold, starting with a Hebrew letter), never split by the renderer
   const titleRun = rowRuns(lh.cells).find(r => r.text.includes('תקרא'))
   expect(titleRun).toEqual({ text: 'תקרא את המסמך', bold: true })
-  // a title with a digit first or a Latin word inside is split into runs by the rule, in both directions
+  // a title with a Latin word inside is split into runs at the Latin alone (the engine parts Hebrew blocks across it), the
+  // leading digit riding inside its Hebrew run in logical order; in both directions
   const mixed = layoutOffice(props({ rooms: [room({ title: '4 קבצים של Claude Code לבדיקה' })] })).rows[0]!
-  expect(rowRuns(mixed.cells).filter(r => r.bold).map(r => r.text)).toEqual(['לבדיקה', 'Claude Code', 'קבצים של', '4'])
+  expect(rowRuns(mixed.cells).filter(r => r.bold).map(r => r.text)).toEqual(['לבדיקה', 'Claude Code', '4 קבצים של'])
+  expect(mergeSafe(mixed)).toBe(true)
   for (const run of hebrewRuns(mixed)) expect(hebrewRuleOk(run)).toBe(true)
+  const mixedLtr = layoutOffice(props({ rtl: false, rooms: [room({ title: '4 קבצים של Claude Code לבדיקה' })] })).rows[0]!
+  expect(rowRuns(mixedLtr.cells).filter(r => r.bold).map(r => r.text)).toEqual(['4 קבצים של', 'Claude Code', 'לבדיקה'])
+  expect(mergeSafe(mixedLtr)).toBe(true)
+  // a cut Hebrew title: the ellipsis leads the run in RTL (drawn after the word), ends it in LTR
+  const cutRtl = layoutOffice(props({ columns: 24, rooms: [room({ title: 'כותרת ארוכה מאוד שנחתכת' })] })).rows[0]!
+  expect(rowRuns(cutRtl.cells).find(r => r.bold)?.text.startsWith('…')).toBe(true)
+  const cutLtr = layoutOffice(props({ columns: 24, rtl: false, rooms: [room({ title: 'כותרת ארוכה מאוד שנחתכת' })] })).rows[0]!
+  expect(rowRuns(cutLtr.cells).find(r => r.bold)?.text.endsWith('…')).toBe(true)
   // a long title is cut with an ellipsis before the counts, in both directions
   const long = { ...r, title: 'כותרת ארוכה מאוד שלא נכנסת בשורה אחת של ארבעים וחמישה תאים בכלל' }
   for (const dir of [true, false]) {
@@ -375,7 +449,7 @@ test('the agent row (LTR): margin, emoji, name (bold, status colour), the model 
   expect(seg(r2!, 29, 29 + 12)).toBe(' ?          ')
   expect(seg(r0!, 42, 42 + 16).trimEnd()).toBe('📖 קורא')
   expect(seg(r1!, 42, 42 + 16)).toBe('✍️ כותב קובץ אר…')
-  expect(seg(r2!, 42, 42 + 16).trimEnd()).toBe('✅ סיים')
+  expect(seg(r2!, 42, 42 + 16).trim()).toBe('')   // THE HEBREW RULE (3): a Hebrew activity beside a Hebrew name behind a ` ? ` pill (no Latin between) is not drawn
   // the tail: badges then the minutes at the far end (the room's widest tail is `❌⭐⏰💬12′` = 11 cells, right-aligned in its field)
   expect(seg(r0!, 61, 72).trimStart()).toBe('❌⭐⏰💬12′')
   expect(seg(r1!, 61, 72).trimStart()).toBe('<1′')
@@ -393,12 +467,25 @@ test('the agent row (LTR): margin, emoji, name (bold, status colour), the model 
   expect(runs(r2!).find(x => x.text === ' ? ')).toEqual({ text: ' ? ', fg: '#e8ecff', bg: '#3a4470' })
   expect(runs(r0!).find(x => x.text === 'קורא')).toEqual({ text: 'קורא', fg: '#7ee29a' })
   expect(runs(r0!).find(x => x.text === '📖')).toEqual({ text: '📖', fg: '#7ee29a' })
-  expect(runs(r2!).find(x => x.text === 'סיים')).toEqual({ text: 'סיים', fg: '#9fb0e6', dim: true })
+  expect(runs(r2!).find(x => x.text === 'סיים')).toBeUndefined()
+  // ... it is drawn once the pill has Latin in it, or the name has no Hebrew, in both directions
+  for (const rtl of [true, false]) {
+    const latinPill = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...done, model: 'nova-6-0' }] })] })).rows[1]!
+    expect(rowRuns(latinPill.cells).find(x => x.text === 'סיים')).toEqual({ text: 'סיים', fg: '#9fb0e6', dim: true })
+    expect(mergeSafe(latinPill)).toBe(true)
+    const latinName = layoutOffice(props({ rtl, columns: 72, rooms: [room({ agents: [{ ...done, name: 'Reviewer' }] })] })).rows[1]!
+    expect(rowRuns(latinName.cells).find(x => x.text === 'סיים')).toBeDefined()
+    expect(mergeSafe(latinName)).toBe(true)
+    const noPill = layoutOffice(props({ rtl, columns: 24, rooms: [room({ agents: [{ ...done, name: 'שם ארוך מאוד שנחתך', act: '✅ סיים', startMin: 100, failed: true, longRunning: true }] })] })).rows[1]!
+    expect(text(noPill)).not.toContain('סיים')
+    expect(mergeSafe(noPill)).toBe(true)
+  }
   expect(runs(r0!).find(x => x.text === '❌⭐⏰💬12′')).toEqual({ text: '❌⭐⏰💬12′', dim: true })
   for (const row of lay.rows) {
     expect(row.cells).toHaveLength(72)
     expect(wellFormed(row)).toBe(true)
-    for (const run of hebrewRuns(row)) expect(hebrewRuleOk(run)).toBe(true)
+    expect(mergeSafe(row)).toBe(true)
+    for (const run of hebrewRuns(row)) expect(runOk(run, false)).toBe(true)
   }
   // pillText and tailText, the row's pieces
   expect(pillText('Opus 5.5')).toBe(' Opus 5.5 ')
@@ -430,38 +517,55 @@ test('the agent row (RTL): the same row mirrored — the emoji at the right edge
   expect(text(wide)).toBe(' '.repeat(24) + '1′💬   חושב 🤔  Opus 5.5   המנהל 🦉 ')
 })
 
-test('widths: at every width 24..200 the row shrinks in order — the activity first, then the name, then the pill to its family, then the pill away — and never cuts a glyph; wider panes cap the gap before the minutes', () => {
-  const r = room({ agents: [ag('lead', 0, { name: 'שם בינוני', model: 'Sonnet 5.5', modelFam: 'sonnet', act: '✍️ כותב קובץ ארוך', startMin: 12, failed: true }), ag('a1', 1, { name: 'קצר', act: '📖 קורא', startMin: 3 })] })
-  const have = (columns: number, rtl: boolean) => {
+test('widths: at every width 24..200 the row shrinks in order — the activity to ACT_KEEP, the name to NAME_MIN, the pill to its family, the activity away, the name to a glyph, the pill away — never cutting a glyph; the name field never takes what a kept activity needs; wider panes cap the gap before the minutes', () => {
+  const cast = (model: string, modelFam: OfficeAgent['modelFam']) => room({ agents: [ag('lead', 1, { name: 'שם בינוני', model, modelFam, act: '✍️ כותב קובץ ארוך', startMin: 12, failed: true }), ag('a1', 1, { name: 'קצר', act: '📖 קורא', startMin: 3 })] })
+  const sonnet = cast('Sonnet 5.5', 'sonnet')
+  const opus = cast('Opus 5.5', 'opus')
+  const have = (columns: number, rtl: boolean, r = sonnet) => {
     const row = layoutOffice(props({ columns, rtl, rooms: [r] })).rows[1]!
     const runs = rowRuns(row.cells).map(x => x.text)
-    return { row, runs, pill: runs.find(x => /^ (Sonnet|S…) ?/.test(x) || x === ' Sonnet 5.5 ' || x === ' Sonnet ') ?? '', act: runs.some(x => x.startsWith('כותב')), name: runs.find(x => x.startsWith('שם')) ?? '' }
+    const pill = runs.find(x => /^ (Sonnet|Opus)/.test(x)) ?? ''
+    const act = runs.find(x => /כותב|^…כו|^…כ$/.test(x)) ?? ''
+    return { row, runs, pill, act, name: runs.find(x => /^…?שם/.test(x)) ?? '' }
   }
   for (const rtl of [true, false]) {
     // roomy: every field whole, the minutes GAP_MAX past the activity, the rest blank (the gap does not grow with the pane)
     const wide = have(120, rtl)
     expect(wide.pill).toBe(' Sonnet 5.5 ')
-    expect(wide.act).toBe(true)
+    expect(wide.act).toBe(rtl ? '…כותב קובץ אר' : 'כותב קובץ אר…')   // (17 cells: cut to ACT_MAX)
     expect(wide.name).toBe('שם בינוני')
     expect(text(wide.row).trim()).toBe(text(have(200, rtl).row).trim())
     expect(text(wide.row).trim().length).toBeLessThan(70)
-    // 45: the activity is cut; 36: the activity is gone, the name whole; 30: the name gives way, the pill short; 24: the pill is the family, the name cut
-    expect(have(45, rtl).runs.some(x => x.endsWith('…') && /כותב/.test(x))).toBe(true)
-    expect(have(36, rtl).act).toBe(false)
-    expect(have(36, rtl).name).toBe('שם בינוני')
-    expect(have(36, rtl).pill).toBe(' Sonnet 5.5 ')
+    // 45: the activity cut, the rest whole; 40: the activity at ACT_KEEP (8 cells), the name cut; 36: the name at NAME_MIN and the pill
+    // short, the activity still there; 32 with Opus: the activity whole-ish behind the short pill; 28: the activity gone; 24: the name cut
+    expect(have(45, rtl).act.includes('…')).toBe(true)
+    expect(have(45, rtl).name).toBe('שם בינוני')
+    expect(have(45, rtl).pill).toBe(' Sonnet 5.5 ')
+    expect(have(40, rtl).act).toBe(rtl ? '…כותב' : 'כותב…')
+    expect(have(40, rtl).name.length).toBeLessThan(9)
+    expect(have(40, rtl).pill).toBe(' Sonnet 5.5 ')
+    expect(have(36, rtl).pill).toBe(' Sonnet ')
+    expect(have(36, rtl).act).toBe(rtl ? '…כותב' : 'כותב…')
+    expect(have(36, rtl).name).toBe(rtl ? '…שם בי' : 'שם בי…')
+    expect(have(32, rtl, opus).pill).toBe(' Opus ')
+    expect(have(32, rtl, opus).act).toBe(rtl ? '…כותב' : 'כותב…')
     expect(have(28, rtl).pill).toBe(' Sonnet ')
+    expect(have(28, rtl).act).toBe('')
     expect(have(24, rtl).pill).toBe(' Sonnet ')
-    expect(have(24, rtl).name.endsWith('…')).toBe(true)
+    expect(have(24, rtl).name).toBe(rtl ? '…שם ב' : 'שם ב…')
+    expect(have(24, rtl, opus).name).toBe(rtl ? '…שם בי' : 'שם בי…')
   }
-  // the whole sweep: exact width, whole glyphs, the pill never half (either text or none), the minutes always drawn
+  // the whole sweep: exact width, whole glyphs, the pill never half (either text or none), the minutes always drawn, nothing the engine would merge
   for (let columns = 24; columns <= 200; columns++) {
     for (const rtl of [true, false]) {
-      const { row, runs } = have(columns, rtl)
-      expect(row.cells, `${columns}`).toHaveLength(columns)
-      expect(wellFormed(row), `${columns}`).toBe(true)
-      expect(runs.filter(x => /Sonnet|S…/.test(x)).every(x => x === ' Sonnet 5.5 ' || x === ' Sonnet '), `${columns}: ${runs.join('|')}`).toBe(true)
-      expect(runs.some(x => x.includes('12′')), `${columns}`).toBe(true)
+      for (const r of [sonnet, opus]) {
+        const { row, runs } = have(columns, rtl, r)
+        expect(row.cells, `${columns}`).toHaveLength(columns)
+        expect(wellFormed(row), `${columns}`).toBe(true)
+        expect(runs.filter(x => /Sonnet|Opus|S…|O…/.test(x)).every(x => [' Sonnet 5.5 ', ' Sonnet ', ' Opus 5.5 ', ' Opus '].includes(x)), `${columns}: ${runs.join('|')}`).toBe(true)
+        expect(runs.some(x => x.includes('12′')), `${columns}`).toBe(true)
+        expect(mergeSafe(row), `${columns}`).toBe(true)
+      }
     }
   }
 })
@@ -527,12 +631,12 @@ test('decor: the walk-in shifts the emoji and the name round((1 - p) × WALK_CEL
   // RTL: from the right edge inward
   const rhome = row(rtl, NO_DECOR, 2)
   expect(rhome.endsWith('סוכן 1 🦉 ')).toBe(true)
-  expect(row(rtl, decor({ entering: [['a1', 0]] }), 2).endsWith(' סו… 🦉    ')).toBe(true)
-  expect(row(rtl, decor({ entering: [['a1', 0.5]] }), 2).endsWith(' סוכ… 🦉   ')).toBe(true)
+  expect(row(rtl, decor({ entering: [['a1', 0]] }), 2).endsWith(' …סו 🦉    ')).toBe(true)   // (the ellipsis leads a cut Hebrew run in RTL)
+  expect(row(rtl, decor({ entering: [['a1', 0.5]] }), 2).endsWith(' …סוכ 🦉   ')).toBe(true)
   expect(pillAt(rtl, decor({ entering: [['a1', 0]] }))).toBe(pillAt(rtl, NO_DECOR))
   // the hop: ⭐ before the emoji, the name giving it two cells
   expect(row(ltr, decor({ hop: ['a1'] }), 2).startsWith(' ⭐🦉 סוכ… ')).toBe(true)
-  expect(row(rtl, decor({ hop: ['a1'] }), 2).endsWith(' סוכ… ⭐🦉 ')).toBe(true)
+  expect(row(rtl, decor({ hop: ['a1'] }), 2).endsWith(' …סוכ ⭐🦉 ')).toBe(true)
   // both at once: the walk-in carries the ⭐ along, the name down to its ellipsis
   expect(row(ltr, decor({ hop: ['a1'], entering: [['a1', 0]] }), 2).startsWith('    ⭐🦉 … ')).toBe(true)
   // only the decorated row changes; the other rows and the hits are the plain layout's
@@ -602,7 +706,8 @@ test('decor sweep: at the sweep widths 24..200, both directions, every walk-in s
           if (text(row) === plainText[y]) continue
           if (!wellFormed(row)) bad.push(`${at}: row ${y} breaks a wide glyph`)
           if (!lay.hits.some(r => r.kind === 'agent' && r.y === y)) bad.push(`${at}: row ${y} changed but is no agent's`)
-          for (const run of hebrewRuns(row)) if (!hebrewRuleOk(run)) bad.push(`${at}: row ${y} run "${run}" breaks THE HEBREW RULE`)
+          for (const run of hebrewRuns(row)) if (!runOk(run, rtl)) bad.push(`${at}: row ${y} run "${run}" breaks THE HEBREW RULE`)
+          if (!mergeSafe(row)) bad.push(`${at}: row ${y} lays two Hebrew runs the engine would merge`)
         }
       }
     }

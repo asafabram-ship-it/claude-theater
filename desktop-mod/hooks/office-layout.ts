@@ -10,13 +10,21 @@
 // `wrap: 'truncate'`, so `put` clips and never lets a glyph spill past the last
 // column. No clock here: minutes come in the props.
 //
-// THE HEBREW RULE (i18n.ts): the desktop draws a Text as an LTR paragraph, so
-// a run holding Hebrew reads right only when it starts with a Hebrew letter and
-// holds no Latin letter. `place` writes every text as RUNS by script — a Hebrew
-// run, a Latin run, a neutral run (an emoji, a digit) — each placed by cell
-// position in reading order (from the right in RTL), and `rowRuns` keeps them
-// apart (`Cell.brk`), so the Client draws one Text per run and the engine
-// never sees a Hebrew word behind a digit or beside a Latin one.
+// THE HEBREW RULE (i18n.ts): the desktop draws a whole row as ONE Text = one
+// LTR paragraph, whatever the runs inside it, and the bidi algorithm then
+// takes every stretch of Hebrew that is separated only by neutrals (spaces,
+// digits, emoji, punctuation) as ONE right-to-left block and mirrors it in
+// place — so two Hebrew pieces laid by cell with nothing but neutrals between
+// them come out swapped. The layout therefore (1) writes Hebrew that shares a
+// row with nothing Latin between it as ONE run in logical order and leaves the
+// mirroring to the engine; (2) lays pieces by cell only where a strong Latin
+// run (the model pill) or the row's edge separates them (`segments`,
+// `blocksOfParts`, `layBlocks`); (3) never draws a Hebrew activity on a row
+// whose name is Hebrew unless a Latin pill sits between them; (4) puts a cut
+// Hebrew run's ellipsis at its logical start in RTL (a leading neutral lands
+// to the LEFT of the mirrored block = after the word for the reader; a
+// trailing one before it). `rowRuns` keeps runs apart (`Cell.brk`): the
+// Client draws one Text per run, the paragraph is still the whole row.
 //
 // The decor (the hover, the hop, the walk-in) is the surface module's local
 // state handed in as plain data: the layout stays a pure function of
@@ -34,9 +42,15 @@ export const ACT_MAX = 16
 export const PILL_MAX = 12
 /** A name narrower than this gives way: the pill shortens to its family before the name shrinks further. */
 const NAME_MIN = 6
+/** The activity's cells a row keeps before the name and the pill give way (an emoji, a space, five letters). */
+const ACT_KEEP = 8
 /** The activity needs this many cells to be worth drawing (an emoji and an ellipsis), else the row drops it. */
 const ACT_MIN = 3
-/** The widest gap between a row's last field and its minutes (wider panes leave the rest blank, the minutes aligned per room). */
+/**
+ * The widest gap between a row's last field and its minutes: the tail field sits at the far end while
+ * that leaves at most 2 × GAP_MAX + 1 blank cells, else GAP_MAX past the content (wider panes leave
+ * the rest of the row blank; the minutes stay aligned per room either way).
+ */
 const GAP_MAX = 2
 const MORE_MARK = '▸'
 
@@ -74,9 +88,11 @@ const EMOJI_RE = /^\p{Extended_Pictographic}/u
 const JOIN_RE = /^[\p{M}‍︎️\u{1F3FB}-\u{1F3FF}]$/u
 const ZWJ = '‍'
 const ELLIPSIS = '…'
-const HEBREW_RE = /^\p{Script=Hebrew}/u
-/** A strong left-to-right letter that is not Hebrew (Latin, Greek, Cyrillic, CJK…): its own run, never inside a Hebrew one. */
-const LETTER_RE = /^\p{L}/u
+/** A Hebrew-script character (a letter, a point, the geresh): the bidi algorithm's right-to-left text. (i18n.ts hebrewRuleOk uses the same classes.) */
+const HEBREW_RE = /\p{Script=Hebrew}/u
+/** A letter of another script (Latin, Greek, Cyrillic, CJK…): strong left-to-right — it parts two Hebrew blocks, and never rides inside one. */
+const LETTER_RE = /(?!\p{Script=Hebrew})\p{L}/u
+const DIGIT_RE = /\p{Nd}/u
 
 type Glyph = { ch: string; w: number }
 
@@ -143,79 +159,135 @@ export function cut(s: string, max: number): string {
   return gs.slice(0, n).map(g => g.ch).join('') + ELLIPSIS
 }
 
-type Segment = { text: string; w: number; gap: number }
+/** One run laid by cell: its text (logical order), its width, the blank cells before it, its style. */
+type Block = { text: string; w: number; gap: number; style: Omit<Cell, 'ch' | 'brk'> }
 
 /**
- * `text` as the runs THE HEBREW RULE allows, in logical order: a Hebrew run (a Hebrew letter first,
- * then anything but another script's letter — digits and punctuation ride inside) or a run without
- * Hebrew (Latin with its digits and neutrals, or neutrals alone: a leading emoji, a leading digit —
- * an LTR paragraph draws these right whatever they start with). A new run starts at a Hebrew letter
- * after a run without, and at another script's letter inside a Hebrew run. The spaces between two
- * runs are `gap` cells drawn blank before the run (never inside a run, so a Hebrew run never starts
- * with a space).
+ * `text` as the runs the bidi algorithm lets the layout place by cell, in logical order: a Hebrew
+ * run (a Hebrew letter first, then anything but another script's letter — digits and punctuation
+ * ride inside; a run of digits right before it, such as a title's leading `4`, rides inside too, so
+ * the two are never two blocks the engine would merge and swap), a run of another script's letters
+ * (with its digits and neutrals), or a run of neutrals alone (a leading emoji, which the engine
+ * leaves where it is laid). A new run starts at a Hebrew letter after a run without, and at another
+ * script's letter inside a Hebrew run. The spaces between two runs are `gap` cells drawn blank
+ * before the run (never inside a run, so a Hebrew run never starts with a space).
  */
-export function segments(text: string): Segment[] {
-  const out: Segment[] = []
-  let cur: { text: string; w: number; he: boolean } | null = null
+export function segments(text: string): Array<{ text: string; w: number; gap: number }> {
+  const out: Array<{ text: string; w: number; gap: number; he: boolean; neutral: boolean }> = []
+  let cur: { text: string; w: number; he: boolean; neutral: boolean } | null = null
   let spaces = 0
   let gap = 0
   const close = () => {
     if (!cur) return
-    out.push({ text: cur.text, w: cur.w, gap })
+    const last = out[out.length - 1]
+    // a run of neutrals holding a digit, right before a Hebrew run: one run (`4 קבצים`), in logical order
+    if (last && last.neutral && DIGIT_RE.test(last.text) && cur.he) {
+      last.text += ' '.repeat(gap) + cur.text
+      last.w += gap + cur.w
+      last.he = true
+      last.neutral = false
+    } else out.push({ ...cur, gap })
     cur = null
   }
   for (const g of glyphs(text)) {
     if (g.ch === ' ') { spaces++; continue }
     const he = HEBREW_RE.test(g.ch)
-    const fresh = !cur || (he && !cur.he) || (!he && cur.he && LETTER_RE.test(g.ch))
+    const letter = he || LETTER_RE.test(g.ch)
+    const fresh = !cur || (he && !cur.he) || (!he && cur.he && letter)
     if (fresh) {
       close()
       gap = spaces
-      cur = { text: g.ch, w: g.w, he }
+      cur = { text: g.ch, w: g.w, he, neutral: !letter }
     } else {
       cur!.text += ' '.repeat(spaces) + g.ch
       cur!.w += spaces + g.w
+      if (letter) cur!.neutral = false
     }
     spaces = 0
   }
   close()
-  return out
+  return out.map(s => ({ text: s.text, w: s.w, gap: s.gap }))
 }
 
 /**
- * Writes `text` into the field [x, x + w) as its runs (`segments`), each a run of its own, laid in
- * reading order: from the left in LTR, from the right in RTL (the first run at the field's reading
- * edge; a run's text keeps its own glyph order, the engine draws a Hebrew run right to left by
- * itself). Cut to the field first, whole glyphs. A field off the row is not drawn.
+ * Lays `blocks` into the field [x, x + w) in reading order — from the left in LTR, from the right in
+ * RTL (the first block at the field's reading edge) — each a run of its own. A block's text keeps its
+ * logical order: the engine mirrors a Hebrew block in place. In RTL a Hebrew block's trailing ellipsis
+ * moves to its start (a leading neutral lands at the left of the mirrored block: after the word for
+ * the reader). A field off the row is not drawn; what runs past it is clipped by `put`.
  */
-export function place(row: CellRow, x: number, w: number, text: string, style: Omit<Cell, 'ch' | 'brk'>, rtl: boolean): void {
+function layBlocks(row: CellRow, x: number, w: number, blocks: readonly Block[], rtl: boolean): void {
   if (w < 1 || x < 0 || x >= row.cells.length) return
   let r = 0
-  for (const s of segments(cut(text, w))) {
-    r += s.gap
-    put(row, rtl ? x + w - r - s.w : x + r, s.text, style, true)
-    r += s.w
+  for (const b of blocks) {
+    r += b.gap
+    let text = b.text
+    if (rtl && text.endsWith(ELLIPSIS) && HEBREW_RE.test(text)) text = ELLIPSIS + text.slice(0, -ELLIPSIS.length)
+    put(row, rtl ? x + w - r - b.w : x + r, text, b.style, true)
+    r += b.w
   }
+}
+
+/**
+ * Writes one text into the field [x, x + w): cut to the field (whole glyphs), then its runs
+ * (`segments`) laid by cell in reading order (`layBlocks`). A Hebrew name, a title, an activity.
+ */
+export function place(row: CellRow, x: number, w: number, text: string, style: Omit<Cell, 'ch' | 'brk'>, rtl: boolean): void {
+  layBlocks(row, x, w, segments(cut(text, w)).map(s => ({ ...s, style })), rtl)
 }
 
 /** A piece of a chrome line (office-client.tsx): its text and style. */
 export type Part = { text: string; fg?: string; bg?: string; bold?: true; dim?: true }
 
 /**
+ * The parts of a chrome line as the runs the engine will not swap: from a part holding Hebrew to the
+ * last Hebrew part before one with another script's letter — the neutral parts between them and the
+ * digit parts right after (`סיימו 6`) — is ONE run in logical order, a space apart, in the first
+ * part's style (the engine mirrors the whole block; a count after its word stays with it); every
+ * other part is a run of its own, laid by cell. (Exported for the tests.)
+ */
+export function blocksOfParts(parts: readonly Part[]): Block[] {
+  const out: Block[] = []
+  const he = parts.map(p => HEBREW_RE.test(p.text))
+  const lt = parts.map(p => LETTER_RE.test(p.text))
+  const digits = parts.map(p => /^\p{Nd}+$/u.test(p.text))
+  let i = 0
+  while (i < parts.length) {
+    const { text, ...style } = parts[i]!
+    let last = i
+    if (he[i]) {
+      for (let k = i + 1; k < parts.length && !lt[k]; k++) if (he[k]) last = k
+      while (last + 1 < parts.length && digits[last + 1]) last++
+    }
+    const joined = parts.slice(i, last + 1).map(p => p.text).join(' ')
+    out.push({ text: joined, w: width(joined), gap: out.length ? 1 : 0, style })
+    i = last + 1
+  }
+  return out
+}
+
+/**
  * One line of the chrome as a cell row: the parts laid in reading order a space apart (from the
- * right in RTL), each in its own runs (`place`), the last one that does not fit cut with an
- * ellipsis and the rest dropped. The Client draws it as it draws a layout row, one Text per run.
+ * right in RTL) as the runs of `blocksOfParts`; what does not fit is cut with an ellipsis (the last
+ * block that fits in part, the rest dropped). The Client draws it as it draws a layout row, one Text
+ * per run.
  */
 export function lineRow(id: string, columns: number, parts: readonly Part[], rtl: boolean): CellRow {
   const row = blankRow(id, columns)
+  const blocks: Block[] = []
   let r = 0
-  for (const p of parts) {
-    const { text, ...style } = p
-    const w = Math.min(width(text), columns - r)
-    if (w < 1) break
-    place(row, at(r, w, columns, rtl), w, text, style, rtl)
-    r += w + 1
+  for (const b of blocksOfParts(parts)) {
+    const room = columns - r - b.gap
+    if (room < 1) break
+    if (b.w > room) {
+      const text = cut(b.text, room)
+      blocks.push({ ...b, text, w: width(text) })
+      break
+    }
+    blocks.push(b)
+    r += b.gap + b.w
   }
+  layBlocks(row, 0, columns, blocks, rtl)
   return row
 }
 
@@ -254,52 +326,43 @@ type Fields = { name: number; pill: 'full' | 'short' | 'none'; pillW: number; ac
 const HEAD = ROW_MARGIN + EMOJI_CELLS + 1
 
 /**
- * The fields of a room's rows at `columns`: each the widest of the room (capped), then shrunk until
- * every row fits — the activity first (to nothing under ACT_MIN), then the name down to NAME_MIN,
- * then the pill to its family, then the name to a glyph, then the pill away. The minutes keep a
- * field of the room's widest tail at the far end, or GAP_MAX past the last field when the pane is
- * wider than the content (the rest of the row stays blank: no gap grows with the pane).
+ * The fields of a room's rows at `columns`: each the widest of the room (capped) — the name field
+ * never past what the short pill and a kept activity leave it — then shrunk until every row fits, in
+ * this order: (1) the activity down to ACT_KEEP, (2) the name down to NAME_MIN, (3) the pill to its
+ * family, (4) the activity down to ACT_MIN then away, (5) the name to a glyph, (6) the pill away.
+ * The minutes keep a field of the room's widest tail at the far end, or GAP_MAX past the last field
+ * when the pane is wider than the content (the rest of the row stays blank: no gap grows with the
+ * pane).
  */
 function roomFields(room: OfficeRoom, columns: number, rtl: boolean): Fields {
-  let name = 0
+  let name0 = 0
   let full = 0
   let short = 0
-  let act = 0
+  let act0 = 0
   let tail = 0
   for (const a of room.agents) {
-    name = Math.max(name, Math.min(NAME_MAX, width(a.name)))
+    name0 = Math.max(name0, Math.min(NAME_MAX, width(a.name)))
     full = Math.max(full, width(pillText(a.model)))
     short = Math.max(short, width(pillText(a.model, true)))
-    act = Math.max(act, Math.min(ACT_MAX, width(a.act)))
+    act0 = Math.max(act0, Math.min(ACT_MAX, width(a.act)))
     tail = Math.max(tail, width(tailText(a, rtl)))
   }
   const budget = columns - HEAD - (tail > 0 ? 1 + tail : 0)
   const need = (n: number, p: number, a: number) => n + (p > 0 ? 1 + p : 0) + (a > 0 ? 1 + a : 0)
-  const name0 = name
+  const keep = Math.min(ACT_KEEP, act0)
+  let name = Math.min(name0, Math.max(NAME_MIN, budget - short - 1 - keep - 1))
+  let act = act0
   let pill: Fields['pill'] = 'full'
   let pillW = full
-  if (need(name, pillW, act) > budget) {
-    // the activity gives way first: cut, then dropped
-    act = budget - name - 1 - pillW - 1
-    if (act < ACT_MIN) act = 0
-    if (need(name, pillW, act) > budget) {
-      // then the name, down to NAME_MIN; then the pill to its family (the name regaining what it can); then the pill away
-      name = budget - 1 - pillW
-      if (name < NAME_MIN) {
-        pill = 'short'
-        pillW = short
-        name = Math.min(name0, budget - 1 - pillW)
-        if (name < 1) {
-          pill = 'none'
-          pillW = 0
-          name = Math.min(name0, budget)
-        }
-      }
-      if (name < 0) name = 0
-    }
-  }
+  const over = () => need(name, pillW, act) > budget
+  if (over()) act = Math.max(keep, Math.min(act0, budget - name - 1 - pillW - 1))                      // (1)
+  if (over()) name = Math.max(Math.min(NAME_MIN, name0), Math.min(name, budget - 1 - pillW - 1 - act))   // (2)
+  if (over()) { pill = 'short'; pillW = short }                                                           // (3)
+  if (over()) { act = budget - name - 1 - pillW - 1; if (act < ACT_MIN) act = 0 }                        // (4)
+  if (over()) name = Math.max(0, Math.min(name0, budget - 1 - pillW))                                     // (5)
+  if (name < 1 || over()) { pill = 'none'; pillW = 0; name = Math.max(0, Math.min(name0, budget)) }      // (6)
   const content = HEAD + need(name, pillW, act)
-  // the tail field: at the far end while the pane is near the content's width, else GAP_MAX past the content
+  // the tail field: at the far end while that leaves at most 2 × GAP_MAX + 1 blank cells, else GAP_MAX past the content
   const far = columns - tail
   const tailAt = far - content - 1 <= 2 * GAP_MAX ? Math.max(content, far) : content + 1 + GAP_MAX
   return { name, pill, pillW, act, tail, tailAt }
@@ -328,13 +391,18 @@ function agentRow(row: CellRow, a: OfficeAgent, f: Fields, columns: number, sele
   put(row, at(ROW_MARGIN + shift, gw, columns, rtl), glyph, selected ? { fg: '#ffffff', bold: true } : {}, true)
   if (f.name - extra > 0) place(row, at(HEAD + extra, f.name - extra, columns, rtl), f.name - extra, a.name, { fg, bold: true }, rtl)
   let r = HEAD + f.name
+  let parted = false   // a Latin pill between the name and the activity: the engine keeps two Hebrew words apart only across it
   if (f.pill !== 'none') {
     const pill = pillText(a.model, f.pill === 'short')
     put(row, at(r + 1, width(pill), columns, rtl), pill, { fg: a.modelFam === 'other' ? '#e8ecff' : '#ffffff', bg: MODEL_BG[a.modelFam] }, true)
+    parted = LETTER_RE.test(pill)
     r += 1 + f.pillW
   }
   if (f.act > 0) {
-    place(row, at(r + 1, f.act, columns, rtl), f.act, a.act, a.status === 'done' ? { fg, dim: true } : { fg }, rtl)
+    // THE HEBREW RULE (3): a Hebrew activity beside a Hebrew name with no Latin between them would be mirrored with it as one
+    // block (`?` pill, or none): the row keeps its field blank instead
+    const drawn = !(HEBREW_RE.test(a.act) && HEBREW_RE.test(a.name) && !parted)
+    if (drawn) place(row, at(r + 1, f.act, columns, rtl), f.act, a.act, a.status === 'done' ? { fg, dim: true } : { fg }, rtl)
     r += 1 + f.act
   }
   const tail = tailText(a, rtl)

@@ -409,15 +409,20 @@ export async function poll($: EngineInterface): Promise<void> {
     if (fresh.length > 0) {
       prefs = await read($, prefsAtom)
       const roomDone = parseRoomDone(await $.store.get(STORE_ROOM_DONE_KEY).catch(() => undefined))
-      const shown = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins, RECENT_DONE).visible.map(a => a.id))
+      // the ⭐ for every finish the office draws (THE RECENT FINISHED: a hiding room's three most recent among them); the
+      // toast and the chime only for a finish the room shows by its toggle or prefs.showDone, as before (controller's ruling,
+      // fix round 1 of Task 2.8a: no chime on every subagent finish for a default user)
+      const drawn = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins, RECENT_DONE).visible.map(a => a.id))
+      const shown = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins).visible.map(a => a.id))
       const L = I18N[prefs.lang]
       let celebrated = false
       for (const id of fresh) {
         const a = merged.agents.find(x => x.id === id)
-        if (a === undefined || !shown.has(id)) {
+        if (a === undefined || !drawn.has(id)) {
           delete stars[id]
           continue
         }
+        if (!shown.has(id)) continue
         $.ui.toast(`${cardName(a, prefs.lang)} — ${L.finishedToast}`)
         celebrated = true
       }

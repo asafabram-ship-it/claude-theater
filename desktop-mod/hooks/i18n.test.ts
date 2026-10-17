@@ -6,28 +6,32 @@ import { expect, test } from 'claude-code/testing'
 import { I18N, hebrewRuleOk, modelLabel } from './i18n'
 import { LABEL_KEYS } from './office-props'
 
-test('hebrewRuleOk: a string without Hebrew passes; one with Hebrew must start with a Hebrew letter and hold no Latin letter', () => {
+test('hebrewRuleOk: a string without Hebrew passes; one with Hebrew must hold no letter of another script and end with Hebrew or a digit (a trailing mark is drawn before the word, a leading one after it)', () => {
   expect(hebrewRuleOk('Opus 5.5')).toBe(true)
   expect(hebrewRuleOk('⏳ 5h 42% · 14:30')).toBe(true)
   expect(hebrewRuleOk('')).toBe(true)
   expect(hebrewRuleOk('עוד 5 שסיימו')).toBe(true)
-  expect(hebrewRuleOk('משך 7′')).toBe(true)
-  expect(hebrewRuleOk('צפו בדמו חי ▶')).toBe(true)
-  expect(hebrewRuleOk('4 תמלילים מעל 4MiB דולגו')).toBe(false)   // a digit first, Latin inside: the scrambled footer of the live check
+  expect(hebrewRuleOk('משך 7 דק׳')).toBe(true)                    // the geresh is Hebrew script
+  expect(hebrewRuleOk('משך 7′')).toBe(false)                       // a trailing prime: before the number for the reader
+  expect(hebrewRuleOk('▶ צפו בדמו חי')).toBe(true)                 // a leading mark lands after the words
+  expect(hebrewRuleOk('צפו בדמו חי ▶')).toBe(false)                // a trailing one before them
+  expect(hebrewRuleOk('4 תמלילים מעל 4MiB דולגו')).toBe(false)   // Latin inside: the scrambled footer of the live check
   expect(hebrewRuleOk('דולגו 4 תמלילים גדולים מדי')).toBe(true)
-  expect(hebrewRuleOk('▶ צפו בדמו חי')).toBe(false)                // a symbol first
-  expect(hebrewRuleOk('📖 קורא')).toBe(false)                      // an emoji first (the layout draws it as a run of its own)
+  expect(hebrewRuleOk('4 תמלילים')).toBe(true)                     // a leading digit joins the left side: "תמלילים 4", never scrambled
+  expect(hebrewRuleOk('📖 קורא')).toBe(true)
+  expect(hebrewRuleOk('❌ נכשל')).toBe(true)
   expect(hebrewRuleOk('הפעילו סוכן ב-Claude Code')).toBe(false)    // Latin inside
-  expect(hebrewRuleOk('+4 סוכנים נוספים')).toBe(false)
-  expect(hebrewRuleOk(' שלום')).toBe(false)                        // a leading space is not a letter
+  expect(hebrewRuleOk('אין סוכנים שתואמים לחיפוש.')).toBe(false)   // a trailing period
+  expect(hebrewRuleOk('מודל:')).toBe(false)
+  expect(hebrewRuleOk('שלום ')).toBe(true)                         // trailing spaces are not marks
 })
 
 test('THE HEBREW RULE: every Hebrew string the office Client draws passes it — the labels of the props (LABEL_KEYS), the counted labels, the empty-office messages, the toasts', () => {
   const L = I18N.he
   const bad: string[] = []
   const check = (key: string, s: string) => { if (!hebrewRuleOk(s)) bad.push(`${key}: ${s}`) }
-  for (const k of LABEL_KEYS) check(k, L[k])
-  for (const k of ['emptyOffice', 'emptySub', 'emptyNoMatch', 'emptyNoActive', 'emptyNoneInWindow', 'finishedToast', 'srNoMatch', 'srCleared', 'pin', 'unpin', 'roomTitle', 'details', 'loading', 'helpHint', 'langHint', 'toggleFinished', 'scSearch', 'scPrev', 'scNext', 'mute', 'unmute'] as const) check(k, L[k])
+  for (const k of LABEL_KEYS) if (k !== 'searchPlaceholder') check(k, L[k])   // (the placeholder's trailing … is dropped by the Client, which draws it behind the glass)
+  for (const k of ['emptyOffice', 'emptySub', 'emptyNoMatch', 'emptyNoActive', 'emptyNoneInWindow', 'finishedToast', 'srNoMatch', 'srCleared', 'pin', 'unpin', 'roomTitle', 'details', 'helpHint', 'langHint', 'toggleFinished', 'scSearch', 'scPrev', 'scNext', 'mute', 'unmute'] as const) check(k, L[k])
   // the empty-office sub is split at " - " into lines of its own (office-chrome.ts emptyLines): each must pass too
   for (const part of L.emptySub.split(/\s[-—]\s/)) check('emptySub part', part)
   for (const n of [1, 4, 400]) {
@@ -38,12 +42,15 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
     check('usageToast', L.usageToast(n, '14:30'))
     check('usageToast', L.usageToast(n, ''))
   }
-  // the compositions the Client makes of them: the drawer's clock chip and failed chip, the placeholder, the close Button
-  check('dDuration chip', `${L.dDuration}7′`)
-  check('dElapsed chip', `${L.dElapsed}12′`)
-  check('dFailed chip', `${L.dFailed} ❌`)
-  check('placeholder', `${L.searchPlaceholder.replace(/…$/, '')} 🔍`)
-  check('close', `${L.close} ✕`)
+  // the compositions the Client makes of them: the drawer's clock chip and failed chip, the placeholder (its trailing … dropped), the
+  // close Button, the ✂ note, the model line's labels (no colon)
+  check('dDuration chip', `${L.dDuration}7${L.dMinutes}`)
+  check('dElapsed chip', `${L.dElapsed}12${L.dMinutes}`)
+  check('dFailed chip', `❌ ${L.dFailed}`)
+  check('placeholder', `🔍 ${L.searchPlaceholder.replace(/…$/, '')}`)
+  check('close', `✕ ${L.close}`)
+  check('note', `✂ ${L.resultTruncated}`)
+  check('model line', `${L.dAction} 🤔 חושב`)
   // the tool table: an emoji leads every entry (the layout draws it as a run of its own); the Hebrew after it must pass alone
   for (const [tool, label] of Object.entries(L.tools)) check(`tools.${tool}`, label.replace(/^\S+\s/, ''))
   for (const k of ['actDone', 'actStale', 'actThinking', 'actMcp'] as const) check(k, L[k].replace(/^\S+\s/, ''))

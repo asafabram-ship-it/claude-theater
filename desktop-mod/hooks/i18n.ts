@@ -4,13 +4,21 @@
 // OWNER: builder "ui". The server-only strings of PAGE (reconnecting, version
 // banner, skipped-lines/report) are dropped per the spec ("יורד").
 //
-// THE HEBREW RULE (Asaf's live check, 2026-10-17): the desktop draws every Text
-// as an LTR paragraph and refuses bidi controls, so a string that holds Hebrew
-// reads right only when it STARTS with a Hebrew letter and holds NO Latin
-// letter (digits between Hebrew words are fine: `עוד 5 שסיימו`). Every Hebrew
-// string the office Client draws (office-props.ts LABEL_KEYS and the counted
-// labels) is worded to the rule — `hebrewRuleOk` below checks it, i18n.test.ts
-// walks the set — never patched with control marks.
+// THE HEBREW RULE (Asaf's live check, 2026-10-17; the bidi algorithm as the
+// desktop runs it, review of Task 2.8a): the desktop draws every Text as an LTR
+// paragraph and refuses bidi controls. The engine mirrors a stretch of Hebrew
+// (with the digits and neutrals inside it) in place, so a string that holds
+// Hebrew reads right only when it holds NO letter of another script (a Latin
+// word would split it into blocks laid left to right, backwards for the
+// reader) and does not END with a neutral mark (a trailing `.`, `:`, `…`, `′`
+// or `▶` lands at the paragraph's right = before the word; a LEADING one lands
+// at the left = after the word, so `▶ צפו בדמו חי` reads "צפו בדמו חי ▶").
+// Digits anywhere after the first word ride inside (`עוד 5 שסיימו`); a leading
+// digit joins the left side and reads after the word (`4 תמלילים` reads
+// "תמלילים 4" — acceptable, never scrambled). Every Hebrew string the office
+// Client draws (office-props.ts LABEL_KEYS and the counted labels) is worded to
+// the rule — `hebrewRuleOk` below checks it, i18n.test.ts walks the set — never
+// patched with control marks. office-layout.ts lays what shares a row by it.
 
 import type { Agent } from './model'
 import { mcpServer } from './model'
@@ -47,6 +55,8 @@ export type Strings = {
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
   dWorking: string; dDone: string; dStale: string; dFailed: string; dDuration: string; dElapsed: string
+  /** What follows the minutes on the drawer's clock chip: `7′` in English, `7 דק׳` in Hebrew (a Hebrew geresh: the chip ends right-to-left, never with a neutral). */
+  dMinutes: string
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
@@ -83,7 +93,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoneInWindow: 'No agents in the time window.',
     working: 'working', idleN: 'idle', finished: 'finished',
     dWorking: 'Working', dDone: 'Done', dStale: 'Idle', dFailed: 'Failed',
-    dDuration: 'Duration ', dElapsed: 'Elapsed ',
+    dDuration: 'Duration ', dElapsed: 'Elapsed ', dMinutes: '′',
     dAction: 'Activity', dTask: 'Task', dResult: 'Result', dModel: 'Model',
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
@@ -96,26 +106,26 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
   he: {
     appTitle: '🏢 משרד הסוכנים', showDone: 'הצג שהושלמו', toggleFinished: 'הצג/הסתר שהושלמו בשיחה זו', switchTo: 'English',
     emptyOffice: 'המשרד ריק',
-    emptySub: 'הפעילו סוכן בקלוד קוד - או הציצו איך נראה משרד עמוס:',
-    watchDemo: 'צפו בדמו חי ▶', demoLabel: 'דמו', exitDemo: 'יציאה',
-    langHint: 'החלפת שפה (עברית / אנגלית)', close: 'סגירה',
+    emptySub: 'הפעילו סוכן בקלוד קוד - או הציצו איך נראה משרד עמוס',
+    watchDemo: '▶ צפו בדמו חי', demoLabel: 'דמו', exitDemo: 'יציאה',
+    langHint: 'החלפת שפה - עברית או אנגלית', close: 'סגירה',
     loading: 'טוען…', helpTitle: 'קיצורי מקלדת', helpHint: 'קיצורי מקלדת',
     scSearch: 'חיפוש', scFinished: 'הצג / הסתר שהושלמו', scMove: 'מעבר בין סוכנים',
     scOpen: 'פתיחת פרטים', scClose: 'סגירת החלונית',
     scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scHelp: 'העזרה הזו',
     scPrev: 'הסוכן הקודם', scNext: 'הסוכן הבא',
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
-    searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש.',
+    searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש',
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',
     officeFailed: 'לא ניתן היה לצייר את המשרד; מוצגים כרטיסים (/theater לניסיון נוסף)',
-    usageToast: (pct, reset) => `מכסת 5 השעות: ${pct}%${reset ? ` · איפוס ${reset}` : ''}`,
+    usageToast: (pct, reset) => `נוצלו ${pct}% ממכסת 5 השעות${reset ? ` · איפוס ${reset}` : ''}`,
     srResults: n => `נמצאו ${n} סוכנים תואמים`, srNoMatch: 'אין סוכנים תואמים', srCleared: 'החיפוש נוקה',
     pin: 'נעץ למעלה', unpin: 'בטל נעיצה',
-    emptyNoActive: 'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה.',
-    emptyNoneInWindow: 'אין סוכנים בחלון הזמן.',
+    emptyNoActive: 'אין סוכנים פעילים. סמנו "הצג שהושלמו" כדי לראות היסטוריה',
+    emptyNoneInWindow: 'אין סוכנים בחלון הזמן',
     working: 'עובדים', idleN: 'ממתינים', finished: 'סיימו',
     dWorking: 'עובד', dDone: 'סיים', dStale: 'ממתין', dFailed: 'נכשל',
-    dDuration: 'משך ', dElapsed: 'זמן ',
+    dDuration: 'משך ', dElapsed: 'זמן ', dMinutes: ' דק׳',
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי מחובר',
@@ -181,20 +191,22 @@ export function modelLabel(model: string): string {
   return id
 }
 
-/** A Hebrew letter, a Latin letter (the two scripts the rule is about). */
-const HEBREW_LETTER_RE = /\p{Script=Hebrew}/u
-const LATIN_LETTER_RE = /\p{Script=Latin}/u
+/** A Hebrew-script character; a letter of any other script (strong left-to-right). The same classes as office-layout.ts's. */
+const HEBREW_RE = /\p{Script=Hebrew}/u
+const OTHER_LETTER_RE = /(?!\p{Script=Hebrew})\p{L}/u
+const DIGIT_RE = /\p{Nd}/u
 
 /**
- * THE HEBREW RULE on one string: true when it holds no Hebrew at all, or when its first glyph is a
- * Hebrew letter and no Latin letter follows (digits, punctuation, emoji and spaces are fine anywhere
- * after the first letter). The layout splits mixed text into runs by this rule (office-layout.ts
- * `place`); the i18n strings are worded to pass it whole.
+ * THE HEBREW RULE on one string drawn as one Text: true when it holds no Hebrew at all, or when no
+ * letter of another script is in it and its last glyph (spaces aside) is Hebrew or a digit — a
+ * trailing mark would be drawn before the word. A leading mark, emoji or digit is fine (it lands
+ * after the word). The i18n strings are worded to pass it whole; office-layout.ts lays a row by it.
  */
 export function hebrewRuleOk(s: string): boolean {
-  if (!HEBREW_LETTER_RE.test(s)) return true
-  const first = [...s][0] ?? ''
-  return HEBREW_LETTER_RE.test(first) && !LATIN_LETTER_RE.test(s)
+  if (!HEBREW_RE.test(s)) return true
+  if (OTHER_LETTER_RE.test(s)) return false
+  const last = [...s.trimEnd()].pop() ?? ''
+  return HEBREW_RE.test(last) || DIGIT_RE.test(last)
 }
 
 /** Text direction for a language. */

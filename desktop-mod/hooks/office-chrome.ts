@@ -174,7 +174,7 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
   const chips = [...d.chips]
   // the label follows the status, as the text cards' does (a failed or killed agent is done: its chip reads ❌, its clock is a duration)
-  if (d.elapsedMin !== null) chips.push(`${d.done ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}′`)
+  if (d.elapsedMin !== null) chips.push(`${d.done ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}${lbl('dMinutes')}`)
   const shown: string[] = []
   let used = 0
   for (const c of chips) {
@@ -184,8 +184,9 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
     used += w
   }
   lines.push({ kind: 'chips', text: shown.map(c => ` ${c} `).join(' '), chips: shown })
-  // the model line and the ✂ note are parts (a label, a value, a mark): the Client lays them in reading order as runs
-  const model = [`${lbl('dModel')}:`, '🧠', d.model, '·', `${lbl('dAction')}:`, d.act]
+  // the model line and the ✂ note are parts (a label, a value, a mark): the Client lays them in reading order as the runs the
+  // engine will not swap (office-layout.ts blocksOfParts); no colon after a label — it would be drawn before the Hebrew word
+  const model = [lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act]
   lines.push({ kind: 'head', text: cut(model.join(' '), inner), parts: model })
   lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
   for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })

@@ -285,15 +285,16 @@ export type OfficeView = {
 /**
  * THE RECENT FINISHED (Asaf, 2026-10-17): on the desktop office a room that hides its finished still
  * draws this many of them — the most recently finished — and a row counting the rest (office-layout.ts);
- * the global ☑ and the room's toggle mean "show every finished". The poll celebrates a finish the office
- * draws (register.tsx), so a finish in such a room is celebrated: it is one of the recent. The text cards
- * (the terminal, the desktop's fallback) and their walk keep hiding every finished agent of such a room.
+ * the global ☑ and the room's toggle mean "show every finished". Such a finish keeps its ⭐ (the office
+ * draws it) but is not toasted or chimed (register.tsx: the beat stays what it was — a finish the room
+ * shows by its toggle). The text cards (the terminal, the desktop's fallback) and their walk keep hiding
+ * every finished agent of such a room.
  */
 export const RECENT_DONE = 3
 
-/** When an agent finished, for the recent-finished pick: its end stamp, else its last activity (what the payload has). */
+/** When an agent finished, for the recent-finished pick: its end stamp, else its last activity (what the payload has); neither known = just finished (ranked first). */
 function finishedAt(a: Agent): number {
-  return a.end_ms ?? a.mtime_ms ?? 0
+  return a.end_ms ?? a.mtime_ms ?? Number.POSITIVE_INFINITY
 }
 
 /**

@@ -28,11 +28,13 @@
 // keyboard focus, the gold pulse under a hop and the status flash are
 // background overlays laid on the agent's row here.
 //
-// THE HEBREW RULE (i18n.ts): every line the chrome composes from Hebrew labels
-// and numbers (the header's counts and meter, the footer, the drawer's name,
-// model line and note) is a cell row of parts (office-layout.ts lineRow) drawn
-// as one Text per run, never one string with a digit or a Latin word inside a
-// Hebrew one. A label's symbol (✕, ✂, 🔍) follows the word in RTL.
+// THE HEBREW RULE (i18n.ts, office-layout.ts): every line the chrome composes
+// from Hebrew labels and numbers (the header's counts and meter, the footer,
+// the drawer's name, model line and note) is a cell row of parts
+// (office-layout.ts lineRow): the Hebrew parts that nothing Latin separates
+// are ONE run in logical order (the engine mirrors it whole — a count after
+// its word, `עובדים 2`, stays with it), the rest laid by cell. A label's mark
+// (✕, ✂, 🔍, ❌) leads the word: a leading mark is drawn after a Hebrew word.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while an fx is active and is stopped when the last one ends; the render
@@ -324,6 +326,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     if (!run.fg && !run.bg && !run.bold && !run.dim) return run.text
     return Text({ ...(run.fg ? { color: run.fg } : {}), ...(run.bg ? { backgroundColor: run.bg } : {}), ...(run.bold ? { bold: true } : {}), ...(run.dim ? { dimColor: true } : {}), children: [run.text] })
   }) })
+  /** The drawer's name line as parts: a leading emoji (no letter in it) apart from the name. */
+  const nameParts = (name: string): string[] => {
+    const sp = name.indexOf(' ')
+    return sp > 0 && !/\p{L}/u.test(name.slice(0, sp)) ? [name.slice(0, sp), name.slice(sp + 1)] : [name]
+  }
   /** One chrome line of parts, `columns` cells wide, in reading order (office-layout.ts lineRow). */
   const partsLine = (id: string, parts: readonly Part[], columns: number, rtl: boolean): RenderElement => rowText(lineRow(id, columns, parts, rtl).cells)
   try {
@@ -383,9 +390,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     fits (it keeps `5h`: the idle count is a `⏳` too), else nothing: a meter is drawn whole or not at all, never
     //     cut in half (`5h 4…` reads as 4%) — the same rule as the text cards' header (ui.tsx) ---
     const c = props.counts
-    const head: string[] = ['🎭', '🟢', String(c.run), ...(wide ? [lbl('working')] : [])]
-    if (c.idle) head.push('·', '⏳', String(c.idle), ...(wide ? [lbl('idleN')] : []))
-    head.push('·', '✅', String(c.done), ...(wide ? [lbl('finished')] : []))
+    // (a count follows its Hebrew word — `עובדים 2` — so the mirrored block keeps them together; it leads an English one)
+    const count = (icon: string, n: number, label: string): string[] => (wide ? (props.rtl ? [icon, label, String(n)] : [icon, String(n), label]) : [icon, String(n)])
+    const head: string[] = ['🎭', ...count('🟢', c.run, lbl('working'))]
+    if (c.idle) head.push('·', ...count('⏳', c.idle, lbl('idleN')))
+    head.push('·', ...count('✅', c.done, lbl('finished')))
     const fits = (meter: string) => textWidth(head.join(' ') + meter) <= props.columns
     const full = props.usage ? ` · ${usageLabel(props.usage, props.lang, props.nowMin)}` : ''
     const short = props.usage ? ` · ${usageShort(props.usage)}` : ''
@@ -404,11 +413,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       Button({ key: 'still', ...hk('s'), plain: true, label: props.prefs.still ? '🖼' : '🎞', onPress: () => send(surface, { t: 'still' }) }),
     ]))
 
-    // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS. (The glass follows the Hebrew word.) ---
+    // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS. (The glass leads: drawn after a Hebrew word.) ---
     const placeholder = lbl('searchPlaceholder').replace(/…$/, '')
     kids.push(line([Input({
       key: 'search',
-      placeholder: cut(props.rtl ? `${placeholder} 🔍` : `🔍 ${placeholder}`, props.columns),
+      placeholder: cut(`🔍 ${placeholder}`, props.columns),
       value: inst.query,
       // (cleaned and capped: a paste of a page or of an escape sequence would make the post or the value unmount the office)
       onInput: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, false) },
@@ -430,7 +439,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     } else if (props.drawer) {
       const items: RenderElement[] = inst.drawer.map((l, i) => {
         // (the row takes the drawer's full width so `space-between` parts the name and the ✕: `alignSelf: 'stretch'` is not a value the desktop's Box takes)
-        if (l.kind === 'name') return line([partsLine(`d${i}`, [{ text: l.text, bold: true }], textWidth(l.text), props.rtl), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: props.rtl ? `${lbl('close')} ✕` : `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
+        // (the persona's emoji is a part of its own, laid at the reading edge: read before the name)
+        if (l.kind === 'name') return line([partsLine(`d${i}`, nameParts(l.text).map(text => ({ text, bold: true as const })), textWidth(l.text), props.rtl), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
         if (l.kind === 'chips') return line((l.chips ?? []).map(ch => Text({ inverse: true, children: [` ${ch} `] })))
         // a line of parts (the model line, the ✂ note): THE HEBREW RULE's runs; a heading or a body line is one Text
         if (l.parts) return partsLine(`d${i}`, l.parts.map(text => (l.kind === 'head' ? { text, bold: true as const } : { text, dim: true as const })), inner, props.rtl)

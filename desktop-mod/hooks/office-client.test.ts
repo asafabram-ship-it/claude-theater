@@ -646,8 +646,8 @@ test('search: the Input draws the typed text (not props.search) across props upd
   tree = Office({ ...p, search: 'abcd' }, f.surface)
   tree = Office({ ...p, search: '' }, f.surface)
   expect(input().props.value).toBe('')
-  // the placeholder is the label (without the trailing ellipsis), the glass after the Hebrew word (THE HEBREW RULE), before an English one
-  expect(input().props.placeholder).toBe('חיפוש סוכנים 🔍')
+  // the placeholder is the label (without the trailing ellipsis) behind the glass (a leading mark: drawn after a Hebrew word)
+  expect(input().props.placeholder).toBe('🔍 חיפוש סוכנים')
   expect((nodes(Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)).find(n => n.type === 'Input')!.props as { placeholder: string }).placeholder).toBe('🔍 Search agents')
   // a pasted page: the field and the post keep SEARCH_MAX code points (never half an emoji) — a post over the surface's
   // bound would throw in the handler, and the Input's value would swell the tree past its bound (either unmounts the office)
@@ -680,7 +680,8 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   const p = props({ selected: 'lead', drawer: drawer({ result: 'found 3 docs', truncated: true }) })
   let tree = Office(p, f.surface)
   const t = texts(tree)
-  // the name line, the model line and the ✂ note are runs by THE HEBREW RULE: the emoji, the Latin and the Hebrew apart
+  // the name line, the model line and the ✂ note are runs by THE HEBREW RULE: the Latin apart from the Hebrew, the Hebrew that
+  // nothing Latin separates one run in logical order (`פעולה 🧠 חושב`), the emoji before the name its own run (read first)
   expect(t).toMatch(/^המנהל$/m)
   expect(t).toMatch(/^💼$/m)
   expect(t).toMatch(/משימה/)
@@ -690,12 +691,13 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   expect(t).toMatch(/^✂$/m)
   expect(t).toMatch(/^Opus 5\.5$/m)
   expect(t).toMatch(/^🧠$/m)
-  expect(t).toMatch(/^מודל:$/m)
-  expect(t).toMatch(/^חושב$/m)
+  expect(t).toMatch(/^מודל$/m)
+  expect(t).toMatch(/^פעולה 🧠 חושב$/m)
+  expect(t).toMatch(/ זמן 3 דק׳ /)
   expect(t).not.toMatch(/🧠 Opus/)
   const close = nodes(tree).find(n => n.type === 'Button' && n.props.key === 'close')!
   expect(close.props.hotkey).toBe('x')
-  expect(close.props.label).toBe('סגירה ✕')
+  expect(close.props.label).toBe('✕ סגירה')
   expect((nodes(Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'close')!.props as { label: string }).label).toBe('✕ Close')
   ;(close.props.onPress as () => void)()
   expect(f.posts).toEqual([{ t: 'close' }])
@@ -768,11 +770,14 @@ test('header: the five-hour meter is the full label (bar and reset clock) where 
   expect(endOf(header(45, { usage: { pct: 80, resetsAt: R } }), ' · ⚠ 5h 80%')).toBe(' · ⚠ 5h 80%')
   // no reading: no meter at any width
   for (const columns of [24, 45, 59, 60, 90, 200]) expect(header(columns, { usage: null })).not.toContain('5h')
-  // RTL: the same parts from the right edge — 🎭 last in cell order, the meter first; every Hebrew run its own Text starting with its letter
+  // RTL: the icons at the right edge (read first), then the Hebrew counts as ONE run in logical order, a count after its word
+  // (the engine mirrors the block whole), then the separator and the meter laid by cell — 🎭 last in cell order, the meter first
   const rtlHeader = nodes(Office(props({ columns: 120, usage: u }), fake(120).surface)).find(n => n.type === 'Text')!
   const rtlRuns = (rtlHeader.children as Node[]).filter(n => typeof n !== 'string').map(n => texts(n))
-  expect(rtlRuns).toEqual([full, '·', 'סיימו', '0', '✅', '·', 'עובדים', '2', '🟢', '🎭'])
+  expect(rtlRuns).toEqual([full, '·', 'עובדים 2 · ✅ סיימו 0', '🟢', '🎭'])
   expect(texts(rtlHeader).replace(/\n/g, '').trim().endsWith('🎭')).toBe(true)
+  const rtlIdle = nodes(Office(props({ columns: 120, counts: { run: 2, idle: 3, done: 12 } }), fake(120).surface)).find(n => n.type === 'Text')!
+  expect((rtlIdle.children as Node[]).filter(n => typeof n !== 'string').map(n => texts(n))).toEqual(['עובדים 2 · ⏳ ממתינים 3 · ✅ סיימו 12', '🟢', '🎭'])
   // every width, several counts and two readings: the line fits, holds no refused character, and the meter is whole or absent — the
   // full label only from COMPACT_BELOW and only when the whole line fits, else the short form when that fits, else the counts alone
   // (never a `5h` or a percent cut in half: `⏳ 5h 4…` would read as 4%)

@@ -205,8 +205,8 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     const drawer: OfficeDrawer | null = sel ? {
       // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
       id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
-      // (the ❌ follows the Hebrew word: THE HEBREW RULE, i18n.ts)
-      chips: [sel.failed ? (lang === 'he' ? `${L.dFailed} ❌` : `❌ ${L.dFailed}`) : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
+      // (the ❌ leads the word: a leading mark is drawn after a Hebrew word, a trailing one before it — THE HEBREW RULE, i18n.ts)
+      chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
       model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
       elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
       task: cut(sel.task || L.taskUnavailable, textMax), result: cut(sel.result ?? '', textMax), truncated: sel.truncated,

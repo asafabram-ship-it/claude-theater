@@ -30,6 +30,7 @@ import {
   parseAgentEvent,
   parseEvents,
   parseLastModel,
+  parseLastTitle,
   parseSessionSummary,
   parseTaskNotifications,
   projectCwdFor,
@@ -423,6 +424,29 @@ test('stripInjectedBlocks / parseSessionSummary: the topic is what the person ty
   ].join('\n')
   expect(parseSessionSummary(later)).toEqual({ topic: 'Ship the v2 config migration.', cwd: '/home/dev/x' })
   expect(parseSessionSummary(JSON.stringify({ type: 'user', cwd: '/c', message: { content: '<system-reminder>a</system-reminder>' } }))).toEqual({ topic: '', cwd: '/c' })
+})
+
+test('parseSessionSummary: a slash command is never the topic — the next typed message is; a transcript of commands alone has none', () => {
+  const user = (content: string, extra: Record<string, unknown> = {}) => JSON.stringify({ type: 'user', cwd: '/c', message: { role: 'user', content }, ...extra })
+  expect(parseSessionSummary([user('/theater'), user('תריץ 4 סוכני משנה')].join('\n'))).toEqual({ topic: 'תריץ 4 סוכני משנה', cwd: '/c' })
+  // a Hebrew keyboard's RLE before the slash, a command with a plugin prefix and arguments, leading blanks
+  expect(parseSessionSummary([user('‫/theater'), user('  /superpowers:brainstorming  the pane'), user(' ‏ /x'), user('בנה את הפאנל')].join('\n'))).toEqual({ topic: 'בנה את הפאנל', cwd: '/c' })
+  expect(parseSessionSummary([user('/theater'), user('‫/office he')].join('\n'))).toEqual({ topic: '', cwd: '/c' })
+  // a path or a fraction is not a command: it has a space or a slash inside the first word
+  expect(parseSessionSummary(user('/tmp/x is full')).topic).toBe('/tmp/x is full')
+  expect(parseSessionSummary(user('/ 2 is not a command')).topic).toBe('/ 2 is not a command')
+})
+
+test('parseLastTitle: the last custom-title wins over every ai-title; the last ai-title serves without one; none → ""', () => {
+  const custom = (t: string) => JSON.stringify({ type: 'custom-title', customTitle: t, sessionId: 's' })
+  const ai = (t: string) => JSON.stringify({ type: 'ai-title', aiTitle: t, sessionId: 's' })
+  const msg = JSON.stringify({ type: 'user', message: { role: 'user', content: 'hello' } })
+  expect(parseLastTitle([msg, custom('first'), msg, custom('second')].join('\n'))).toEqual({ custom: 'second', ai: '' })
+  // the real shape (2026-10-17): the ai-title is rewritten every turn AFTER a rename — the person's title still wins
+  expect(parseLastTitle([ai('בדיקת מקרה מומצא בסקיל הסיכום'), custom('בדיקת מקרה מומצא בסקיל'), msg, ai('בדיקת מקרה מומצא בסקיל הסיכום')].join('\n'))).toEqual({ custom: 'בדיקת מקרה מומצא בסקיל', ai: 'בדיקת מקרה מומצא בסקיל הסיכום' })
+  expect(parseLastTitle([ai('one'), msg, ai('two')].join('\n'))).toEqual({ custom: '', ai: 'two' })
+  expect(parseLastTitle([msg, 'not json', JSON.stringify({ type: 'custom-title', customTitle: 7 }), JSON.stringify({ type: 'custom-title' })].join('\n'))).toEqual({ custom: '', ai: '' })
+  expect(parseLastTitle('')).toEqual({ custom: '', ai: '' })
 })
 
 test('scanAll (2.1.288 journals): a hand-back ends an agent at once; a parent task-notification ends one whose file ends in a tool_result; a final text without stop_reason ends once idle; a resumed agent is live again', async () => {
@@ -983,6 +1007,60 @@ test("the lead's model is read RELIABLY from the session file's tail: a conversa
   expect(tails).toEqual([f])
   resetScannerCaches()
   expect(byId((await scanAll(fs2.io(), NOW)).agents, 'sess-ffff-6666').model).toBe('')
+})
+
+test("the room's title: the conversation's own title record (the last one, also when it lands late and is read through the tail path; a reset re-reads), else the first typed message that is not a slash command, else nothing", async () => {
+  resetScannerCaches()
+  const fs = office()
+  const f = `${PROJ}/sess-ffff-6666.jsonl`
+  const user = (content: string) => JSON.stringify({ type: 'user', sessionId: 'sess-ffff-6666', cwd: '/home/dev/demo-project', message: { role: 'user', content } }) + '\n'
+  const custom = (t: string) => JSON.stringify({ type: 'custom-title', customTitle: t, sessionId: 'sess-ffff-6666' }) + '\n'
+  const ai = (t: string) => JSON.stringify({ type: 'ai-title', aiTitle: t, sessionId: 'sess-ffff-6666' }) + '\n'
+  const chat = (text: string) => JSON.stringify({ type: 'assistant', sessionId: 'sess-ffff-6666', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text }] } }) + '\n'
+  // (b) no title record: the first TYPED message, never the /theater that opened the pane
+  fs.put(f, JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId: 'sess-ffff-6666' }) + '\n' + user('/theater') + user('תריץ 4 סוכני משנה') + chat('on it'), NOW - 2 * MIN)
+  fs.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
+  const io = fs.io()
+  let lead = byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666')
+  expect(lead.topic).toBe('תריץ 4 סוכני משנה')
+  expect(lead.task_short).toBe('תריץ 4 סוכני משנה')
+  expect(lead.task).toBe('תריץ 4 סוכני משנה')
+  // (a) the person renames the conversation after many turns: the record lands at the END of the file (the
+  // 81-line head never sees it) → the next tail read carries it, the title changes, the prompt stays the task
+  let body = fs.files.get(f)!.text
+  for (let i = 0; i < 100; i++) body += user(`turn ${i}`) + chat(`reply ${i}`)
+  fs.put(f, body + ai('Run four subagents') + custom('ארבעה סוכנים'), NOW + 2000)
+  lead = byId((await scanAll(io, NOW + 4000 + TTL)).agents, 'sess-ffff-6666')
+  expect(lead.topic).toBe('ארבעה סוכנים')
+  expect(lead.task_short).toBe('ארבעה סוכנים')
+  expect(lead.task).toBe('תריץ 4 סוכני משנה')
+  // a second rename later still wins; an ai-title rewritten after it (the real shape) does not undo it
+  fs.put(f, fs.files.get(f)!.text + user('more') + custom('חמישה סוכנים') + chat('ok') + ai('Run five subagents'), NOW + 6000 + TTL)
+  expect(byId((await scanAll(io, NOW + 8000 + 2 * TTL)).agents, 'sess-ffff-6666').topic).toBe('חמישה סוכנים')
+  // the unchanged file is not re-read, and the title survives the cache hit
+  const reads = fs.reads.length
+  expect(byId((await scanAll(io, NOW + 9000 + 2 * TTL)).agents, 'sess-ffff-6666').topic).toBe('חמישה סוכנים')
+  expect(fs.reads.slice(reads)).toEqual([])
+  // an ai-title alone serves as the title
+  resetScannerCaches()
+  fs.put(f, user('/theater') + user('תריץ 4 סוכני משנה') + ai('Run four subagents'), NOW)
+  expect(byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666').topic).toBe('Run four subagents')
+  // a file REWRITTEN shorter (a reset): the kept title goes with it — the file is read whole again and names none
+  fs.put(f, user('/theater') + user('תריץ 4 סוכני משנה'), NOW + 2 * TTL)
+  expect(byId((await scanAll(io, NOW + 2 * TTL)).agents, 'sess-ffff-6666').topic).toBe('תריץ 4 סוכני משנה')
+  // (c) commands alone: no topic → the UI falls back to the folder name (ui.tsx roomLabel)
+  resetScannerCaches()
+  fs.put(f, user('/theater') + user('‫/office'), NOW)
+  lead = byId((await scanAll(io, NOW)).agents, 'sess-ffff-6666')
+  expect(lead.topic).toBe('')
+  expect(lead.task_short).toBe('')
+  // an OVERSIZED conversation: the title comes through the tail closure, as the model does
+  resetScannerCaches()
+  const fs2 = office()
+  fs2.put(f, user('/theater') + user('גדול') + chat('hi') + custom('שיחה גדולה'), NOW - MIN, FS_READ_LIMIT + 1)
+  fs2.put(`${HOME}/.claude/sessions/105.json`, JSON.stringify({ pid: 105, sessionId: 'sess-ffff-6666' }), NOW)
+  const withTail = fs2.io({ tail: async (path, bytes) => fs2.files.get(path)!.text.slice(-bytes) })
+  expect(byId((await scanAll(withTail, NOW)).agents, 'sess-ffff-6666').topic).toBe('שיחה גדולה')
 })
 
 test('demoPayload: every demo agent names a plausible model', async () => {

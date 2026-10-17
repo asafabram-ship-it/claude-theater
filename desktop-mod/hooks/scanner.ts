@@ -393,6 +393,31 @@ export function parseLastModel(text: string): string {
   return ''
 }
 
+/** The two title records a conversation file carries (2026-10-17, real transcripts: no other kind). */
+export type TitleRecords = { custom: string; ai: string }
+
+/**
+ * The conversation's title records in a raw transcript text, scanning from the end: the
+ * LAST `{"type":"custom-title","customTitle":…}` (the person's rename — the engine
+ * rewrites it, and the ai-title, on later turns) and the LAST
+ * `{"type":"ai-title","aiTitle":…}`; "" for a kind the text does not hold. Lines without
+ * the key are skipped before the JSON parse; a record whose title is not a string is none.
+ */
+export function parseLastTitle(text: string): TitleRecords {
+  const out: TitleRecords = { custom: '', ai: '' }
+  const lines = (text ?? '').split('\n')
+  for (let i = lines.length - 1; i >= 0 && !out.custom; i--) {
+    const ln = lines[i] ?? ''
+    const isCustom = ln.includes('"customTitle"')
+    if (!isCustom && (out.ai || !ln.includes('"aiTitle"'))) continue
+    const rec = parseJsonObject(ln)
+    if (rec === null) continue
+    if (isCustom && rec.type === 'custom-title' && typeof rec.customTitle === 'string') out.custom = rec.customTitle.trim()
+    else if (!out.ai && rec.type === 'ai-title' && typeof rec.aiTitle === 'string') out.ai = rec.aiTitle.trim()
+  }
+  return out
+}
+
 /**
  * Python parse_events: every line, in order, dropping unparsable ones; returns
  * the events, the skipped count (non-blank lines that did not parse) and the
@@ -709,6 +734,10 @@ type SessionCacheEntry = { mtimeMs: number; oversized: boolean; topic: string; c
 type ModelCacheEntry = {
   mtimeMs: number
   model: string
+  /** The conversation's own title: the latest `custom-title` record's text (the person's rename), "" when none. */
+  custom: string
+  /** The latest `ai-title` record's text (the engine's own naming of the chat), "" when none. */
+  ai: string
   /** When the tail was last read for it (ms; 0 = noted from a read made anyway). */
   at: number
   /** How much of the WHOLE file the model search has covered (chars, up to a newline); 0 when it saw only a tail. */
@@ -728,56 +757,76 @@ const SESSION_CACHE = new Map<string, SessionCacheEntry>() // session file → (
  */
 const SESSION_MODEL_CACHE = new Map<string, ModelCacheEntry>()
 
+/** What a read of the session file's text found: the model and the titles its lines name, and where the whole-file search stops. */
+type TailFound = { model: string; textLen: number; reset: boolean } & TitleRecords
+
 /**
- * `parseLastModel` over only what a whole-file text gained since the last
- * look (`prev.textLen`; the file is append-only): the model the new lines
- * name, "" when none (the caller keeps the cached one then). A rewritten file
- * (shorter, or its kept length no longer on a newline) is searched whole; a
- * trailing half-line waits for its newline.
+ * `parseLastModel` and `parseLastTitle` over only what a whole-file text gained since the
+ * last look (`prev.textLen`; the file is append-only): the model and the titles the new
+ * lines name, "" when none (the caller keeps the cached ones then). A rewritten file
+ * (shorter, or its kept length no longer on a newline) is searched whole — `reset`, and
+ * the caller drops what it kept; a trailing half-line waits for its newline.
  */
-function appendLastModel(prev: ModelCacheEntry | undefined, whole: string): { model: string; textLen: number } {
+function appendLastTail(prev: ModelCacheEntry | undefined, whole: string): TailFound {
   const known = prev?.textLen ?? 0
-  const from = whole.length < known || (known > 0 && whole[known - 1] !== '\n') ? 0 : known
+  const reset = whole.length < known || (known > 0 && whole[known - 1] !== '\n')
+  const from = reset ? 0 : known
   const cut = whole.lastIndexOf('\n')
-  if (cut < from) return { model: '', textLen: from }
-  return { model: parseLastModel(whole.slice(from, cut + 1)), textLen: cut + 1 }
+  if (cut < from) return { model: '', custom: '', ai: '', textLen: from, reset }
+  const text = whole.slice(from, cut + 1)
+  return { model: parseLastModel(text), ...parseLastTitle(text), textLen: cut + 1, reset }
 }
 
-/** Records the lead's model from a whole-file text a scan fetched anyway (by mtime; a model the new lines do not name leaves the last known one). */
+/** The cache entry after a read: what the new lines name wins, else what was kept (nothing kept across a rewrite). */
+function tailEntry(cached: ModelCacheEntry | undefined, found: TailFound, mtimeMs: number, at: number): ModelCacheEntry {
+  const kept = found.reset ? undefined : cached
+  return {
+    mtimeMs, at, textLen: found.textLen,
+    model: found.model || kept?.model || '',
+    custom: found.custom || kept?.custom || '',
+    ai: found.ai || kept?.ai || '',
+  }
+}
+
+/** Records the lead's model and titles from a whole-file text a scan fetched anyway (by mtime; what the new lines do not name leaves the last known). */
 function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | undefined): void {
   if (whole === undefined) return
   const cached = SESSION_MODEL_CACHE.get(sessionFile)
   if (cached && cached.mtimeMs === mtimeMs) return
-  const { model, textLen } = appendLastModel(cached, whole)
-  SESSION_MODEL_CACHE.set(sessionFile, { mtimeMs, model: model || cached?.model || '', at: 0, textLen })
+  SESSION_MODEL_CACHE.set(sessionFile, tailEntry(cached, appendLastTail(cached, whole), mtimeMs, 0))
+}
+
+/** The conversation's title for its room: the person's rename, else the engine's naming, else "" (the caller falls back to the first typed prompt). */
+export function sessionTitle(entry: TitleRecords | undefined): string {
+  return entry?.custom || entry?.ai || ''
 }
 
 /**
- * The room lead's model, read RELIABLY (not only when some other read of the
- * session file happened to fetch its text): the latest assistant
- * `message.model` in the file's TAIL — readTail: the whole file when it fits
+ * The room lead's model and title, read RELIABLY (not only when some other read of the
+ * session file happened to fetch its text): the latest assistant `message.model` and the
+ * latest title records in the file's TAIL — readTail: the whole file when it fits
  * $.fs.read, else its last TAIL_MAX_BYTES through the optional `io.tail`
  * closure (an oversized conversation degrades to "" without it, as the other
  * oversized reads do). Cached by mtime; a conversation that keeps growing is
  * re-read at most every GLOB_TTL_SEC (as an oversized transcript's tail is),
  * so the 5 s poll never re-reads a chatty lead every tick, and a whole file
- * is searched only from where the last look stopped (appendLastModel); a
- * text that names no model keeps the last known one. A read made anyway
+ * is searched only from where the last look stopped (appendLastTail); a
+ * text that names no model or title keeps the last known one. A read made anyway
  * (noteSessionModel: the name map, the summary's head) is reused when its
  * mtime is current.
  */
-export async function sessionModelFor(io: ScanIo, sessionFile: string, st: FsStat, now: number): Promise<string> {
+export async function sessionTailFor(io: ScanIo, sessionFile: string, st: FsStat, now: number): Promise<{ model: string; title: string }> {
   const cached = SESSION_MODEL_CACHE.get(sessionFile)
-  if (cached && (cached.mtimeMs === st.mtimeMs || now - cached.at < GLOB_TTL_SEC * 1000)) return cached.model
+  if (cached && (cached.mtimeMs === st.mtimeMs || now - cached.at < GLOB_TTL_SEC * 1000)) return { model: cached.model, title: sessionTitle(cached) }
   const read = await readTail(io, sessionFile, st.size)
   // the whole file when it fits (searched from the last look on); a tail text has no offset to resume from
-  const found =
-    read.text === null ? { model: '', textLen: cached?.textLen ?? 0 }
-    : st.size <= FS_READ_LIMIT ? appendLastModel(cached, read.text)
-    : { model: parseLastModel(read.text), textLen: 0 }
-  const entry: ModelCacheEntry = { mtimeMs: st.mtimeMs, model: found.model || cached?.model || '', at: now, textLen: found.textLen }
+  const found: TailFound =
+    read.text === null ? { model: '', custom: '', ai: '', textLen: cached?.textLen ?? 0, reset: false }
+    : st.size <= FS_READ_LIMIT ? appendLastTail(cached, read.text)
+    : { model: parseLastModel(read.text), ...parseLastTitle(read.text), textLen: 0, reset: false }
+  const entry = tailEntry(cached, found, st.mtimeMs, now)
   SESSION_MODEL_CACHE.set(sessionFile, entry)
-  return entry.model
+  return { model: entry.model, title: sessionTitle(entry) }
 }
 
 /** Python name_map_for's parse: every Agent/Task tool_use → first spawn of a prompt wins. */
@@ -1000,7 +1049,14 @@ function firstUserText(rec: Record<string, unknown>): string {
   return ''
 }
 
-/** Python session_summary's parse over the first 81 lines: (topic = first user text, cwd = first cwd). */
+/**
+ * A typed slash command: `/name`, `/plugin:name`, `/name args` — the first word is a slash and
+ * word characters, nothing else (`/tmp/x is full` and `/ 2` are text). Leading blanks and format
+ * characters (a Hebrew keyboard's RLE before the slash) are looked past.
+ */
+const SLASH_COMMAND_RE = /^[\s\p{Cf}]*\/[\w:-]+(?:\s|$)/u
+
+/** Python session_summary's parse over the first 81 lines: (topic = first typed user text that is not a slash command, cwd = first cwd). */
 export function parseSessionSummary(text: string): { topic: string; cwd: string } {
   let topic = ''
   let cwd = ''
@@ -1012,8 +1068,13 @@ export function parseSessionSummary(text: string): { topic: string; cwd: string 
     if (rec === null) continue
     if (!cwd) cwd = typeof rec.cwd === 'string' ? rec.cwd : ''
     // the first user record whose text the PERSON typed (an injected
-    // <system-reminder>/<command-name>/… block alone is skipped, see firstUserText)
-    if (!topic && rec.type === 'user') topic = normPrompt(firstUserText(rec))
+    // <system-reminder>/<command-name>/… block alone is skipped, see firstUserText) that is
+    // not a slash command (`/theater`, `/superpowers:brainstorming x` — the command that
+    // opened the pane is never what the conversation is about)
+    if (!topic && rec.type === 'user') {
+      const typed = normPrompt(firstUserText(rec))
+      if (typed && !SLASH_COMMAND_RE.test(typed)) topic = typed
+    }
     if (topic && cwd) break
   }
   return { topic, cwd }
@@ -1699,8 +1760,13 @@ async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<st
     const mtimeMs = st.mtimeMs
     if (!isRecent(now, mtimeMs)) continue
     seenSessions.add(path)
-    const { topic, cwd } = await sessionSummary(io, path, st)
+    const { topic: prompt, cwd } = await sessionSummary(io, path, st)
     const uuid = basename(path).slice(0, -6)
+    const tail = await sessionTailFor(io, path, st, now)
+    // the room's title (ui.tsx roomStats: the lead's task_short): the conversation's own title record,
+    // else the first typed prompt, else "" (the UI falls back to the folder name). The drawer's task
+    // stays the prompt the person typed.
+    const topic = tail.title || prompt
     const closed = live !== null && !live.has(uuid)
     // No transcript is parsed for a session, so in_flight is always false.
     // is_done=closed makes a closed chat leave immediately; an open one falls
@@ -1716,7 +1782,7 @@ async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<st
       status,
       tool: '',
       phase: 'thinking',
-      task: topic,
+      task: prompt || topic,
       task_short: shortTask(topic),
       result: null,
       start_ms: mtimeMs,
@@ -1730,7 +1796,7 @@ async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<st
       closed,
       is_workflow: false,
       truncated: false,
-      model: await sessionModelFor(io, path, st, now),
+      model: tail.model,
       topic,
     })
   }

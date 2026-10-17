@@ -942,15 +942,24 @@ export async function projectCwdFor(
 const INJECTED_TAG = /^(system-reminder|task-notification|command-|local-command|hook|caveat|agent-message|pasted_content)/i
 
 /**
+ * The whitespace and the invisible format characters (a bidi mark such as U+202B RLE, which a
+ * Hebrew keyboard puts before what is typed; a BOM) at the start of a message: the tag test looks
+ * past them. Verified on real transcripts (2026-10-17): a paste arrives as `‫‫\n\n<pasted_content id="…">…`.
+ */
+const LEADING_FORMAT_RE = /^[\s\p{Cf}]+/u
+
+/**
  * Removes the host's injected text from a user message: every
  * `<system-reminder>…</system-reminder>` anywhere (the engine appends them to
  * typed prompts), then every paired `<tag …>…</tag>` block the text STARTS
  * with (`<command-name>`, `<local-command-caveat>`, `<task-notification>`,
- * …). A leading tag that is not closed is kept unless it is a known injection
- * (a person typing "<div> is broken" keeps their text). Trimmed.
+ * `<pasted_content>` — a paste is never the topic; what follows it, if
+ * anything, is). A leading tag that is not closed is kept unless it is a
+ * known injection (a person typing "<div> is broken" keeps their text).
+ * Leading bidi marks and whitespace never hide a tag. Trimmed.
  */
 export function stripInjectedBlocks(text: string): string {
-  let s = (text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+  let s = (text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').replace(LEADING_FORMAT_RE, '').trim()
   for (;;) {
     const m = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>/.exec(s)
     if (!m) break
@@ -961,7 +970,7 @@ export function stripInjectedBlocks(text: string): string {
       if (INJECTED_TAG.test(tag)) return ''
       break
     }
-    s = s.slice(end + close.length).trim()
+    s = s.slice(end + close.length).replace(LEADING_FORMAT_RE, '').trim()
   }
   return s
 }

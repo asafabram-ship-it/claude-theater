@@ -397,6 +397,14 @@ test('stripInjectedBlocks / parseSessionSummary: the topic is what the person ty
   expect(stripInjectedBlocks('<div> is broken in the footer')).toBe('<div> is broken in the footer') // a person's own text starting with a tag
   expect(stripInjectedBlocks('<b>bold</b> is not rendered')).toBe('is not rendered') // (a paired leading tag is dropped; the rest stays)
   expect(stripInjectedBlocks('')).toBe('')
+  // a paste (the real shape, 2026-10-17: a Hebrew keyboard's RLE marks, two newlines, the block): never the topic —
+  // the text after the block when there is one, else nothing (the next user record is tried); an unclosed one too
+  expect(stripInjectedBlocks('‫‫\n\n<pasted_content id="8a81">\nתקרא את המסמך ותסכם\n</pasted_content>')).toBe('')
+  expect(stripInjectedBlocks('‫\n\n<pasted_content id="8a81">\nתקרא את המסמך\n</pasted_content>\n‫תסכם לי אותו')).toBe('תסכם לי אותו')
+  expect(stripInjectedBlocks('‫\n\n<pasted_content id="8a81">\nhalf a paste')).toBe('')
+  expect(stripInjectedBlocks('﻿ ‏<system-reminder>x</system-reminder>\n‫<command-name>/x</command-name>')).toBe('')
+  expect(stripInjectedBlocks('‫תקרא את המסמך')).toBe('תקרא את המסמך') // a typed Hebrew prompt keeps its text (the marks go; cleanAgentText drops them anyway)
+  expect(parseSessionSummary(JSON.stringify({ type: 'user', cwd: '/c', message: { content: '‫‫\n\n<pasted_content id="1">\nx\n</pasted_content>' } }) + '\n' + JSON.stringify({ type: 'user', message: { content: 'תסכם' } }))).toEqual({ topic: 'תסכם', cwd: '/c' })
   // the real shape (2.1.288): the first user record's blocks are [<system-reminder…>, the typed text]
   const text = [
     JSON.stringify({ type: 'queue-operation', operation: 'enqueue' }),

@@ -741,7 +741,8 @@ export const register: Register = on => {
     try {
       if (!DESKTOP.clientFailed) {
         DESKTOP.clientFailed = true
-        $.ui.log(`office Client failed (${e.phase}): ${e.reason}`, { to: 'debug' })
+        // TEMPORARY (live check 4, 18.10): to the transcript, so the reason is readable without the debug log
+        $.ui.log(`office Client failed (${e.phase}): ${e.reason} [${e.component} ${e.module}]`, { to: 'transcript' })
         const prefs = await read($, prefsAtom)
         $.ui.toast(`🎭 ${I18N[prefs.lang].officeFailed}`)
         $.ui.invalidate('ui.render')

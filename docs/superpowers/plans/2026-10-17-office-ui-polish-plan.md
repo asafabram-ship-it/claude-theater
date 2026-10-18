@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-17-office-ui-polish-design.md`. Base: `f067c7b` on `feat/desktop-mod`.
 
+**סטטוס (2026-10-18 10:30):** Tasks 1-4 הושלמו ונסקרו (`6af5d4b`, `f5b1442`+`5c12955`, `74c9f02`, `f3746f5`), סקירה סופית + גל ניקוי (`a1c9731`); 190 בדיקות על שני המנועים. ממתין לבדיקה חיה עם אסף.
+
 ## Global Constraints
 
 - No flicker: do not change register.tsx's publish/poll logic or the Client's update path.

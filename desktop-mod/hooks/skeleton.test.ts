@@ -50,6 +50,9 @@ test('the cast is 48 wide in every table', async () => {
   expect(PERSONAS_HE.length).toBe(48)
   expect(personaIndex('agent-1')).toBeLessThan(48)
   expect(shortTask('Read the file. Then summarize it.')).toBe('Read the file.')
+  // the 90-place cut is on whole code points (scanner.ts shortTitle shares it): an emoji at the cut is never split into a lone surrogate
+  expect(shortTask('x'.repeat(89) + '🎬yyy')).toBe('x'.repeat(89) + '🎬…')
+  expect(shortTask('x'.repeat(89) + '🎬yyy')).not.toMatch(/\p{Cs}/u)
 })
 
 test('live reducers: spawn → tool → thinking → result', async () => {

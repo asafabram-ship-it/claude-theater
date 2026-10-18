@@ -858,9 +858,10 @@ export function registerUi(on: On): void {
       : null
 
     // --- help popover (PAGE renderHelp) ---
-    // (no 's' row: the search is the Input itself now — Tab reaches it; the jump button was a duplicate)
+    // (no 's' row: the search is the Input itself now — Tab reaches it; the jump button was a duplicate. No Esc beside the x:
+    // the cards handle no Escape — the engine's Escape hands the keyboard back to the prompt and reaches no Button here)
     const helpRows: Array<[string, string]> = [
-      [L.scFinished, 'f'], [L.scMove, 'k / j'], [L.scOpen, 'o · Enter'], [L.scClose, 'x · Esc'],
+      [L.scFinished, 'f'], [L.scMove, 'k / j'], [L.scOpen, 'o · Enter'], [L.scClose, 'x'],
       [L.scMute, 'm'], [L.scLang, 'l'], [L.scDemo, 'd'], [L.scHelp, 'h'],
     ]
     const help = view.helpOpen && (

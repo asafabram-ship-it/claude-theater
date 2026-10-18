@@ -1142,6 +1142,13 @@ test("a conversation's title is drawn whole — never cut to its first sentence 
   expect(lead.task_short).toBe(long.slice(0, 90) + '…')
   expect(shortTitle(long)).toBe(long.slice(0, 90) + '…')
   expect(shortTitle(' Task 2:  real titles ')).toBe('Task 2: real titles')
+  // the cut is on whole code points: an emoji (a surrogate pair) at the 90th place stays whole, never a lone half
+  const emoji90 = 'x'.repeat(89) + '🎬' + 'y'.repeat(5)
+  expect(shortTitle(emoji90)).toBe('x'.repeat(89) + '🎬…')
+  expect(shortTitle(emoji90)).not.toMatch(/\p{Cs}/u)
+  expect(shortTitle('x'.repeat(89) + '🎬')).toBe('x'.repeat(89) + '🎬')   // 90 code points: whole
+  expect(shortTitle('🎬'.repeat(91))).toBe('🎬'.repeat(90) + '…')
+  expect(shortTitle('🎬'.repeat(91))).not.toMatch(/\p{Cs}/u)
 })
 
 test('demoPayload: every demo agent names a plausible model', async () => {

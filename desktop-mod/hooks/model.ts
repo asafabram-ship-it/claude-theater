@@ -105,14 +105,26 @@ export function personaIndex(agentId: string): number {
   return h % PERSONA_EMOJI.length
 }
 
-/** Python short_task: first sentence (if it ends before char 90) else the first 90 chars + "…". */
+/** The places a task's or a title's short form keeps (shortTask, scanner.ts shortTitle), in code points. */
+export const SHORT_MAX = 90
+/**
+ * `flat` whole while it holds at most `max` code points, else its first `max` (trimmed) with an ellipsis. Counted and cut in
+ * code points, never UTF-16 units: an emoji at the cut (a surrogate pair) stays whole — a lone half would be an invalid
+ * string in the props and the drawn Text.
+ */
+export function capPoints(flat: string, max: number): string {
+  const cps = Array.from(flat)
+  return cps.length > max ? cps.slice(0, max).join('').trim() + '…' : flat
+}
+
+/** Python short_task: first sentence (if it ends before char 90) else the first 90 code points + "…" (capPoints). */
 export function shortTask(task: string): string {
   const flat = (task ?? '').split(/\s+/).filter(Boolean).join(' ')
   for (const sep of ['. ', '? ', '! ', ': ']) {
     const idx = flat.indexOf(sep)
-    if (idx > 0 && idx < 90) return flat.slice(0, idx + 1).trim()
+    if (idx > 0 && idx < SHORT_MAX) return flat.slice(0, idx + 1).trim()
   }
-  return flat.length > 90 ? flat.slice(0, 90).trim() + '…' : flat
+  return capPoints(flat, SHORT_MAX)
 }
 
 /** `mcp__<server>__<tool>` → `<server>`, else "". */

@@ -33,12 +33,18 @@
 // the drawer's name, model line and note) is a cell row of parts
 // (office-layout.ts lineRow): the Hebrew parts that nothing Latin separates
 // are ONE run in logical order (the engine mirrors it whole — a count after
-// its word, `עובדים 2`, stays with it), the rest laid by cell. A label's mark
-// (✕, ✂, 🔍, ❌) leads the word: a leading mark is drawn after a Hebrew word.
-// A labelled CONTROL (the toolbar's `☐ שסיימו`, `🔔 צליל`, `? עזרה`, the help's
-// `🎬 דמו`, `🎞 תנועה`) must read icon THEN word, so its icon trails the Hebrew
-// word in the Button's string (office-layout.ts iconLabel): each Button is a
-// paragraph of its own, and a trailing neutral lands at its right edge.
+// its word, `עובדים 2`, stays with it), the rest laid by cell — a mark among
+// the parts (the ✂ of the note, the drawer name's emoji) sits at the reading
+// edge, read first. A LABEL of its own — a Button, the search's placeholder,
+// a chip — is one LTR paragraph and must read icon THEN word, so its icon
+// trails the Hebrew word in the string (office-layout.ts iconLabel: a trailing
+// neutral lands at the paragraph's right edge, where the reader starts; a
+// leading one would land after the word, as the text cards' `✕ סגירה` does)
+// and leads any other word. The toolbar's `☐ שסיימו`, `🔔 צליל`, `? עזרה`,
+// the help's `🎬 דמו`, `🎞 תנועה`, the drawer's `✕ סגירה`, the glass of
+// `🔍 חיפוש סוכנים`, the empty office's `▶ צפו בדמו חי` (i18n words it
+// mark-first for the text cards: `marked` re-lays it) and the hooks' failed
+// chip (office-props.ts) all go through it.
 //
 // THE TOOLBAR (Task 2.8b-3): three Buttons in words — finished, sound, help —
 // their words whenever the three fit the row (Hebrew from 24 columns, English
@@ -46,8 +52,11 @@
 // toggle, the language) are Buttons in the help popover, under its title; their
 // letters d / s / l work whether the help is open or not (KEY_MESSAGES). A room
 // head draws 📌 only when pinned, a dim 📌 while the pointer is over the head
-// (state.hoverRoom → decor.hoverRoom), nothing otherwise; a click on the pin
-// cell toggles the pin as before.
+// of an UNPINNED room (state.hoverRoom → decor.hoverRoom; a pinned head draws
+// its 📌 anyway, so the pointer over it sets no hover: nothing to redraw or
+// lay out again), nothing otherwise; a click on the pin cell toggles the pin
+// as before and clears the hover with it (the click reorders the rooms: a dim
+// 📌 left behind would ride the room to its new row).
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while an fx is active and is stopped when the last one ends; the render
@@ -89,7 +98,7 @@ export const FX_BG = {
   done: '#3a3620', doneAlt: '#2d2a1c', status: '#2c3340',
 } as const
 
-/** The letter keys that are the toolbar (spec §6.4). */
+/** The letter keys (spec §6.4): the toolbar's f / m / h, the help's d / s / l (its Buttons' letters, live with the help closed too — THE TOOLBAR above) and the drawer's x. */
 const KEY_MESSAGES: Record<string, OfficeMessage> = {
   x: { t: 'close' }, f: { t: 'showDone' }, m: { t: 'mute' }, l: { t: 'lang' }, h: { t: 'help' }, d: { t: 'demo' }, s: { t: 'still' },
 }
@@ -106,7 +115,7 @@ export type OfficeInst = {
   layout: OfficeLayout
   hitById: Map<string, Hit>
   order: string[]
-  /** Layout row y → the room whose head row it is (from the pin hits): the head hover. */
+  /** Layout row y → the UNPINNED room whose head row it is (from the pin hits): the head hover. A pinned head draws its 📌 anyway, so the pointer over it sets no hoverRoom — no setState, no relayout for a change nothing would show. */
   headAt: Map<number, string>
   /** The layout rows last drawn: [from, from + count). The pointer answers on these alone. */
   win: { from: number; count: number }
@@ -158,9 +167,10 @@ function setLayout(inst: OfficeInst, p: OfficeProps, d: OfficeDecor, key: string
   const hitById = new Map<string, Hit>()
   const order: string[] = []
   const headAt = new Map<number, string>()
+  const pinned = new Set(p.rooms.filter(r => r.pinned).map(r => r.id))
   for (const hit of layout.hits) {
-    // (every room head carries its pin hit, drawn glyph or not: its row is the head's)
-    if (hit.kind === 'pin') headAt.set(hit.y, hit.id)
+    // (every room head carries its pin hit, drawn glyph or not — the click's; the hover affordance is the unpinned head's alone)
+    if (hit.kind === 'pin' && !pinned.has(hit.id)) headAt.set(hit.y, hit.id)
     if (hit.kind !== 'agent') continue
     hitById.set(hit.id, hit)
     order.push(hit.id)
@@ -257,8 +267,12 @@ function listen(surface: Surface): void {
         if (hit.kind === 'agent') {
           if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
           send(surface, { t: 'open', id: hit.id })
-        } else if (hit.kind === 'pin') send(surface, { t: 'pin', room: hit.id })
-        else send(surface, { t: 'roomDone', room: hit.id })   // the head's ✅ counts and the "more / hide finished" row: the room's toggle
+        } else if (hit.kind === 'pin') {
+          // the click reorders the rooms (the pinned first): the head hover goes with it, so a dim 📌 cannot ride the room to its
+          // new row — the next move sets it on whatever head is then under the pointer
+          if (cur.hoverRoom !== null) surface.setState({ ...cur, hoverRoom: null })
+          send(surface, { t: 'pin', room: hit.id })
+        } else send(surface, { t: 'roomDone', room: hit.id })   // the head's ✅ counts and the "more / hide finished" row: the room's toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
         // the agent row under the pointer (HOVER_BG), or the room head under it (its dim 📌): one setState when either changes
         const id = ev.type === 'leave' ? null : hit?.kind === 'agent' ? hit.id : null
@@ -355,6 +369,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
   }
   /** A plain Text's text: in RTL a cut Hebrew text carries its ellipsis first (drawn after the word — office-layout.ts ellipsisFirst). */
   const plain = (s: string): string => (props.rtl ? ellipsisFirst(s) : s)
+  /** A label i18n words mark-first (`▶ צפו בדמו חי`, the text cards' form) re-laid for this reader: its mark — a leading token with no letter or digit — trails a Hebrew word (iconLabel). */
+  const marked = (label: string): string => {
+    const sp = label.indexOf(' ')
+    return sp > 0 && !/[\p{L}\p{Nd}]/u.test(label.slice(0, sp)) ? iconLabel(label.slice(0, sp), label.slice(sp + 1), props.rtl) : label
+  }
   /** One chrome line of parts, `columns` cells wide, in reading order (office-layout.ts lineRow). */
   const partsLine = (id: string, parts: readonly Part[], columns: number, rtl: boolean): RenderElement => rowText(lineRow(id, columns, parts, rtl).cells)
   try {
@@ -438,11 +457,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, { t: 'help' }) }),
     ]))
 
-    // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS. (The glass leads: drawn after a Hebrew word.) ---
+    // --- search: the typed text is the module's; the post waits SEARCH_DEBOUNCE_MS. (The glass is read first: iconLabel; the word
+    //     cut to what the row leaves beside it, its ellipsis first in Hebrew.) ---
     const placeholder = lbl('searchPlaceholder').replace(/…$/, '')
     kids.push(line([Input({
       key: 'search',
-      placeholder: cut(`🔍 ${placeholder}`, props.columns),
+      placeholder: iconLabel('🔍', plain(cut(placeholder, Math.max(1, props.columns - 3))), props.rtl),
       value: inst.query,
       // (cleaned and capped: a paste of a page or of an escape sequence would make the post or the value unmount the office)
       onInput: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, false) },
@@ -463,7 +483,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const hIcons = [props.demo ? '🎬 ✕' : '🎬', props.prefs.still ? '🖼' : '🎞', '🌐']
       const hWords = [props.demo ? lbl('exitDemo') : lbl('demoLabel'), lbl('hbMotion'), lbl('switchTo')]
       const hWorded = hIcons.map((icon, i) => iconLabel(icon, hWords[i]!, props.rtl))
-      const hb = labelsFit(hWorded, inner) ? hWorded : ['🎬', hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
+      // (the icons alone keep their states, as the toolbar's ☑ / 🔕 do: `🎬 ✕` while the demo runs — the pair reversed for the Hebrew
+      // reader as in the worded label, iconLabel — 🖼 while frozen)
+      const hb = labelsFit(hWorded, inner) ? hWorded : [iconLabel(hIcons[0]!, '', props.rtl), hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
       overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', paddingX: 1, height: HELP_ROWS, overflow: 'hidden', children: [
         line([Text({ bold: true, children: [plain(cut(lbl('helpTitle'), Math.max(1, inner - 3)))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between' }),
         line([
@@ -477,7 +499,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const items: RenderElement[] = inst.drawer.map((l, i) => {
         // (the row takes the drawer's full width so `space-between` parts the name and the ✕: `alignSelf: 'stretch'` is not a value the desktop's Box takes)
         // (the persona's emoji is a part of its own, laid at the reading edge: read before the name)
-        if (l.kind === 'name') return line([partsLine(`d${i}`, nameParts(l.text).map(text => ({ text, bold: true as const })), textWidth(l.text), props.rtl), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: `✕ ${lbl('close')}`, onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
+        // (the close Button reads ✕ THEN the word, as the toolbar's controls: iconLabel)
+        if (l.kind === 'name') return line([partsLine(`d${i}`, nameParts(l.text).map(text => ({ text, bold: true as const })), textWidth(l.text), props.rtl), Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), props.rtl), onPress: () => send(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' })
         if (l.kind === 'chips') return line((l.chips ?? []).map(ch => Text({ inverse: true, children: [` ${ch} `] })))
         // a line of parts (the model line, the ✂ note): THE HEBREW RULE's runs; a heading or a body line is one Text
         if (l.parts) return partsLine(`d${i}`, l.parts.map(text => (l.kind === 'head' ? { text, bold: true as const } : { text, dim: true as const })), inner, props.rtl)
@@ -497,7 +520,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Text({ children: ['🏢'] }),
         ...e.msg.map(t => Text({ bold: true, children: [plain(t)] })),
         ...e.sub.map(t => Text({ dimColor: true, children: [plain(t)] })),
-        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: lbl('watchDemo'), onPress: () => send(surface, { t: 'demo' }) })] : []),
+        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: marked(lbl('watchDemo')), onPress: () => send(surface, { t: 'demo' }) })] : []),
       ] }))
     } else {
       // --- the rooms: a spacer for the rows scrolled past, the help | drawer at the window's top (THE OVERLAY IN VIEW,

@@ -20,9 +20,13 @@ export const COMPACT_BELOW = 60
 /** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested). */
 export const TASK_LINES = 4
 export const RESULT_LINES = 3
-/** The help rows: a label key and the keys shown beside it (spec §6.4; the still toggle's `s` since Task 2.8b-3). */
+/**
+ * The help rows: a label key and the keys shown beside it (spec §6.4; the still toggle's `s` since Task 2.8b-3). The close
+ * row promises `x` alone: Escape never reaches a Client — it hands the keyboard back to the prompt (engine types,
+ * ClientKeyEvent) — so the help must not offer it.
+ */
 export const HELP: ReadonlyArray<readonly [string, string]> = [
-  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x · Esc'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scStill', 's'], ['scHelp', 'h'],
+  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scStill', 's'], ['scHelp', 'h'],
 ]
 /** The help popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
 export const HELP_BUTTON_ROWS = 1

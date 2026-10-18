@@ -73,8 +73,10 @@ import {
   PERSONA_EMOJI,
   RESULT_CHAR_LIMIT,
   RUNNING_STALE_SEC,
+  SHORT_MAX,
   STATUS_ORDER,
   TAIL_MAX_BYTES,
+  capPoints,
   clipResult,
   personaIndex,
   shortTask,
@@ -806,10 +808,9 @@ export function sessionTitle(entry: TitleRecords | undefined): string {
   return entry?.custom || entry?.ai || ''
 }
 
-/** A conversation's title for the room head: whitespace collapsed, whole up to 90 characters (a typed prompt goes through shortTask's first-sentence cut instead). */
+/** A conversation's title for the room head: whitespace collapsed, whole up to SHORT_MAX code points (model.ts capPoints: an emoji at the cut stays whole; a typed prompt goes through shortTask's first-sentence cut instead). */
 export function shortTitle(title: string): string {
-  const flat = normPrompt(title)
-  return flat.length > 90 ? flat.slice(0, 90).trim() + '…' : flat
+  return capPoints(normPrompt(title), SHORT_MAX)
 }
 
 /**

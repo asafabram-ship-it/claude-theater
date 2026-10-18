@@ -239,19 +239,23 @@ export function ellipsisFirst(text: string): string {
 }
 
 /**
- * The label of a control that reads ICON THEN WORD — a Button's one string, drawn as one LTR paragraph. For
+ * The label of a control (or a chip) that reads ICON THEN WORD — one string, drawn as one LTR paragraph. For
  * the Hebrew reader (`rtl`, a Hebrew word) the icon TRAILS the word in the string: the bidi algorithm takes
  * a neutral at the paragraph's end (between the Hebrew and eos = L) as left-to-right and leaves it at the
  * right edge, where the reader starts — a leading icon would land at the left, after the word (the text
  * cards' `✕ סגירה` reads "סגירה ✕"). Two icons (`🎬 ✕`) are met in reverse there, so they are reversed in
- * the string. Any other word (Latin in either pane, or the English pane's one Hebrew word, read left to
- * right) takes the icon first. Derived from the UBA rules the tests model (office-layout.test.ts
- * visualRtlReading); no control mark involved.
+ * the string; the icons alone (the narrow form, no word) are reversed in the Hebrew pane the same way, so
+ * the pair keeps its arrangement when the word is dropped (the 🎬 at the right edge either way). Any other
+ * word (Latin in either pane, or the English pane's one Hebrew word, read left to right) takes the icon
+ * first. Derived from the UBA rules the tests model (office-layout.test.ts visualRtlReading); no control
+ * mark involved. The office Client lays every labelled control and chip through it: the toolbar's three,
+ * the help's three, the drawer's close, the search's glass, the empty office's demo Button, the failed chip.
  */
 export function iconLabel(icon: string, word: string, rtl: boolean): string {
   if (!icon) return word
-  if (!word) return icon
-  if (rtl && HEBREW_RE.test(word)) return `${word} ${icon.split(' ').reverse().join(' ')}`
+  const icons = rtl ? icon.split(' ').reverse().join(' ') : icon
+  if (!word) return icons
+  if (rtl && HEBREW_RE.test(word)) return `${word} ${icons}`
   return `${icon} ${word}`
 }
 
@@ -348,7 +352,9 @@ export const CLOCK = '⏱️'
  * control marks) a Hebrew unit can never land after its number for the reader — laid after the number in cells, the
  * engine leaves the number at the left (`⏱️ 3 דק׳` reads "דק׳ 3 ⏱️"); laid before it, the number glues to the unit and
  * is mirrored with it ("⏱️ דק׳ 3"). The number always lands at the unit's left, whichever way the cells go: derived
- * from the bidi rules the tests model (office-layout.test.ts visualRtlReading). (i18n.ts rowMinutes carries the same.)
+ * from the bidi rules the tests model (office-layout.test.ts visualRtlReading — the prime rides with its number, UBA W5;
+ * at the row's left edge the two follow sos and stay left-to-right, so the reader meets the clock, then `3′`). This is the
+ * unit's one home: i18n.ts carries the drawer's `דק׳` alone and imports nothing from the layout.
  */
 export const ROW_MINUTES: Readonly<Record<OfficeProps['lang'], string>> = { en: ' min', he: '′' }
 

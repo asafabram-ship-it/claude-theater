@@ -84,7 +84,7 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(withDrawer.drawer?.done).toBe(false)
   const failedOne = agent({ id: 'f1', status: 'done', failed: true, end_ms: T0 - 1000 })
   const failed = buildOfficeProps(input([failedOne], { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'f1' } }))
-  expect(failed.drawer?.chips[0]).toBe(`❌ ${I18N.he.dFailed}`)   // (the mark leads the word: drawn after a Hebrew word — THE HEBREW RULE)
+  expect(failed.drawer?.chips[0]).toBe(`${I18N.he.dFailed} ❌`)   // (the chip is read ❌ THEN the word: the mark trails the Hebrew word — office-layout.ts iconLabel)
   expect(buildOfficeProps(input([failedOne], { prefs: { ...shown, lang: 'en' }, view: { ...DEFAULT_VIEW, selected: 'f1' } })).drawer?.chips[0]).toBe('❌ Failed')
   expect(failed.drawer?.done).toBe(true)
   const wide = buildOfficeProps(input([agent({ id: 'a1', emoji: '🦉'.repeat(30) })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))

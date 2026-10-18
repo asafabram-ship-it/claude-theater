@@ -599,18 +599,31 @@ test('the agent row (RTL): the same row mirrored — the emoji at the right edge
   for (const row of [r0!, r1!, tight, noTime, wide]) { expect(mergeSafe(row)).toBe(true); expect(wellFormed(row)).toBe(true) }
 })
 
+/** The UBA's European terminators a row could hold (bidi class ET): # $ %, ¢ £ ¤ ¥, °, ±, ‰ ‱ ′ ″ ‴, the currency signs (₪ €), the minus sign. */
+const ET = /^[#-%¢-¥°±‰-‴₠-⃏−]$/u
 /**
  * THE READER'S VIEW of a row drawn as one LTR paragraph, by the bidi rules mergeSafe models: a Hebrew glyph is R, another
- * script's letter L, a digit takes the strong type before it (sos is L: AN after R through neutrals, else L), a stretch of
- * neutrals between two of one direction takes it (a number after Hebrew counts as R), else the paragraph's L; the runs of R
- * (with their numbers) are then mirrored in place. The visual row is read from the right, token by token: a token holding
- * Hebrew back in logical order (it was mirrored), any other (a number, a Latin word, an emoji) as it is. The string a Hebrew
- * reader sees, in reading order, a space between tokens.
+ * script's letter L, a terminator next to a digit joins its number (W5: `12′`, `42%` — the prime rides with the minutes;
+ * one with no number beside it is a neutral), a digit takes the strong type before it (sos is L: AN after R through
+ * neutrals, else L), a stretch of neutrals between two of one direction takes it (a number after Hebrew counts as R), else
+ * the paragraph's L; the runs of R (with their numbers) are then mirrored in place. The visual row is read from the right,
+ * token by token: a token holding Hebrew back in logical order (it was mirrored), any other (a number, a Latin word, an
+ * emoji) as it is. The string a Hebrew reader sees, in reading order, a space between tokens. (Checked against python-bidi
+ * 0.6.7 — the unicode-bidi crate — on every pinned reading below.)
  */
 function visualRtlReading(row: Cells): string {
   const gl = row.cells.map(c => c.ch).filter(ch => ch !== '')
-  type T = 'L' | 'R' | 'EN' | 'AN' | 'N'
-  const types: T[] = gl.map(ch => (HEB.test(ch) ? 'R' : OTHER_LETTER.test(ch) ? 'L' : DIGIT.test(ch) ? 'EN' : 'N'))
+  type T = 'L' | 'R' | 'EN' | 'ET' | 'AN' | 'N'
+  const types: T[] = gl.map(ch => (HEB.test(ch) ? 'R' : OTHER_LETTER.test(ch) ? 'L' : DIGIT.test(ch) ? 'EN' : ET.test(ch) ? 'ET' : 'N'))
+  // W5: a run of terminators adjacent to a European number becomes part of it; W6: one left alone is a neutral
+  for (let i = 0; i < types.length; i++) {
+    if (types[i] !== 'ET') continue
+    let j = i
+    while (j < types.length && types[j] === 'ET') j++
+    const en = (i > 0 && types[i - 1] === 'EN') || (j < types.length && types[j] === 'EN')
+    for (let k = i; k < j; k++) types[k] = en ? 'EN' : 'N'
+    i = j - 1
+  }
   let strong: 'L' | 'R' = 'L'
   for (let i = 0; i < types.length; i++) {
     const t = types[i]!
@@ -669,15 +682,21 @@ function visualRtlReading(row: Cells): string {
   return tokens.reverse().join(' ')
 }
 
-test('visualRtlReading models the engine: a leading digit reads after the word, a digit after Hebrew rides inside, a Latin word parts two Hebrew words, a clock before a number at the row\'s left edge reads clock then number', () => {
+test('visualRtlReading models the engine: a leading digit reads after the word, a digit after Hebrew rides inside, a Latin word parts two Hebrew words, a clock before a number at the row\'s left edge reads clock then number, a terminator rides with its number (W5)', () => {
   const rowOf = (s: string) => { const row = blankRow('r', 40); put(row, 0, s); return row }
   expect(visualRtlReading(rowOf('4 תמלילים'))).toBe('תמלילים 4')
   expect(visualRtlReading(rowOf('עוד 5 שסיימו'))).toBe('עוד 5 שסיימו')
   expect(visualRtlReading(rowOf('לבדיקה Code 4 קבצים של'))).toBe('קבצים של 4 Code לבדיקה')   // the head's blocks (cell order): the leading digit after its words, the Latin word parting the blocks
+  // the Hebrew row's time field at the row's left edge: the number follows sos (L), so it and its prime stay left-to-right — the reader, from the right, meets the clock then `3′`
   expect(visualRtlReading(rowOf('3′ ⏱️ ❌⭐'))).toBe('❌⭐ ⏱️ 3′')
   expect(visualRtlReading(rowOf('⏱️ 3 דק׳'))).toBe('דק׳ 3 ⏱️')           // the unit after the number (logical order) lands BEFORE it for the reader: why the Hebrew row uses the prime
   expect(visualRtlReading(rowOf('דק׳ 3 ⏱️'))).toBe('⏱️ דק׳ 3')           // ...and laid the other way the number glues to the unit and is mirrored with it
-  expect(visualRtlReading(rowOf('חושב   12′'))).toBe('′ חושב 12')         // LTR's glue: a number after Hebrew is mirrored with it, its prime left behind
+  // W5: a terminator beside a number is part of it — LTR's glue mirrors a number after Hebrew with the word, and the prime
+  // (or the %) rides with the number, never left behind at the edge (python-bidi: '12′   בשוח', 'תסכממ 42% ולצונ')
+  expect(visualRtlReading(rowOf('חושב   12′'))).toBe('חושב 12′')
+  expect(visualRtlReading(rowOf('משך 7′'))).toBe('משך 7′')
+  expect(visualRtlReading(rowOf('נוצלו 42% ממכסת 5 השעות'))).toBe('נוצלו 42% ממכסת 5 השעות')
+  expect(visualRtlReading(rowOf('עזרה %'))).toBe('% עזרה')               // a terminator with no number beside it is a plain neutral: trailing, it lands at the right edge
 })
 
 test('iconLabel: a labelled control reads icon-then-word — for the Hebrew reader the icon TRAILS the word in logical order (a trailing neutral lands at the paragraph\'s right, where the reader starts); a leading icon would read after the word; any other word takes the icon first', () => {
@@ -695,9 +714,29 @@ test('iconLabel: a labelled control reads icon-then-word — for the Hebrew read
   // two icons: the reader meets trailing neutrals in reverse, so they are reversed in the string
   expect(iconLabel('🎬 ✕', 'יציאה', true)).toBe('יציאה ✕ 🎬')
   expect(visualRtlReading(rowOf(iconLabel('🎬 ✕', 'יציאה', true)))).toBe('🎬 ✕ יציאה')
+  // ...and the icons alone (the narrow form, the word dropped) keep that arrangement for the Hebrew reader: the pair is
+  // reversed in the string, the 🎬 at the right edge as in the worded label; a single icon is itself
+  expect(iconLabel('🎬 ✕', '', true)).toBe('✕ 🎬')
+  expect(visualRtlReading(rowOf(iconLabel('🎬 ✕', '', true)))).toBe('🎬 ✕')
+  expect(iconLabel('🎬 ✕', '', false)).toBe('🎬 ✕')
+  expect(iconLabel('🎬', '', true)).toBe('🎬')
+  // every other label the office words with a mark reads icon-then-word the same way: the drawer's close, the glass of the
+  // search, the empty office's demo Button, the failed chip (the same derivation as the toolbar's)
+  expect(visualRtlReading(rowOf(iconLabel('✕', 'סגירה', true)))).toBe('✕ סגירה')
+  expect(visualRtlReading(rowOf(iconLabel('🔍', 'חיפוש סוכנים', true)))).toBe('🔍 חיפוש סוכנים')
+  expect(visualRtlReading(rowOf(iconLabel('▶', 'צפו בדמו חי', true)))).toBe('▶ צפו בדמו חי')
+  expect(visualRtlReading(rowOf(iconLabel('❌', 'נכשל', true)))).toBe('❌ נכשל')
+  // a cut word carries its ellipsis first (ellipsisFirst), the icon still trailing: the reader meets the glass, the word, then the …
+  // (a leading neutral lands at the left of the mirrored block — after the word — as a token of its own; python-bidi: '…כוס שופיח 🔍')
+  expect(cut('חיפוש סוכנים', 10)).toBe('חיפוש סוכ…')
+  expect(visualRtlReading(rowOf(iconLabel('🔍', ellipsisFirst(cut('חיפוש סוכנים', 10)), true)))).toBe('🔍 חיפוש סוכ …')
+  expect(visualRtlReading(rowOf(iconLabel('🔍', cut('חיפוש סוכנים', 10), true)))).toBe('🔍 … חיפוש סוכ')   // ...without ellipsisFirst the … would be met before the word
   // why: the leading icon of the text cards' rule (`✕ סגירה`) lands at the left — AFTER the word for the reader
   expect(visualRtlReading(rowOf('☐ שסיימו'))).toBe('שסיימו ☐')
   expect(visualRtlReading(rowOf('🎬 ✕ יציאה'))).toBe('יציאה ✕ 🎬')
+  expect(visualRtlReading(rowOf('✕ סגירה'))).toBe('סגירה ✕')
+  expect(visualRtlReading(rowOf('🔍 חיפוש סוכנים'))).toBe('חיפוש סוכנים 🔍')
+  expect(visualRtlReading(rowOf('▶ צפו בדמו חי'))).toBe('צפו בדמו חי ▶')
   // a Latin word in the Hebrew pane (`🌐 English`) is read left to right: the icon leads; so is every word in the English pane,
   // the one Hebrew word among them too (`🌐 עברית`: an English reader scans left to right)
   expect(iconLabel('🌐', 'English', true)).toBe('🌐 English')

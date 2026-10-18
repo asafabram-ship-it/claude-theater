@@ -536,7 +536,7 @@ test('THE OVERLAY IN VIEW (render): a drawer or the help opened while the pane i
   const help = (Office(ph, fake(45, 0).surface) as unknown as Node).children as Node[]
   expect(help[CHROME_ROWS]).toMatchObject({ type: 'Box', props: { height: 37 } })
   expect(help[CHROME_ROWS + 1]).toMatchObject({ type: 'Box', props: { key: 'help', height: HELP_ROWS } })
-  expect(texts(help[CHROME_ROWS + 1])).toMatch(/קיצורי מקלדת/)
+  expect(texts(help[CHROME_ROWS + 1])).toMatch(/^עזרה$/m)
   expect(rowText(help[CHROME_ROWS + 2])).toBe(laid(37))
   // at the top the drawer sits under the fixed chrome, the layout from row 0
   const top = (Office({ ...p, offset: 0 }, fake(45, 0).surface) as unknown as Node).children as Node[]
@@ -648,9 +648,15 @@ test('search: the Input draws the typed text (not props.search) across props upd
   tree = Office({ ...p, search: 'abcd' }, f.surface)
   tree = Office({ ...p, search: '' }, f.surface)
   expect(input().props.value).toBe('')
-  // the placeholder is the label (without the trailing ellipsis) behind the glass (a leading mark: drawn after a Hebrew word)
-  expect(input().props.placeholder).toBe('🔍 חיפוש סוכנים')
+  // the placeholder is the label (without the trailing ellipsis) behind the glass, read glass THEN word: the glass trails the
+  // Hebrew word in the string (office-layout.ts iconLabel), leads the English one
+  expect(input().props.placeholder).toBe('חיפוש סוכנים 🔍')
   expect((nodes(Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)).find(n => n.type === 'Input')!.props as { placeholder: string }).placeholder).toBe('🔍 Search agents')
+  // a pane too narrow for the word cuts it (whole glyphs, the ellipsis first in Hebrew), the glass whole: never wider than the row
+  const narrowPh = (q: Partial<OfficeProps>) => (nodes(Office(props(q), fake(q.columns).surface)).find(n => n.type === 'Input')!.props as { placeholder: string }).placeholder
+  expect(narrowPh({ columns: 12 })).toBe('…חיפוש סו 🔍')
+  expect(narrowPh({ columns: 12, rtl: false, lang: 'en', labels: LABELS_EN })).toBe('🔍 Search a…')
+  for (const columns of [8, 12, 15, 16, 45]) { expect(textWidth(narrowPh({ columns }))).toBeLessThanOrEqual(columns); expect(textWidth(narrowPh({ columns, rtl: false, lang: 'en', labels: LABELS_EN }))).toBeLessThanOrEqual(columns) }
   // a pasted page: the field and the post keep SEARCH_MAX code points (never half an emoji) — a post over the surface's
   // bound would throw in the handler, and the Input's value would swell the tree past its bound (either unmounts the office)
   ;(input().props.onSubmit as (v: string) => void)('🔍'.repeat(SEARCH_MAX + 50))
@@ -699,7 +705,8 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   expect(t).not.toMatch(/🧠 Opus/)
   const close = nodes(tree).find(n => n.type === 'Button' && n.props.key === 'close')!
   expect(close.props.hotkey).toBe('x')
-  expect(close.props.label).toBe('✕ סגירה')
+  // read ✕ THEN the word, as the toolbar's controls: the ✕ trails the Hebrew word in the string (iconLabel), leads the English one
+  expect(close.props.label).toBe('סגירה ✕')
   expect((nodes(Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'close')!.props as { label: string }).label).toBe('✕ Close')
   ;(close.props.onPress as () => void)()
   expect(f.posts).toEqual([{ t: 'close' }])
@@ -707,10 +714,15 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   // the drawer Box has a fixed height so the rows below never move
   const box = nodes(tree).find(n => n.type === 'Box' && n.props.key === 'drawer')!
   expect(box.props.height).toBe(chromeRows(p) - CHROME_ROWS)
-  // help: the title, the eight rows, the ✕; the help wins over the drawer
+  // help: the title (`עזרה` — it hosts controls, not shortcuts alone), the rows, the ✕; the help wins over the drawer
   tree = Office({ ...p, helpOpen: true }, f.surface)
-  expect(texts(tree)).toMatch(/קיצורי מקלדת/)
+  const helpBox = nodes(tree).find(n => n.type === 'Box' && n.props.key === 'help')!
+  expect(nodes((helpBox.children as Node[])[0]).some(n => n.type === 'Text' && n.props.bold === true && texts(n) === 'עזרה')).toBe(true)
+  expect(texts(tree)).not.toMatch(/קיצורי מקלדת/)
   expect(texts(tree)).toMatch(/k \/ j/)
+  // the close row promises x alone: Escape never reaches a Client (it returns the focus), so the help does not offer it
+  expect(HELP.find(([k]) => k === 'scClose')?.[1]).toBe('x')
+  expect(texts(tree)).not.toMatch(/Esc/)
   expect(texts(tree)).not.toMatch(/found 3 docs/)
   const closeHelp = nodes(tree).find(n => n.type === 'Button' && n.props.key === 'closeHelp')!
   ;(closeHelp.props.onPress as () => void)()
@@ -735,6 +747,10 @@ test('the drawer, the help and the empty office draw from props and labels; Butt
   tree = Office(empty, fake().surface)
   expect(texts(tree)).toMatch(/המשרד ריק/)
   expect(nodes(tree).find(n => n.type === 'Button' && n.props.key === 'watchDemo')).toBeDefined()
+  // its label reads ▶ THEN the words for either reader: i18n words it mark-first (the text cards' form), the Client re-lays it (iconLabel)
+  expect(nodes(tree).find(n => n.type === 'Button' && n.props.key === 'watchDemo')?.props.label).toBe('צפו בדמו חי ▶')
+  const emptyEn = { ...empty, rtl: false, lang: 'en', labels: LABELS_EN, empty: { kind: 'office', msg: LABELS_EN.emptyOffice ?? '', sub: LABELS_EN.emptySub ?? '' } } as OfficeProps
+  expect(nodes(Office(emptyEn, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'watchDemo')?.props.label).toBe('▶ Watch a live demo')
   const nomatch = props({ rooms: [], empty: { kind: 'nomatch', msg: LABELS.emptyNoMatch ?? '', sub: '' } })
   expect(nodes(Office(nomatch, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'watchDemo')).toBeUndefined()
   // the header: the usage meter when given
@@ -806,6 +822,10 @@ test('help: the popover holds the demo, motion and language Buttons in words (�
   const narrow = Office(open({ columns: 28 }), fake(28).surface)
   expect(['demo', 'still', 'lang'].map(k => btn(k, narrow)?.props.label)).toEqual(['🎬', '🎞', 'EN'])
   expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: 28, rtl: false, lang: 'en', labels: LABELS_EN }), fake(28).surface))?.props.label)).toEqual(['🎬', '🎞', 'עב'])
+  // ...and the icons alone keep their states, as the toolbar's ☑ / 🔕 do: the demo running is `🎬 ✕` (the pair reversed for the
+  // Hebrew reader, the 🎬 at the right edge as in the worded label), the motion frozen 🖼
+  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: 28, demo: true, prefs: { showDone: false, muted: true, still: true } }), fake(28).surface))?.props.label)).toEqual(['✕ 🎬', '🖼', 'EN'])
+  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: 28, demo: true, rtl: false, lang: 'en', labels: LABELS_EN }), fake(28).surface))?.props.label)).toEqual(['🎬 ✕', '🎞', 'עב'])
   expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: 30 }), fake(30).surface))?.props.label)).toEqual(['דמו 🎬', 'תנועה 🎞', '🌐 English'])
   // the help closed: no demo / still / lang Button anywhere, and the letters still post
   const g = fake()
@@ -818,7 +838,7 @@ test('help: the popover holds the demo, motion and language Buttons in words (�
   expect(g.posts).toHaveLength(3)
 })
 
-test('room head: the pointer over a head row sets hoverRoom (a redraw with a dim 📌 at the pin cell), a move to an agent row or a leave clears it; the pin cell posts pin on a click; a pinned head draws its 📌 whether hovered or not', () => {
+test('room head: the pointer over an unpinned head row sets hoverRoom (a redraw with a dim 📌 at the pin cell), a move to an agent row or a leave clears it; the pin cell posts pin on a click and clears the hover with it; a pinned head draws its 📌 anyway and sets no hover (no setState, no relayout)', () => {
   const f = fake()
   const p = props({ rooms: [room('A', [ag('lead', { isLead: true }), ag('a1')]), room('B', [ag('b1')], { pinned: true })] })
   let tree = Office(p, f.surface)
@@ -848,12 +868,24 @@ test('room head: the pointer over a head row sets hoverRoom (a redraw with a dim
   expect(dimPin(tree, 0)).toBe(true)
   expect(dimPin(tree, headB)).toBe(false)
   expect(rowAt(tree, headB)).toContain('📌')
-  // over the pin cell itself (the right edge in RTL) the hover holds; a click there posts pin
+  // over the pin cell itself (the right edge in RTL) the hover holds; a click there posts pin AND clears the hover at once (the
+  // click reorders the rooms: a dim 📌 left on A would ride with it to its new row): the redraw shows no 📌 on A's head
   f.pointer({ type: 'move', x: p.columns - 1, y: C })
   expect(f.surface.state!.hoverRoom).toBe('A')
+  const sets1 = f.setStates()
   f.pointer({ type: 'down', x: p.columns - 1, y: C, button: 'left' })
   expect(f.posts).toEqual([{ t: 'pin', room: 'A' }])
-  // down to an agent row: the row hover takes over, the head hover ends — one setState for both
+  expect(f.surface.state!.hoverRoom).toBeNull()
+  expect(f.setStates()).toBe(sets1 + 1)
+  tree = Office(p, f.surface)
+  expect(rowAt(tree, 0)).not.toContain('📌')
+  // (a click with no hover to clear sets no state: the post alone)
+  f.pointer({ type: 'down', x: p.columns - 1, y: C, button: 'left' })
+  expect(f.setStates()).toBe(sets1 + 1)
+  expect(f.posts).toHaveLength(2)
+  // back over A's head, then down to an agent row: the row hover takes over, the head hover ends — one setState for both
+  f.pointer({ type: 'move', x: 20, y: C })
+  expect(f.surface.state!.hoverRoom).toBe('A')
   const sets2 = f.setStates()
   f.pointer({ type: 'move', x: 20, y: C + 1 })
   expect(f.surface.state!.hoverRoom).toBeNull()
@@ -861,15 +893,30 @@ test('room head: the pointer over a head row sets hoverRoom (a redraw with a dim
   expect(f.setStates()).toBe(sets2 + 1)
   tree = Office(p, f.surface)
   expect(rowAt(tree, 0)).not.toContain('📌')
-  // B's head: hovered, its 📌 stays bright; a leave clears
-  f.pointer({ type: 'move', x: 20, y: C + headB })
-  expect(f.surface.state!.hoverRoom).toBe('B')
+  // B's head (pinned): its 📌 is drawn anyway, so the pointer over it sets NO hoverRoom — no setState, and the layout is not
+  // laid out again for it; a leave then changes nothing either
+  f.pointer({ type: 'leave', x: 0, y: 0 })                      // (the row hover ends first: that is a setState of its own)
   tree = Office(p, f.surface)
+  const sets3 = f.setStates()
+  const layoutB = f.surface.state!.inst.layout
+  f.pointer({ type: 'move', x: 20, y: C + headB })
+  expect(f.surface.state!.hoverRoom).toBeNull()
+  expect(f.surface.state!.hover).toBeNull()
+  expect(f.setStates()).toBe(sets3)
+  tree = Office(p, f.surface)
+  expect(f.surface.state!.inst.layout).toBe(layoutB)
   expect(dimPin(tree, headB)).toBe(false)
   expect(rowAt(tree, headB)).toContain('📌')
+  f.pointer({ type: 'move', x: p.columns - 1, y: C + headB })
+  expect(f.surface.state!.hoverRoom).toBeNull()
+  expect(f.setStates()).toBe(sets3)
   f.pointer({ type: 'leave', x: 0, y: 0 })
   expect(f.surface.state!.hoverRoom).toBeNull()
   expect(f.surface.state!.hover).toBeNull()
+  expect(f.setStates()).toBe(sets3)
+  // the pin cell of the pinned head still answers a click (the unpin)
+  f.pointer({ type: 'down', x: p.columns - 1, y: C + headB, button: 'left' })
+  expect(f.posts[f.posts.length - 1]).toEqual({ t: 'pin', room: 'B' })
   // a head row scrolled out of the window answers nothing (the spacer): no hover
   const many = withAgents(p, Array.from({ length: 30 }, (_, i) => ag(`g${i}`)))
   const h = fake(45, 0)

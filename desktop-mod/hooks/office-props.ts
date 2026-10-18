@@ -20,7 +20,7 @@
 import { I18N, activityLabel, dirOf, modelFamily, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
 import type { Payload, Prefs, View } from './model'
-import { ACT_MAX, NAME_MAX, cut } from './office-layout'
+import { ACT_MAX, NAME_MAX, cut, iconLabel } from './office-layout'
 import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
 import { personaName } from './personas'
 import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
@@ -156,6 +156,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const { prefs, view, roomDone, now } = input
   const lang = prefs.lang
   const L = I18N[lang]
+  const rtl = dirOf(lang) === 'rtl'
   const office = effectivePayload(input.payload, view, now)
   const showDone = view.demo || prefs.showDone
   const { rooms, stat, order, moreDone } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins, RECENT_DONE)
@@ -211,8 +212,8 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     const drawer: OfficeDrawer | null = sel ? {
       // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
       id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
-      // (the ❌ leads the word: a leading mark is drawn after a Hebrew word, a trailing one before it — THE HEBREW RULE, i18n.ts)
-      chips: [sel.failed ? `❌ ${L.dFailed}` : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
+      // (the chip is a Text of its own, read ❌ THEN the word: the mark trails the Hebrew word in the string — office-layout.ts iconLabel)
+      chips: [sel.failed ? iconLabel('❌', L.dFailed, rtl) : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
       model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
       elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
       task: cut(sel.task || L.taskUnavailable, textMax), result: cut(sel.result ?? '', textMax), truncated: sel.truncated,
@@ -221,7 +222,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     // the count of the agents over the cap leads the footer (short, so a narrow pane still shows it), then the scan notes
     const footer = [dropped > 0 ? L.moreAgentsN(dropped) : '', input.footer ?? ''].filter(Boolean).join(' · ')
     return {
-      v: 1, lang, rtl: dirOf(lang) === 'rtl', columns: input.columns, rows: input.rows, offset: Math.max(0, input.offset), nowMin,
+      v: 1, lang, rtl, columns: input.columns, rows: input.rows, offset: Math.max(0, input.offset), nowMin,
       counts: headerCounts(office.agents),
       prefs: { showDone: prefs.showDone, muted: prefs.muted, still: prefs.still === true },
       search: view.search, selected: view.selected, helpOpen: view.helpOpen, demo: view.demo,

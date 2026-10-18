@@ -12,7 +12,7 @@ test('hebrewRuleOk: a string without Hebrew passes; one with Hebrew must hold no
   expect(hebrewRuleOk('')).toBe(true)
   expect(hebrewRuleOk('עוד 5 שסיימו')).toBe(true)
   expect(hebrewRuleOk('משך 7 דק׳')).toBe(true)                    // the geresh is Hebrew script
-  expect(hebrewRuleOk('משך 7′')).toBe(false)                       // a trailing prime: before the number for the reader
+  expect(hebrewRuleOk('משך 7′')).toBe(false)                       // a trailing prime: refused as any trailing mark (the rule stays simple: it does not model W5, which carries a prime with its number — office-layout.test.ts visualRtlReading does)
   expect(hebrewRuleOk('▶ צפו בדמו חי')).toBe(true)                 // a leading mark lands after the words
   expect(hebrewRuleOk('צפו בדמו חי ▶')).toBe(false)                // a trailing one before them
   expect(hebrewRuleOk('4 תמלילים מעל 4MiB דולגו')).toBe(false)   // Latin inside: the scrambled footer of the live check
@@ -42,25 +42,31 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
     check('usageToast', L.usageToast(n, '14:30'))
     check('usageToast', L.usageToast(n, ''))
   }
-  // the compositions the Client makes of them: the drawer's clock chip and failed chip, the placeholder (its trailing … dropped), the
-  // close Button, the ✂ note, the model line's labels (no colon)
+  // the compositions the Client makes of them: the drawer's clock chip, the ✂ note, the model line's labels (no colon)
   check('dDuration chip', `${L.dDuration}7${L.dMinutes}`)
   check('dElapsed chip', `${L.dElapsed}12${L.dMinutes}`)
-  check('dFailed chip', `❌ ${L.dFailed}`)
-  check('placeholder', `🔍 ${L.searchPlaceholder.replace(/…$/, '')}`)
-  check('close', `✕ ${L.close}`)
   check('note', `✂ ${L.resultTruncated}`)
   check('model line', `${L.dAction} 🤔 חושב`)
-  // the toolbar's and the help's labelled controls (Task 2.8b-3): the WORD passes on its own; the icon is laid after it in the
-  // string so the reader meets it first (office-layout.ts iconLabel, proven by office-layout.test.ts visualRtlReading) — a
-  // trailing icon is the one trailing neutral the rule allows for, because it is meant to be read before the word
-  for (const k of ['tbDone', 'tbSound', 'tbHelp', 'hbMotion', 'demoLabel', 'exitDemo', 'scStill'] as const) check(k, L[k])
+  // the labelled controls and chips — the toolbar's and the help's (Task 2.8b-3), the drawer's close, the search's glass, the
+  // empty office's demo Button, the failed chip: the WORD passes on its own; the icon is laid after it in the string so the
+  // reader meets it first (office-layout.ts iconLabel, proven by office-layout.test.ts visualRtlReading) — a trailing icon is
+  // the one trailing neutral the rule allows for, because it is meant to be read before the word
+  for (const k of ['tbDone', 'tbSound', 'tbHelp', 'hbMotion', 'demoLabel', 'exitDemo', 'scStill', 'close', 'dFailed'] as const) check(k, L[k])
+  check('placeholder word', L.searchPlaceholder.replace(/…$/, ''))
+  check('watchDemo word', L.watchDemo.replace(/^\S+\s/, ''))
+  expect(L.watchDemo).toMatch(/^▶ /)   // (worded mark-first for the text cards; the office Client re-lays it)
   expect(L.tbDone).toBe('שסיימו')
   expect(L.tbSound).toBe('צליל')
   expect(L.tbHelp).toBe('עזרה')
   expect(I18N.en.tbDone).toBe('Finished')
   expect(I18N.en.tbSound).toBe('Sound')
   expect(I18N.en.tbHelp).toBe('Help')
+  // the help's title names the popover, which hosts controls now, not shortcuts alone
+  expect(L.helpTitle).toBe('עזרה')
+  expect(I18N.en.helpTitle).toBe('Help')
+  // the row's minutes unit is office-layout.ts ROW_MINUTES alone: no string of the table carries it (i18n imports no value from the layout)
+  expect('rowMinutes' in L).toBe(false)
+  expect('rowMinutes' in I18N.en).toBe(false)
   // the tool table: an emoji leads every entry (the layout draws it as a run of its own); the Hebrew after it must pass alone
   for (const [tool, label] of Object.entries(L.tools)) check(`tools.${tool}`, label.replace(/^\S+\s/, ''))
   for (const k of ['actDone', 'actStale', 'actThinking', 'actMcp'] as const) check(k, L[k].replace(/^\S+\s/, ''))

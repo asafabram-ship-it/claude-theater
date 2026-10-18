@@ -10,19 +10,21 @@
 // (with the digits and neutrals inside it) in place, so a string that holds
 // Hebrew reads right only when it holds NO letter of another script (a Latin
 // word would split it into blocks laid left to right, backwards for the
-// reader) and does not END with a neutral mark (a trailing `.`, `:`, `…`, `′`
-// or `▶` lands at the paragraph's right = before the word; a LEADING one lands
-// at the left = after the word, so `▶ צפו בדמו חי` reads "צפו בדמו חי ▶").
-// Digits anywhere after the first word ride inside (`עוד 5 שסיימו`); a leading
-// digit joins the left side and reads after the word (`4 תמלילים` reads
-// "תמלילים 4" — acceptable, never scrambled). Every Hebrew string the office
-// Client draws (office-props.ts LABEL_KEYS and the counted labels) is worded to
-// the rule — `hebrewRuleOk` below checks it, i18n.test.ts walks the set — never
-// patched with control marks. office-layout.ts lays what shares a row by it.
+// reader) and does not END with a neutral mark (a trailing `.`, `:`, `…` or
+// `▶` lands at the paragraph's right = before the word; a LEADING one lands
+// at the left = after the word, so `▶ צפו בדמו חי` reads "צפו בדמו חי ▶" —
+// which is why the office Client lays a labelled control the other way round,
+// office-layout.ts iconLabel). Digits anywhere after the first word ride
+// inside (`עוד 5 שסיימו`), a terminator beside a number with them (`42%`, UBA
+// W5); a leading digit joins the left side and reads after the word
+// (`4 תמלילים` reads "תמלילים 4" — acceptable, never scrambled). Every Hebrew
+// string the office Client draws (office-props.ts LABEL_KEYS and the counted
+// labels) is worded to the rule — `hebrewRuleOk` below checks it, i18n.test.ts
+// walks the set — never patched with control marks. office-layout.ts lays what
+// shares a row by it.
 
 import type { Agent } from './model'
 import { mcpServer } from './model'
-import { ROW_MINUTES } from './office-layout'
 import { PERSONAS_EN, PERSONAS_HE } from './personas'
 
 export type Lang = 'he' | 'en'
@@ -63,10 +65,8 @@ export type Strings = {
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
   dWorking: string; dDone: string; dStale: string; dFailed: string; dDuration: string; dElapsed: string
-  /** What follows the minutes on the drawer's clock chip: `7′` in English, `7 דק׳` in Hebrew (a Hebrew geresh: the chip ends right-to-left, never with a neutral). */
+  /** What follows the minutes on the drawer's clock chip: `7′` in English, `7 דק׳` in Hebrew (a Hebrew geresh: the chip ends right-to-left, never with a neutral). An agent row's clock field has its own unit, office-layout.ts ROW_MINUTES (the layout's, not a string of this table). */
   dMinutes: string
-  /** What follows the minutes in an agent row's clock field: ` min` in English, the prime in Hebrew (office-layout.ts ROW_MINUTES says why not `דק׳`). */
-  rowMinutes: string
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
   oversizedN: (n: number) => string
@@ -87,7 +87,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptySub: 'Start an agent in Claude Code — or see what a busy office looks like:',
     watchDemo: '▶ Watch a live demo', demoLabel: 'Demo', exitDemo: 'Exit',
     langHint: 'Switch language (Hebrew / English)', close: 'Close',
-    loading: 'Loading…', helpTitle: 'Keyboard shortcuts', helpHint: 'Keyboard shortcuts',
+    loading: 'Loading…', helpTitle: 'Help', helpHint: 'Keyboard shortcuts',
     scSearch: 'Search', scFinished: 'Show / hide finished', scMove: 'Move between agents',
     scOpen: 'Open details', scClose: 'Close panel',
     scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scStill: 'Freeze / release the motion', scHelp: 'This help',
@@ -104,7 +104,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoneInWindow: 'No agents in the time window.',
     working: 'working', idleN: 'idle', finished: 'finished',
     dWorking: 'Working', dDone: 'Done', dStale: 'Idle', dFailed: 'Failed',
-    dDuration: 'Duration ', dElapsed: 'Elapsed ', dMinutes: '′', rowMinutes: ROW_MINUTES.en,
+    dDuration: 'Duration ', dElapsed: 'Elapsed ', dMinutes: '′',
     dAction: 'Activity', dTask: 'Task', dResult: 'Result', dModel: 'Model',
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
@@ -120,7 +120,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptySub: 'הפעילו סוכן בקלוד קוד - או הציצו איך נראה משרד עמוס',
     watchDemo: '▶ צפו בדמו חי', demoLabel: 'דמו', exitDemo: 'יציאה',
     langHint: 'החלפת שפה - עברית או אנגלית', close: 'סגירה',
-    loading: 'טוען…', helpTitle: 'קיצורי מקלדת', helpHint: 'קיצורי מקלדת',
+    loading: 'טוען…', helpTitle: 'עזרה', helpHint: 'קיצורי מקלדת',
     scSearch: 'חיפוש', scFinished: 'הצג / הסתר שהושלמו', scMove: 'מעבר בין סוכנים',
     scOpen: 'פתיחת פרטים', scClose: 'סגירת החלונית',
     scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scStill: 'תנועה: הקפאה / שחרור', scHelp: 'העזרה הזו',
@@ -137,7 +137,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     emptyNoneInWindow: 'אין סוכנים בחלון הזמן',
     working: 'עובדים', idleN: 'ממתינים', finished: 'סיימו',
     dWorking: 'עובד', dDone: 'סיים', dStale: 'ממתין', dFailed: 'נכשל',
-    dDuration: 'משך ', dElapsed: 'זמן ', dMinutes: ' דק׳', rowMinutes: ROW_MINUTES.he,
+    dDuration: 'משך ', dElapsed: 'זמן ', dMinutes: ' דק׳',
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי מחובר',

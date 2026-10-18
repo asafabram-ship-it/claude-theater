@@ -517,9 +517,9 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
     expect(await ui.find({ key: 'open:a1' })).toBeDefined()
     // help popover
     await ui.press({ key: 'help' })
-    expect(await ui.find({ type: 'Text', text: /קיצורי מקלדת/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^עזרה$/ })).toBeDefined()
     await ui.press({ key: 'closeHelp' })
-    expect(await ui.find({ type: 'Text', text: /קיצורי מקלדת/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^עזרה$/ })).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -1191,7 +1191,7 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^הפעילו סוכן בקלוד קוד$/ })).toBeDefined()
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^או הציצו איך נראה משרד עמוס$/ })).toBeDefined()
   expect(await desk.find({ in: OFFICE_KEY, key: 'watchDemo' })).toBeDefined()
-  expect((await desk.find({ in: OFFICE_KEY, key: 'search' }))?.props?.placeholder).toBe('🔍 חיפוש סוכנים')
+  expect((await desk.find({ in: OFFICE_KEY, key: 'search' }))?.props?.placeholder).toBe('חיפוש סוכנים 🔍')   // (the glass read first: it trails the Hebrew word — office-layout.ts iconLabel)
   await desk.unmount()
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
   expect(await term.find({ type: 'Svg' })).toBeUndefined()

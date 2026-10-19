@@ -156,22 +156,24 @@ async function cardOf(ui: Ui, p: OfficeProps, room: string): Promise<Drawn> {
   expect(card, `card of ${room}`).toBeDefined()
   return card!
 }
-/** The parts of a WHOLE card: the title line's pin, title and counts Boxes, the rule, the table, the more line. */
-function partsOf(card: Drawn): { pin: Drawn; title: Drawn; counts: Drawn; table: Drawn; more: Drawn | undefined } {
+/** The parts of a WHOLE card: the title line's pin Text (drawn only for a pinned or hovered room), its title and counts Boxes, the rule, the table block, the more line. */
+function partsOf(card: Drawn): { pin: Drawn | undefined; title: Drawn; counts: Drawn; table: Drawn; more: Drawn | undefined } {
   expect(isFragment(card), 'a whole card').toBe(false)
   const [titleLine, , table, more] = elements(card)
-  const [pin, title, counts] = elements(titleLine)
-  return { pin: pin!, title: title!, counts: counts!, table: table!, more }
+  const kids = elements(titleLine)
+  const pin = kids.find(n => n.type === 'Text')
+  const [title, counts] = kids.filter(n => n.type === 'Box')
+  return { pin, title: title!, counts: counts!, table: table!, more }
 }
-/** The table of a card or a fragment: the Box of column Boxes (undefined when no row of it is in the window: a spacer, or nothing). */
+/** The table of a card or a fragment: the Box of column Boxes, wherever it sits in the card (undefined when no row of it is in the window: a spacer, or nothing). */
 function tableOf(card: Drawn): Drawn | undefined {
-  return elements(card).find(n => n.type === 'Box' && elements(n).length > 0 && (n.children ?? []).every(c => isNode(c) && propsOf(c).flexDirection === 'column'))
+  return nodesOf(card).find(n => n.type === 'Box' && elements(n).length > 0 && (n.children ?? []).every(c => isNode(c) && propsOf(c).flexDirection === 'column'))
 }
-/** The texts of a card's drawn rows, one array per row: [status, who, model?, act] — the window's rows only. */
+/** The texts of a card's drawn rows, one array per row: [status, who, model?, act] — the window's rows only (a column holds one Text per row and nothing else). */
 function rowsOf(card: Drawn): string[][] {
   const table = tableOf(card)
   if (!table) return []
-  const cols = elements(table).map(col => elements(col).filter(c => propsOf(c).paddingLeft !== undefined || propsOf(c).paddingRight !== undefined))
+  const cols = elements(table).map(col => elements(col).filter(c => c.type === 'Text'))
   return cols[0]!.map((_, i) => cols.map(col => textOf(col[i])))
 }
 /** The who cell of an agent as the model says the row reads (`${emoji} ${name}`). */
@@ -185,12 +187,11 @@ async function focused(ui: Ui, p: OfficeProps): Promise<string[]> {
   const mark = p.rtl ? FOCUS_MARK.rtl : FOCUS_MARK.ltr
   return (await cardsOf(ui)).flatMap(c => rowsOf(c).filter(r => r[0]!.includes(mark)).map(r => r[1]!))
 }
-/** How a room's card draws its 📌: bright (pinned), dim (the hover affordance), or not at all (a blank cell). */
+/** How a room's card draws its 📌: bright (pinned), dim (the hover affordance), or not at all (no pin cell: the title flush at the reading edge). */
 async function pinOf(ui: Ui, p: OfficeProps, room: string): Promise<'bright' | 'dim' | 'none'> {
   const { pin } = partsOf(await cardOf(ui, p, room))
-  const t = elements(pin)[0]
-  if (!t || !textOf(t).includes(PIN)) return 'none'
-  return propsOf(t).dimColor === true ? 'dim' : 'bright'
+  if (!pin || !textOf(pin).includes(PIN)) return 'none'
+  return propsOf(pin).dimColor === true ? 'dim' : 'bright'
 }
 /** The texts of a room's card: its title, its counts, its more line ('' when none). */
 async function headOf(ui: Ui, p: OfficeProps, room: string): Promise<{ title: string; counts: string; more: string }> {
@@ -215,9 +216,11 @@ async function rowsOk(ui: Ui, p: OfficeProps): Promise<void> {
       expect([3, 4]).toContain(row.length)
       for (const v of row) { expect(v).not.toMatch(REFUSED_RE); expect(v).not.toMatch(/\n|⏱|′/) }
     }
-    for (const n of nodesOf(card)) if (propsOf(n).paddingLeft !== undefined || propsOf(n).paddingRight !== undefined) { expect(propsOf(n).height).toBe(1); expect((n.children ?? []).length).toBe(1) }
+    // a column holds its rows' Texts alone (no Box per value), each a one-line Text
+    const table = tableOf(card)
+    if (table) for (const col of elements(table)) expect(elements(col).every(c => c.type === 'Text' && propsOf(c).wrap === 'truncate')).toBe(true)
   }
-  expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
+  expect((await ui.findAll({ in: OFFICE_KEY })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
 }
 
 /** The layout hit `kind`/`id` of the props as drawn (a row, a room's pin zone, its ✅ counts, its "more finished" line). */
@@ -289,7 +292,8 @@ test('🔔 mute: the Button flips prefs.muted (mirrored to $.store) and reads �
 })
 
 test('⚙️ settings: the Button opens the settings popover (view.helpOpen: the framed Box titled הגדרות with the demo / still / lang Buttons and the shortcut rows, the chrome taller by HELP_ROWS and the gap, the cards under it as they were); its ✕ closes it; h opens and closes it too', { timeoutMs: 30_000 }, async ($, on) => {
-  const { ui } = await mountOffice($, on)
+  // (a pane tall enough for room A's whole card under the popover — its padding lines make it HELP_ROWS tall — so the rows compare whole)
+  const { ui } = await mountOffice($, on, fixture, { offset: 0, bodyRows: 40 })
   const p0 = await officeProps(ui)
   expect(p0.helpOpen).toBe(false)
   expect(await label(ui, 'help')).toBe('הגדרות ⚙️')
@@ -406,7 +410,7 @@ test('🌐 language: the settings\' Button switches to English (prefs.lang mirro
   expect(hitOf(p1, 'pin', SA).x).toBe(0)
   const a1 = rowsOf(await cardOf(ui, p1, SA)).find(r => r[1] === whoOf(p1, 'a1'))
   const a1Row = officeModel(p1).rooms[0]!.rows.find(r => r.id === 'a1')!
-  expect(a1).toEqual([' ●', whoOf(p1, 'a1'), 'Opus', a1Row.act])   // (the focus cell leads in LTR; the version from 60 columns)
+  expect(a1).toEqual(['●', whoOf(p1, 'a1'), 'Opus', a1Row.act])   // (the mark alone, at the left edge in LTR; the version from 60 columns)
   expect(['📖 Reading', '📖']).toContain(a1Row.act)                  // (the English names are wider: the word fits the pane or its emoji stays)
   expect((await headOf(ui, p1, SA)).more).toBe('▸ 1 more finished')
   await rowsOk(ui, p1)

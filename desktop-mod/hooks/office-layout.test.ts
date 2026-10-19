@@ -6,12 +6,12 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, CARD_FRAME, CARD_LINES, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_MAX, NAME_MIN, NO_DECOR, PIN_ZONE, TITLE_GAP, cardLines, countsText, cut, cutTitle, cutWords, firstGlyph, fitCells, fitLine, glyphs, hitAt, iconLabel, markOf, modelText, officeModel, rowCount, tableFit, textWidth, trimWindow } from './office-layout'
+import { ACT_MAX, CARD_FRAME, CARD_LINES, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_MAX, NAME_MIN, NO_DECOR, PIN_ZONE, TITLE_GAP, cardLines, countsText, countsZone, cut, cutTitle, cutWords, firstGlyph, fitCells, fitLine, glyphs, hitAt, iconLabel, markOf, modelText, officeModel, roomCache, rowCount, tableFit, tableFitAt, textWidth, trimWindow } from './office-layout'
 import type { Line, OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
 function ag(id: string, i: number, over: Partial<OfficeAgent> = {}): OfficeAgent {
-  return { id, emoji: '🦉', name: `סוכן ${i}`, status: 'running', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 3, isLead: i === 0, failed: false, longRunning: false, star: 0, enteredAt: 0, ...over }
+  return { id, emoji: '🦉', name: `סוכן ${i}`, status: 'running', act: '📖 קורא', model: 'Opus 5.5', failed: false, longRunning: false, star: 0, ...over }
 }
 
 function room(over: Partial<OfficeRoom> = {}): OfficeRoom {
@@ -32,7 +32,7 @@ function props(over: Partial<OfficeProps> = {}): OfficeProps {
 function tenByTen(): OfficeRoom[] {
   return Array.from({ length: 10 }, (_, r) => room({
     id: `s${r}`, title: `חדר ${r}`, small: '', showDone: true, run: 10,
-    agents: Array.from({ length: 10 }, (_, i) => ag(`a${r}-${i}`, i, { isLead: false, startMin: 1 })),
+    agents: Array.from({ length: 10 }, (_, i) => ag(`a${r}-${i}`, i)),
   }))
 }
 
@@ -86,20 +86,35 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   expect(fitLine(51)).toBe(42)    // the probe's round 7: the header's 33 cells of counts, a gap and 8 of meter fit 51 columns
   expect(fitLine(0)).toBe(0)
   const counts = '🟢3 ⏳1 ✅2'
-  // 51 columns: 51 - 4 (frame) - 2 (the title's padding) - 3 (pin + gap) - 11 (counts) - 1 (gap) = 30 → 22 cells: the probe's
-  // third room reads `בדיקת תיאטרון הסוכנים…` as it did on the desktop (round 7). The gap stays one cell: a second (the probe's
-  // `gap={2}`, with no pin on its line) would leave 28 → 21 cells and cut that title one word shorter
-  expect(TITLE_GAP).toBe(1)
-  expect(PIN_ZONE).toBe(6)
+  // the probe's gap of two between the title and the counts, the title flush at the reading edge (no pin drawn): 51 columns
+  // leave 51 - 4 (frame) - 2 (the title's padding) - 11 (counts) - 2 (gap) = 32 → 24 cells, and the probe's third room reads
+  // `בדיקת תיאטרון הסוכנים…` as it did on the desktop (round 7); pinned, the 📌 and its gap take 4 more cells (28 → 21, one short
+  // of that title's third word with the ellipsis' cell: a word shorter — the pinned title has less room, never a clipped one);
+  // the pin zone counts the pin whether drawn or not
+  expect(TITLE_GAP).toBe(2)
+  expect(PIN_ZONE).toBe(7)
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 51, counts)).toBe('בדיקת תיאטרון הסוכנים…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 51, counts, true)).toBe('בדיקת תיאטרון…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 56, counts, true)).toBe('בדיקת תיאטרון הסוכנים…')
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 40, counts)).toBe('בדיקת תיאטרון…')
   expect(cutTitle('תיאטרון הסוכנים', 51, counts)).toBe('תיאטרון הסוכנים')
   expect(cutTitle('abcdefghijklmnopqrstuvwxyz', 24, counts)).toBe('abcdefg…')   // the floor of 8
   for (let columns = 24; columns <= 200; columns++) {
-    const t = cutTitle('x'.repeat(300), columns, counts)
-    expect(textWidth(t), `${columns}: ${t}`).toBeLessThanOrEqual(Math.max(8, fitCells(columns - CARD_FRAME - 2 - (EMOJI_CELLS + TITLE_GAP) - textWidth(counts) - TITLE_GAP)))
-    expect(t.endsWith('…'), `${columns}: ${t}`).toBe(true)
+    for (const pinned of [false, true]) {
+      const t = cutTitle('x'.repeat(300), columns, counts, pinned)
+      expect(textWidth(t), `${columns}: ${t}`).toBeLessThanOrEqual(Math.max(8, fitCells(columns - CARD_FRAME - 2 - (pinned ? EMOJI_CELLS + TITLE_GAP : 0) - textWidth(counts) - TITLE_GAP)))
+      expect(t.endsWith('…'), `${columns}: ${t}`).toBe(true)
+    }
+    // a pinned title is never longer than the unpinned one
+    expect(textWidth(cutTitle('x'.repeat(300), columns, counts, true))).toBeLessThanOrEqual(textWidth(cutTitle('x'.repeat(300), columns, counts)))
   }
+  // the counts' zone (the room's ✅ toggle), from the far edge: the border and the paddings, then the counts as the desktop draws
+  // them — wider than their cells, by FIT (11 cells → 15) — never into the pin zone
+  expect(countsZone(counts, 51)).toBe(3 + Math.ceil(11 / FIT))
+  expect(countsZone(counts, 51)).toBe(18)
+  expect(countsZone('🟢2', 51)).toBe(3 + Math.ceil(3 / FIT))
+  expect(countsZone(counts, 20)).toBe(20 - PIN_ZONE)
+  expect(countsZone(counts, 8)).toBe(1)
 })
 
 test('iconLabel: a labelled control reads icon-then-word as the probe writes it — the icon TRAILS a Hebrew word in the string (`הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️`), two icons reversed, the icons alone keeping that arrangement; any other word takes the icon first', () => {
@@ -149,8 +164,8 @@ test('modelText / firstGlyph / countsText / markOf: the family word (the version
   expect(markOf({ ...a, failed: true, longRunning: true })).toBe('❌')
 })
 
-test('tableFit: the four columns whole when their widest values (a padding cell each, the focus cell on the status) fit the card\'s inner width by FIT; else the activity word goes (its emoji stays), then the names shrink to NAME_MIN, then the model column goes — never a clipped value', () => {
-  const r = room({ agents: [ag('lead', 0, { name: 'המנהל', act: '🤔 חושב' }), ag('a1', 1, { name: 'הרופא', model: 'Sonnet 4.5', modelFam: 'sonnet', act: '🔎 מחפש קוד' })] })
+test('tableFit: the four columns whole when their widest values (a padding cell each, the focus cell on the status) fit the card\'s inner width by FIT; else THE DROP ORDER — the activity word goes (its emoji stays) and the names shrink to NAME_MIN, then the model\'s version, last the model column — never a clipped value, never the model before the activity word', () => {
+  const r = room({ agents: [ag('lead', 0, { name: 'המנהל', act: '🤔 חושב' }), ag('a1', 1, { name: 'הרופא', model: 'Sonnet 4.5', act: '🔎 מחפש קוד' })] })
   // the need: status 1 + 1 + 1, who 2 + 1 + 5 + 1, model `Sonnet` 6 + 1 (the version only from MODEL_FULL_FROM), act 2 + 1 + 8 + 1 = 3 + 9 + 7 + 12 = 31 cells
   const need = 31
   const widest = (columns: number) => fitCells(columns - CARD_FRAME)
@@ -158,7 +173,7 @@ test('tableFit: the four columns whole when their widest values (a padding cell 
     const fit = tableFit(r, columns)
     const full = columns >= MODEL_FULL_FROM
     const needAt = need + (full ? 'Sonnet 4.5'.length - 'Sonnet'.length : 0)
-    if (widest(columns) >= needAt) expect(fit, `${columns}`).toEqual({ actWord: true, showModel: true, nameMax: NAME_MAX })
+    if (widest(columns) >= needAt) expect(fit, `${columns}`).toEqual({ actWord: true, showModel: true, modelFull: full, nameMax: NAME_MAX })
     else {
       expect(fit.actWord, `${columns}`).toBe(false)
       // with the emoji alone the row needs 3 + 9 + 7 + 3 = 22 cells (short names: nameMax never bites); the model column stays while that fits
@@ -168,15 +183,40 @@ test('tableFit: the four columns whole when their widest values (a padding cell 
       expect(fit.nameMax).toBeLessThanOrEqual(NAME_MAX)
     }
   }
-  expect(tableFit(r, 51)).toEqual({ actWord: true, showModel: true, nameMax: NAME_MAX })   // the probe's width (round 6 fit four columns)
+  expect(tableFit(r, 51)).toEqual({ actWord: true, showModel: true, modelFull: false, nameMax: NAME_MAX })   // the probe's width (round 6 fit four columns)
   expect(tableFit(r, 45).actWord).toBe(false)                                               // 41 inner → 30 < 31: the word goes
   expect(tableFit(r, 24)).toMatchObject({ actWord: false, showModel: false })               // 20 inner → 15 < 22: the model goes too
   // long names shrink before the model goes: a 24-cell name at 60 columns (56 inner → 42 cells): status 3 + who 28 + model 9 (`Opus 5.5`) + act 8 = 48 → the name cut to 42 - 3 - 9 - 3 - 1 - 2 - 1 = 23
   const long = room({ agents: [ag('x', 1, { name: 'א'.repeat(24), act: '📖 קורא' })] })
-  expect(tableFit(long, 60)).toEqual({ actWord: false, showModel: true, nameMax: 23 })
-  expect(tableFit(long, 120)).toEqual({ actWord: true, showModel: true, nameMax: NAME_MAX })
+  expect(tableFit(long, 60)).toEqual({ actWord: false, showModel: true, modelFull: true, nameMax: 23 })
+  expect(tableFit(long, 120)).toEqual({ actWord: true, showModel: true, modelFull: true, nameMax: NAME_MAX })
   // a room of only-emoji names (2 cells each) keeps the four columns at the probe's width
-  expect(tableFit(room({ agents: [ag('o', 1, { name: '🦉🦉🦉', act: '🦉🦉' })] }), 51)).toEqual({ actWord: true, showModel: true, nameMax: NAME_MAX })
+  expect(tableFit(room({ agents: [ag('o', 1, { name: '🦉🦉🦉', act: '🦉🦉' })] }), 51)).toEqual({ actWord: true, showModel: true, modelFull: false, nameMax: NAME_MAX })
+  // THE DROP ORDER at a given inner width (tableFitAt, the version riding): whole → the word goes → the version goes → the model
+  // column goes; with today's caps a pane wide enough for the version (MODEL_FULL_FROM) always fits the emoji table, so the
+  // version step is pinned here at the inner widths that would need it
+  const two = room({ agents: [ag('x', 1, { name: 'א'.repeat(24), model: 'Sonnet 4.5', act: '🔎 מחפש קוד' }), ag('y', 2, { name: 'ב'.repeat(24), model: 'Opus 5.5', act: '✏️ עורך' })] })
+  // the whole need: status 3 + who 28 + model `Sonnet 4.5` 11 + act `🔎 מחפש קוד` 2 + 1 + 8 + 1 = 12 → 54; the emoji table at NAME_MIN: 3 + 10 + 11 + 3 = 27; the family: 3 + 10 + 7 + 3 = 23
+  expect(tableFitAt(two, 54, true)).toEqual({ actWord: true, showModel: true, modelFull: true, nameMax: NAME_MAX })
+  expect(tableFitAt(two, 53, true)).toEqual({ actWord: false, showModel: true, modelFull: true, nameMax: NAME_MAX })   // the word first; the names whole while they fit (3 + 28 + 11 + 3 = 45)
+  expect(tableFitAt(two, 44, true)).toEqual({ actWord: false, showModel: true, modelFull: true, nameMax: 44 - 3 - 11 - 3 - 1 - 2 - 1 })   // ... then shrink to what is left
+  expect(tableFitAt(two, 27, true)).toEqual({ actWord: false, showModel: true, modelFull: true, nameMax: NAME_MIN })
+  expect(tableFitAt(two, 26, true)).toEqual({ actWord: false, showModel: true, modelFull: false, nameMax: 9 })   // then the version: the four cells it frees go back to the names (26 - 3 - 7 - 3 = 13 → 9)
+  expect(tableFitAt(two, 23, true)).toEqual({ actWord: false, showModel: true, modelFull: false, nameMax: NAME_MIN })
+  expect(tableFitAt(two, 22, true)).toEqual({ actWord: false, showModel: false, modelFull: false, nameMax: 12 })  // last the column: its cells go to the names (22 - 3 - 3 = 16 → 12)
+  // the same under the family rule (no version to shed): the word, then the column
+  expect(tableFitAt(two, 23, false)).toEqual({ actWord: false, showModel: true, modelFull: false, nameMax: NAME_MIN })
+  expect(tableFitAt(two, 22, false)).toEqual({ actWord: false, showModel: false, modelFull: false, nameMax: 12 })
+  // at every inner width the model column never goes while the activity word stays, and a narrower width never draws more than a wider one
+  let prev = tableFitAt(two, 200, true)
+  for (let inner = 199; inner >= 0; inner--) {
+    const fit = tableFitAt(two, inner, true)
+    expect(fit.actWord && !fit.showModel, `${inner}: the model gone while the word stays`).toBe(false)
+    expect(Number(fit.actWord) * 4 + Number(fit.showModel) * 2 + Number(fit.modelFull), `${inner}`).toBeLessThanOrEqual(Number(prev.actWord) * 4 + Number(prev.showModel) * 2 + Number(prev.modelFull))
+    // the names never widen as the pane narrows — except at a step of the order, whose freed cells go to them
+    if (fit.showModel === prev.showModel && fit.modelFull === prev.modelFull) expect(fit.nameMax, `${inner}`).toBeLessThanOrEqual(prev.nameMax)
+    prev = fit
+  }
 })
 
 test('cardLines / rowCount: a card is CARD_LINES around its rows, MORE_LINES more with the more / hide line; rowCount counts the office without building a row and equals the line map\'s length across shapes, widths and both directions', { timeoutMs: 30_000 }, () => {
@@ -204,12 +244,12 @@ test('cardLines / rowCount: a card is CARD_LINES around its rows, MORE_LINES mor
   expect(rowCount(props({ rooms: [] }))).toBe(0)
 })
 
-test('officeModel: the line map of a card — border, pad, title, rule, a row per agent, [blank, more], pad, border, gap — each line one row tall by construction; the rows carry the probe\'s strings and no time; the hits: a row and the more line whole width, the pin zone at the reading edge of the title, the counts zone at the other edge', () => {
+test('officeModel: the line map of a card — border, pad, title, rule, a row per agent, [blank, more], pad, border, gap — each line one row tall by construction; the rows carry the probe\'s strings and no time; the hits: a row and the more line whole width, the pin zone at the reading edge of the title, the counts zone (by FIT) at the other edge', () => {
   const r = room({ title: 'תיאטרון הסוכנים', run: 3, stale: 1, done: 2, moreLabel: 'עוד 2 שסיימו', agents: [
     ag('lead', 0, { name: 'הינשוף', act: '🤔 חושב' }),
-    ag('a1', 1, { name: 'הרופא', model: 'Sonnet 4.5', modelFam: 'sonnet', act: '✏️ עורך', startMin: 1 }),
-    ag('w', 2, { name: 'הזאב', status: 'stale', act: '💤 ממתין', startMin: 40 }),
-    ag('m', 3, { name: 'המכונאי', status: 'done', star: 7000, act: '✅ סיים', startMin: null }),
+    ag('a1', 1, { name: 'הרופא', model: 'Sonnet 4.5', act: '✏️ עורך' }),
+    ag('w', 2, { name: 'הזאב', status: 'stale', act: '💤 ממתין' }),
+    ag('m', 3, { name: 'המכונאי', status: 'done', star: 7000, act: '✅ סיים' }),
   ] })
   const p = props({ rooms: [r], columns: 51 })
   const m = officeModel(p)
@@ -220,13 +260,14 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   const room0 = m.rooms[0]!
   expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 13, titleAt: 2, moreAt: 9, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pin: 'none', more: '▸ עוד 2 שסיימו', actWord: true, showModel: true })
   expect(room0.rows.map(x => x.y)).toEqual([4, 5, 6, 7])
-  // the rows: the status mark (the ⭐ badge for the just-finished one) with the focus cell blank, `${emoji} ${name}`, the family
-  // word (the version from MODEL_FULL_FROM), the activity whole — and nothing of the minutes anywhere
+  // the rows: the status mark alone (the ⭐ badge for the just-finished one; no blank for the focus — the mark sits at the
+  // reading edge), `${emoji} ${name}`, the family word (the version from MODEL_FULL_FROM), the activity whole — and nothing of
+  // the minutes anywhere
   expect(room0.rows.map(x => [x.status, x.who, x.model, x.act])).toEqual([
-    ['● ', '🦉 הינשוף', 'Opus', '🤔 חושב'],
-    ['● ', '🦉 הרופא', 'Sonnet', '✏️ עורך'],
-    ['● ', '🦉 הזאב', 'Opus', '💤 ממתין'],
-    ['⭐ ', '🦉 המכונאי', 'Opus', '✅ סיים'],
+    ['●', '🦉 הינשוף', 'Opus', '🤔 חושב'],
+    ['●', '🦉 הרופא', 'Sonnet', '✏️ עורך'],
+    ['●', '🦉 הזאב', 'Opus', '💤 ממתין'],
+    ['⭐', '🦉 המכונאי', 'Opus', '✅ סיים'],
   ])
   expect(room0.rows.map(x => x.color)).toEqual([DOT_FG.running, DOT_FG.running, DOT_FG.stale, DOT_FG.done])
   expect(room0.rows.map(x => x.dim)).toEqual([false, false, false, true])
@@ -236,7 +277,7 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   // the hits (RTL): the pin zone at the right edge of the title line, the counts zone at the left edge, a row and the more line the whole width
   expect(m.hits).toEqual([
     { kind: 'pin', id: 'sess-a', x: 51 - PIN_ZONE, y: 2, w: PIN_ZONE, h: 1 },
-    { kind: 'roomDone', id: 'sess-a', x: 0, y: 2, w: textWidth('🟢3 ⏳1 ✅2') + 3, h: 1 },
+    { kind: 'roomDone', id: 'sess-a', x: 0, y: 2, w: countsZone('🟢3 ⏳1 ✅2', 51), h: 1 },
     { kind: 'agent', id: 'lead', x: 0, y: 4, w: 51, h: 1 },
     { kind: 'agent', id: 'a1', x: 0, y: 5, w: 51, h: 1 },
     { kind: 'agent', id: 'w', x: 0, y: 6, w: 51, h: 1 },
@@ -245,6 +286,8 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   ])
   expect(hitAt(m, 50, 2)?.kind).toBe('pin')
   expect(hitAt(m, 3, 2)?.kind).toBe('roomDone')
+  expect(hitAt(m, countsZone('🟢3 ⏳1 ✅2', 51) - 1, 2)?.kind).toBe('roomDone')   // the zone's last cell: the counts as the desktop draws them, wider than their cells
+  expect(hitAt(m, countsZone('🟢3 ⏳1 ✅2', 51), 2)).toBeUndefined()
   expect(hitAt(m, 25, 2)).toBeUndefined()        // the title itself is no control
   expect(hitAt(m, 25, 3)).toBeUndefined()        // the rule
   expect(hitAt(m, 0, 4)?.id).toBe('lead')
@@ -256,8 +299,8 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   // LTR: the pin zone at the left edge, the counts at the right; the rows the same
   const ltr = officeModel(props({ rooms: [r], columns: 51, rtl: false }))
   expect(ltr.hits[0]).toEqual({ kind: 'pin', id: 'sess-a', x: 0, y: 2, w: PIN_ZONE, h: 1 })
-  expect(ltr.hits[1]).toEqual({ kind: 'roomDone', id: 'sess-a', x: 51 - (textWidth('🟢3 ⏳1 ✅2') + 3), y: 2, w: textWidth('🟢3 ⏳1 ✅2') + 3, h: 1 })
-  expect(ltr.rooms[0]!.rows.map(x => x.status)).toEqual([' ●', ' ●', ' ●', ' ⭐'])
+  expect(ltr.hits[1]).toEqual({ kind: 'roomDone', id: 'sess-a', x: 51 - countsZone('🟢3 ⏳1 ✅2', 51), y: 2, w: countsZone('🟢3 ⏳1 ✅2', 51), h: 1 })
+  expect(ltr.rooms[0]!.rows.map(x => x.status)).toEqual(['●', '●', '●', '⭐'])
   // no finished agents: no counts hit; no more label: no more line, no blank
   const plain = officeModel(props({ rooms: [room()] }))
   expect(plain.hits.map(h => h.kind)).toEqual(['pin', 'agent', 'agent'])
@@ -273,7 +316,7 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   expect(JSON.stringify(officeModel(p))).toBe(JSON.stringify(m))
 })
 
-test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker beside the status mark pointing in from the reading edge (the cell\'s width never moves), a pulse flags its row; nothing of it moves a line or a hit; the selection is no decor (the open drawer says which agent is selected)', () => {
+test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker on the inner side of the status mark pointing in from the reading edge (the mark stays at the edge: no blank cell on the other rows), a pulse flags its row; nothing of it moves a line or a hit; the selection is no decor (the open drawer says which agent is selected)', () => {
   const rooms = [room({ id: 'a' }), room({ id: 'b', agents: [ag('b1', 1)], pinned: true })]
   const p = props({ rooms, selected: 'a1' })
   const base = officeModel(p)
@@ -284,10 +327,14 @@ test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pin
   expect(hovered.rooms[0]!.pin).toBe('dim')
   expect(officeModel(p, decor({ hoverRoom: 'b' })).rooms[1]!.pin).toBe('bright')
   const focused = officeModel(p, decor({ focus: 'lead' }))
-  expect(focused.rooms[0]!.rows[0]).toMatchObject({ focus: true, status: `●${FOCUS_MARK.rtl}` })
-  expect(focused.rooms[0]!.rows[1]).toMatchObject({ focus: false, status: '● ' })
-  expect(textWidth(focused.rooms[0]!.rows[0]!.status)).toBe(textWidth(focused.rooms[0]!.rows[1]!.status))
-  expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[0]!.status).toBe(`${FOCUS_MARK.ltr}●`)
+  // RTL: the marker LEADS the string (a Text with no Hebrew is laid left to right, so the mark is the rightmost glyph: at the
+  // reading edge, where every other row's mark is); LTR: the marker trails. No row carries a blank for a focus it has not got.
+  expect(focused.rooms[0]!.rows[0]).toMatchObject({ focus: true, status: `${FOCUS_MARK.rtl}●` })
+  expect(focused.rooms[0]!.rows[1]).toMatchObject({ focus: false, status: '●' })
+  expect(focused.rooms[0]!.rows[0]!.status.endsWith('●')).toBe(true)
+  expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[0]!.status).toBe(`●${FOCUS_MARK.ltr}`)
+  expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[1]!.status).toBe('●')
+  expect(FOCUS_MARK).toEqual({ rtl: '‹', ltr: '›' })
   const pulsing = officeModel(p, decor({ pulse: ['b1'] }))
   expect(pulsing.rooms[1]!.rows[0]!.pulse).toBe(true)
   expect(pulsing.rooms[0]!.rows.every(x => !x.pulse)).toBe(true)
@@ -304,7 +351,7 @@ test('officeModel: a narrow pane — the activity cells keep their emoji alone, 
   const narrow = officeModel(props({ rooms: [r], columns: 30 })).rooms[0]!
   expect(narrow.actWord).toBe(false)
   expect(narrow.rows.map(x => x.act)).toEqual(['🤔', '🔎'])
-  expect(narrow.rows.map(x => x.status)).toEqual(['❌ ', '⏰ '])
+  expect(narrow.rows.map(x => x.status)).toEqual(['❌', '⏰'])
   expect(narrow.rows[1]!.who.endsWith('…')).toBe(true)
   expect(textWidth(narrow.rows[1]!.who)).toBeLessThan(EMOJI_CELLS + 1 + 24)
   const wide = officeModel(props({ rooms: [r], columns: 120 })).rooms[0]!
@@ -352,4 +399,46 @@ test('bounds: 200 agents in one room and in 200 rooms, at 45 and 200 columns —
       expect(m.lines.filter(l => l.kind === 'row')).toHaveLength(200)
     }
   }
+})
+
+test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base once per (props, width) — a redraw with the same rooms builds nothing, one room changed builds that room alone, a width change builds every room, the decor builds nothing; a room gone is dropped from the cache; the model is the same with and without the cache', () => {
+  const rooms = [room({ id: 'a' }), room({ id: 'b', agents: [ag('b1', 1), ag('b2', 2)], pinned: true, done: 1, moreLabel: 'עוד 1 שסיימו' }), room({ id: 'c', agents: [ag('c1', 1)] })]
+  const p = props({ rooms, columns: 51 })
+  const cache = roomCache()
+  const m1 = officeModel(p, NO_DECOR, cache)
+  expect(cache.builds).toBe(3)
+  expect(cache.rooms.size).toBe(3)
+  expect(JSON.stringify(m1)).toBe(JSON.stringify(officeModel(p)))
+  // the same props (a new object of equal JSON, as a poll hands them): nothing built
+  officeModel(JSON.parse(JSON.stringify(p)) as OfficeProps, NO_DECOR, cache)
+  expect(cache.builds).toBe(3)
+  // the decor: nothing built, and the model is the decorated one
+  const hovered = officeModel(p, decor({ hoverRoom: 'a', focus: 'b1', pulse: ['c1'] }), cache)
+  expect(cache.builds).toBe(3)
+  expect(hovered.rooms[0]!.pin).toBe('dim')
+  expect(hovered.rooms[1]!.rows[0]!.status).toBe(`${FOCUS_MARK.rtl}●`)
+  expect(hovered.rooms[2]!.rows[0]!.pulse).toBe(true)
+  expect(JSON.stringify(hovered)).toBe(JSON.stringify(officeModel(p, decor({ hoverRoom: 'a', focus: 'b1', pulse: ['c1'] }))))
+  // one room changed (an agent's activity): that room alone
+  const q = { ...p, rooms: rooms.map(r => r.id === 'b' ? { ...r, agents: r.agents.map(a => a.id === 'b2' ? { ...a, act: '✏️ עורך' } : a) } : r) }
+  const m2 = officeModel(q, NO_DECOR, cache)
+  expect(cache.builds).toBe(4)
+  expect(m2.rooms[1]!.rows[1]!.act).toBe('✏️ עורך')
+  expect(JSON.stringify(m2)).toBe(JSON.stringify(officeModel(q)))
+  // the width: every room again (the fit and the title cut depend on it)
+  const m3 = officeModel({ ...q, columns: 30 }, NO_DECOR, cache)
+  expect(cache.builds).toBe(7)
+  expect(JSON.stringify(m3)).toBe(JSON.stringify(officeModel({ ...q, columns: 30 })))
+  // the direction alone: nothing built (the base is the same; the status strings are laid per render)
+  officeModel({ ...q, columns: 30, rtl: false }, NO_DECOR, cache)
+  expect(cache.builds).toBe(7)
+  // a room gone: dropped from the cache; back again: built again
+  officeModel({ ...q, columns: 30, rooms: q.rooms.slice(0, 2) }, NO_DECOR, cache)
+  expect(cache.builds).toBe(7)
+  expect([...cache.rooms.keys()]).toEqual(['a', 'b'])
+  officeModel({ ...q, columns: 30 }, NO_DECOR, cache)
+  expect(cache.builds).toBe(8)
+  // the pin state is part of the room's props: a pin builds that room (its title cut moves with the 📌)
+  officeModel({ ...q, columns: 30, rooms: q.rooms.map(r => r.id === 'a' ? { ...r, pinned: true } : r) }, NO_DECOR, cache)
+  expect(cache.builds).toBe(9)
 })

@@ -67,7 +67,7 @@ export type Strings = {
   emptyNoActive: string; emptyNoneInWindow: string
   working: string; idleN: string; finished: string
   dWorking: string; dDone: string; dStale: string; dFailed: string; dDuration: string; dElapsed: string
-  /** What follows the minutes on the drawer's clock chip: `7′` in English, `7 דק׳` in Hebrew (a Hebrew geresh: the chip ends right-to-left, never with a neutral). The agent rows carry no clock (the cards design, 2026-10-19): the drawer's chip is the one place the minutes are drawn. */
+  /** What follows the minutes on the drawer's clock chip: `7′` in English, `7 דק׳` in Hebrew. The one place the minutes are drawn: the agent rows carry no clock (the cards design, 2026-10-19). */
   dMinutes: string
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string

@@ -5,10 +5,10 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { I18N } from './i18n'
+import { I18N, modelFamily } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, EMPTY_PAYLOAD, JUST_FINISHED_MS, PERSONA_EMOJI } from './model'
 import type { Agent } from './model'
-import { DRAWER_TEXT_TIGHT, MAX_PROPS_AGENTS, PROPS_BUDGET, PROPS_MAX_CHARS, assertJson, buildOfficeProps, modelFamily } from './office-props'
+import { DRAWER_TEXT_TIGHT, MAX_PROPS_AGENTS, PROPS_BUDGET, PROPS_MAX_CHARS, assertJson, buildOfficeProps } from './office-props'
 import type { OfficePropsInput } from './office-props'
 import { officeView } from './ui'
 
@@ -18,10 +18,10 @@ function agent(over: Partial<Agent> & { id: string }): Agent {
   return { persona_id: 3, emoji: PERSONA_EMOJI[3] ?? '', role: '', subagent_type: '', status: 'running', tool: 'Read', phase: 'tool', task: 'x'.repeat(5000), task_short: 'x', result: 'y'.repeat(4000), start_ms: T0 - 120_000, end_ms: null, session: 'sess-a', session_full: 'sess-aaaa', cwd: '/w', project: '/w', mtime_ms: T0 - 1000, is_session: false, closed: false, is_workflow: false, truncated: false, model: 'claude-opus-5-5', ...over }
 }
 function input(agents: Agent[], over: Partial<OfficePropsInput> = {}): OfficePropsInput {
-  return { payload: { ...EMPTY_PAYLOAD, agents, stars: {} }, prefs: DEFAULT_PREFS, view: DEFAULT_VIEW, roomDone: {}, offset: 0, columns: 45, rows: 30, now: T0, usage: null, firstSeen: {}, ...over }
+  return { payload: { ...EMPTY_PAYLOAD, agents, stars: {} }, prefs: DEFAULT_PREFS, view: DEFAULT_VIEW, roomDone: {}, offset: 0, columns: 45, rows: 30, now: T0, usage: null, ...over }
 }
 
-test('modelFamily', () => {
+test('modelFamily (i18n.ts: the text cards\' colour token; the Client props carry the model word alone)', () => {
   expect(modelFamily('claude-opus-5-5')).toBe('opus')
   expect(modelFamily('claude-sonnet-5-5')).toBe('sonnet')
   expect(modelFamily('claude-haiku-5-5')).toBe('haiku')
@@ -64,8 +64,9 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(p.rooms).toHaveLength(1)
   expect(p.rooms[0]?.showDone).toBe(true)
   expect(p.rooms[0]?.agents.map(a => a.id)).toEqual(['a1', 'a2'])
-  // the row's name is the persona's (persona 3), never the role — that is the drawer's subtitle (Asaf's cleanup, 2026-10-17)
-  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 2, isLead: false, failed: false, longRunning: false, star: 0, enteredAt: 0 })
+  // the row's name is the persona's (persona 3), never the role — that is the drawer's subtitle (Asaf's cleanup, 2026-10-17); the row
+  // is slim: what the cards draw and nothing else (no clock, no tool or model family, no lead flag, no first-seen stamp)
+  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', act: '📖 קורא', model: 'Opus 5.5', failed: false, longRunning: false, star: 0 })
   expect(JSON.stringify(p)).not.toContain('xxxxxxxxxx')
   expect(p.drawer).toBeNull()
   const withDrawer = buildOfficeProps(input([agent({ id: 'a1', task_short: 'Read the spec' })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
@@ -100,24 +101,22 @@ test('buildOfficeProps: the empty office names its kind with the i18n message', 
   expect(p.empty).toEqual({ kind: 'office', msg: I18N.he.emptyOffice, sub: I18N.he.emptySub })
 })
 
-test('buildOfficeProps: star while the stamp is alive, enteredAt from firstSeen, offset clamped, name capped', () => {
+test('buildOfficeProps: star while the stamp is alive, offset clamped, name capped', () => {
   const done = agent({ id: 'a1', role: 'r'.repeat(40), status: 'done', end_ms: T0 - 1000 })
   const shown = { ...DEFAULT_PREFS, showDone: true }
-  const p = buildOfficeProps(input([done], { payload: { ...EMPTY_PAYLOAD, agents: [done], stars: { a1: T0 - 3000 } }, prefs: shown, firstSeen: { a1: T0 - 500 }, offset: -4 }))
+  const p = buildOfficeProps(input([done], { payload: { ...EMPTY_PAYLOAD, agents: [done], stars: { a1: T0 - 3000 } }, prefs: shown, offset: -4 }))
   const a = p.rooms[0]?.agents[0]
   expect(a?.star).toBe(T0 - 3000)
-  expect(a?.enteredAt).toBe(T0 - 500)
   expect(a?.name).toBe('החוקר')   // the persona's name, whatever the role's length (the role is the drawer's subtitle)
   expect(p.offset).toBe(0)
   const expired = buildOfficeProps(input([done], { payload: { ...EMPTY_PAYLOAD, agents: [done], stars: { a1: T0 - JUST_FINISHED_MS } }, prefs: shown }))
   expect(expired.rooms[0]?.agents[0]?.star).toBe(0)
-  expect(expired.rooms[0]?.agents[0]?.enteredAt).toBe(0)
 })
 
 test('buildOfficeProps: 100 agents stay under the Client props bound', () => {
   const many = Array.from({ length: 100 }, (_, i) => agent({ id: `a${i}`, session_full: `s${i % 10}`, session: `s${i % 10}` }))
   const p = buildOfficeProps(input(many))
-  expect(JSON.stringify(p).length).toBeLessThan(60_000) // measured 23,401 on 2026-10-10 (spec §6.2: ~25 KB)
+  expect(JSON.stringify(p).length).toBeLessThan(60_000) // measured 16,452 on 2026-10-19 with the slim rows (23,401 on 2026-10-10 with the tool / model family, the minutes, the lead flag and the first-seen stamp; spec §6.2: ~25 KB)
 })
 
 test('THE PROPS CAP: 600 agents (show finished on) stay under the props bound — MAX_PROPS_AGENTS of them ride the props, the working ones first in the order of the office, and the footer counts the rest ahead of the scan notes; the header counts stay those of the whole office', () => {

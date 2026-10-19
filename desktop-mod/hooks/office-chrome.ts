@@ -30,8 +30,8 @@ export const HELP: ReadonlyArray<readonly [string, string]> = [
 ]
 /** The settings popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
 export const HELP_BUTTON_ROWS = 1
-/** The settings popover's height: the border, the title row, the Buttons row, one row per shortcut. */
-export const HELP_ROWS = 2 + 1 + HELP_BUTTON_ROWS + HELP.length
+/** The settings popover's height: the border, the padding line above and below (the cards' paddingY), the title row, the Buttons row, one row per shortcut. */
+export const HELP_ROWS = 2 + 2 + 1 + HELP_BUTTON_ROWS + HELP.length
 /** The blank line under the settings popover | the drawer, before the first card (the cards' own gap). */
 export const OVERLAY_GAP = 1
 /** The drawer card's frame: its border and its padding line, top and bottom (the cards' style). */
@@ -43,11 +43,13 @@ export function labelsFit(labels: readonly string[], width: number, gap = 1): bo
 }
 /**
  * The window's budget. The Client's whole tree must stay under 100,000 characters serialized or the
- * instance unmounts; a drawn agent row (four cells, a Box and a Text each) serializes to about
- * ROW_CHARS characters whatever the width (measured 2026-10-19 on the fake surface: 706 at most), so
- * the rows drawn in one window are capped at WINDOW_ROWS — a pane taller than that leaves its lowest
- * rows blank rather than losing the pane. (The chrome, the drawer and the card frames of a window
- * cost about 10,000 more: office-client.test.ts's limits sweep guards the whole tree.)
+ * instance unmounts; a drawn agent row (four Texts, no Box) serializes to under ROW_CHARS characters
+ * whatever the width — the dearest row, pulsing and focused with the widest texts the props allow,
+ * measured 488 on the fake surface (375 plain; the fix wave of 2026-10-19), so ROW_CHARS keeps a
+ * margin over it — and the rows drawn in one window are capped at WINDOW_ROWS: a pane taller than
+ * that leaves its lowest rows blank rather than losing the pane. (The chrome, the drawer and the card
+ * frames of a window cost about 10,000 more: office-client.test.ts's limits sweep guards the whole
+ * tree, the pulsing rows included.)
  */
 export const WINDOW_CHARS = 80_000
 export const ROW_CHARS = 800
@@ -108,7 +110,7 @@ export function cleanSearch(q: string): string {
   return Array.from(q.replace(BIDI_RE, '').slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
 }
 
-/** One drawn line of the drawer: `text` as the Client draws it, one Text cut or wrapped to the inner width (a composed line — the model line, the ✂ note — is its parts a space apart: the desktop lays a Hebrew-first Text right-to-left); `chips` for the chips line, a Text per chip. */
+/** One drawn line of the drawer: `text` as the Client draws it — one Text, cut or wrapped to the inner width (the model line and the ✂ note are composed strings, the desktop laying a Hebrew-first Text right-to-left); `chips` for the chips line, a Text per chip. */
 export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
 
 /**
@@ -208,8 +210,8 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
     used += w
   }
   lines.push({ kind: 'chips', text: shown.map(c => ` ${c} `).join(' '), chips: shown })
-  // the model line and the ✂ note are composed (a label, a value, a mark) as the probe writes its lines — one Text, the parts a
-  // space apart; no colon after a label — it would be drawn before the Hebrew word
+  // the model line and the ✂ note are one string each (a label, a value, a mark, a space apart), drawn as one Text the way the
+  // probe writes its lines; no colon after a label — it would be drawn before the Hebrew word
   lines.push({ kind: 'head', text: cut([lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act].join(' '), inner) })
   lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
   for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })

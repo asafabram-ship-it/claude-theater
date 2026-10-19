@@ -11,37 +11,36 @@
 // throws on the first `undefined`, naming its path); `task`/`result` only in
 // the drawer (one selected agent), never per agent; every text capped (name
 // 24, act 16, room title and the drawer's name / subtitle 48, task/result
-// 4000 — whole glyphs, through the layout's `cut`); ~100 agents ≈ 25 KB, far
+// 4000 — whole glyphs, through the layout's `cut`); ~100 agents ≈ 16 KB (the
+// slim rows of the fix wave, 2026-10-19: 23 KB before), far
 // under the 100,000-character props bound — and never past it: at most
 // MAX_PROPS_AGENTS agents ride the props (the rest counted in the footer,
 // `+N`), and props measured over PROPS_BUDGET shed the drawer's long text,
 // then more agents.
 
-import { I18N, activityLabel, dirOf, modelFamily, modelLabel } from './i18n'
+import { I18N, activityLabel, dirOf, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
 import type { Payload, Prefs, View } from './model'
 import { ACT_MAX, NAME_MAX, cut, iconLabel } from './office-layout'
-import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
+import { UNKNOWN_MODEL_PILL } from './office-svg'
 import { personaName } from './personas'
 import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
-
-/** The family token of a model id (i18n.ts): the props carry it beside the model word (the cards colour only the status mark). */
-export { modelFamily } from './i18n'
 
 /** The Client's key and the `ui.message` matcher. */
 export const OFFICE_KEY = 'office'
 
+/**
+ * One agent row as the cards draw it (office-layout.ts): the status mark from `status`, `failed`, `longRunning` and `star`,
+ * `${emoji} ${name}`, the model word, the activity. Nothing else rides the props: the rows carry no clock (the drawer's chip
+ * has the minutes), and no tool family, model family, lead flag or first-seen stamp — the cards read none of them.
+ */
 export type OfficeAgent = {
   id: string; emoji: string; name: string
   status: 'running' | 'stale' | 'done'
-  fam: '' | 'search' | 'read' | 'write' | 'cmd' | 'agent'   // toolFamily(tool) from office-svg.ts
   act: string                                               // activityLabel(a, lang)
   model: string                                             // modelLabel(a.model) or '?'
-  modelFam: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'other'
-  startMin: number | null                                   // elapsed minutes (agentElapsed at the minute clock), null = unknown
-  isLead: boolean; failed: boolean; longRunning: boolean
+  failed: boolean; longRunning: boolean
   star: number                                              // detection stamp (the poll's clock) of a just-finished agent inside the ⭐ window, else 0
-  enteredAt: number                                         // ms the office first saw it (firstSeen), 0 when unknown
 }
 
 export type OfficeRoom = {
@@ -97,8 +96,6 @@ export type OfficePropsInput = {
   rows: number
   now: number
   usage: { pct: number; resetsAt: string } | null
-  /** Agent id → when the office first saw it (ui.tsx walkIns' memory); an unknown id draws `enteredAt: 0`. */
-  firstSeen: Readonly<Record<string, number>>
   footer?: string
 }
 
@@ -111,8 +108,8 @@ export const PROPS_MAX_CHARS = 100_000
 /** What buildOfficeProps keeps the serialized props under: the bound less a margin. */
 export const PROPS_BUDGET = 90_000
 /**
- * THE PROPS CAP: the most agents the props carry. One costs about 250 characters (more with a long id, or a room of
- * its own), so this many sit near half the budget. Past it the agents are dropped — the finished first, then from
+ * THE PROPS CAP: the most agents the props carry. One costs about 180 characters (more with a long id, or a room of
+ * its own), so this many sit well under half the budget. Past it the agents are dropped — the finished first, then from
  * the end of the office's own order (pinned rooms, rooms with a running agent, the latest activity) — a room left
  * with none is left out, and the footer counts them (`+N`, i18n moreAgentsN). Reached only with "show finished" on
  * and hundreds of agents inside MAX_AGE_MIN; the header's counts stay the whole office's.
@@ -148,9 +145,9 @@ export function assertJson(v: unknown, path = ''): void {
  * each with its cards), the drawer of the selected agent (null when nothing
  * is selected or the selection is gone), the header counts, the empty-office
  * kind, the flags the toolbar shows and the strings it draws. Pure — the
- * same inputs give the same JSON; a card's clock is `agentElapsed` at the
- * wall-clock minute, so every row ticks (and the props change) once a
- * minute, together.
+ * same inputs give the same JSON; the clock rides as `nowMin` (the usage
+ * meter's reset clock) and the drawer's `elapsedMin`, both at the wall-clock
+ * minute, so the props change once a minute, never between.
  */
 export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const { prefs, view, roomDone, now } = input
@@ -168,16 +165,13 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     const known = cards.get(i)
     if (known) return known
     const a = order[i]!
-    const el = agentElapsed(a, nowMin)
     const starAt = stars[a.id]
     const card: OfficeAgent = {
       // the row's name is the persona's, always (the role / task stays in the drawer: Asaf's cleanup, 2026-10-17)
-      id: a.id, emoji: a.emoji, name: cut(personaName(a.persona_id, lang), NAME_MAX), status: a.status, fam: toolFamily(a.tool),
-      act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL, modelFam: modelFamily(a.model),
-      startMin: wholeMinutes(el),
-      isLead: a.is_session, failed: a.failed === true, longRunning: isLongRunning(a, now),
+      id: a.id, emoji: a.emoji, name: cut(personaName(a.persona_id, lang), NAME_MAX), status: a.status,
+      act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL,
+      failed: a.failed === true, longRunning: isLongRunning(a, now),
       star: a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS ? starAt : 0,
-      enteredAt: input.firstSeen[a.id] ?? 0,
     }
     cards.set(i, card)
     return card

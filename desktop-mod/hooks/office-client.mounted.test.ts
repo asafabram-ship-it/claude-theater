@@ -46,9 +46,9 @@ async function officeProps(ui: Finder): Promise<OfficeProps> {
   return c!.props.props as OfficeProps
 }
 
-/** Whether a Box the module drew carries `bg` as its backgroundColor (the finish pulse on a row's cells). */
+/** Whether a node the module drew carries `bg` as its backgroundColor (the finish pulse on a row's four Texts). */
 async function withBg(ui: Finder, bg: string): Promise<boolean> {
-  return (await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => n.props.backgroundColor === bg)
+  return (await ui.findAll({ in: OFFICE_KEY })).some(n => n.props.backgroundColor === bg)
 }
 
 /** The module's drawn tree: its children (the chrome lines, the settings | drawer, then the spacer and the window's cards). */
@@ -65,16 +65,16 @@ const isOverlay = (k: Drawn) => k.type === 'Box' && propsOf(k).borderStyle !== u
 async function cardsOf(ui: Finder): Promise<Drawn[]> {
   return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined) || propsOf(k).key === 'fragment'))
 }
-/** The table of a card or of the fragment: the Box of column Boxes (undefined when no row of it is in the window). */
+const nodesOf = (n: Drawn | string): Drawn[] => (typeof n === 'string' ? [] : [n, ...(n.children ?? []).flatMap(nodesOf)])
+/** The table of a card or of the fragment: the Box of column Boxes, wherever it sits in the card (undefined when no row of it is in the window). */
 function tableOf(card: Drawn): Drawn | undefined {
-  const els = (card.children ?? []).filter((k): k is Drawn => typeof k !== 'string')
-  return els.find(n => n.type === 'Box' && (n.children ?? []).length > 0 && (n.children ?? []).every(c => typeof c !== 'string' && propsOf(c).flexDirection === 'column'))
+  return nodesOf(card).find(n => n.type === 'Box' && (n.children ?? []).length > 0 && (n.children ?? []).every(c => typeof c !== 'string' && propsOf(c).flexDirection === 'column'))
 }
-/** The texts of a card's drawn rows: one array per row — [status, who, model?, act] — the window's rows only. */
+/** The texts of a card's drawn rows: one array per row — [status, who, model?, act] — the window's rows only (a column holds one Text per row and nothing else). */
 function rowsOf(card: Drawn): string[][] {
   const table = tableOf(card)
   if (!table) return []
-  const cols = (table.children as Drawn[]).map(col => (col.children as Drawn[]).filter(c => propsOf(c).paddingLeft !== undefined || propsOf(c).paddingRight !== undefined))
+  const cols = (table.children as Drawn[]).map(col => (col.children as Drawn[]).filter(c => typeof c !== 'string' && c.type === 'Text'))
   return cols[0]!.map((_, i) => cols.map(col => textOf(col[i]!)))
 }
 /** The names (the who cells) of every row drawn, across the cards. */
@@ -124,7 +124,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   // one card, its rows the two agents: the status mark, `${emoji} ${name}`, the model word, the activity whole
   const cards = await cardsOf(ui)
   expect(cards).toHaveLength(1)
-  expect(rowsOf(cards[0]!)).toEqual([['● ', whoOf(p0, 'lead'), 'Opus', '🤔 חושב'], ['● ', whoOf(p0, 'a1'), 'Opus', '📖 קורא']])
+  expect(rowsOf(cards[0]!)).toEqual([['●', whoOf(p0, 'lead'), 'Opus', '🤔 חושב'], ['●', whoOf(p0, 'a1'), 'Opus', '📖 קורא']])
   expect(await focused(ui, p0)).toEqual([])
   // the lead is the first row of the card (layout line 4), the whole row its hit
   const x = 5
@@ -159,7 +159,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   const p2 = await officeProps(ui)
   expect(p2.rooms[0]?.agents.find(a => a.id === 'a1')).toMatchObject({ status: 'done', star: 0 })
   const doneRow = rowsOf((await cardsOf(ui))[0]!).find(r => r[1] === whoOf(p2, 'a1'))
-  expect(doneRow).toEqual(['○ ', whoOf(p2, 'a1'), 'Opus', '✅ סיים'])
+  expect(doneRow).toEqual(['○', whoOf(p2, 'a1'), 'Opus', '✅ סיים'])
   expect(await withBg(ui, FX_BG.done) || await withBg(ui, FX_BG.doneAlt)).toBe(false)
   await ui.advance(FX_DONE_MS + FX_TICK_MS * 8)   // no clock: nothing happens
   expect(await withBg(ui, FX_BG.done) || await withBg(ui, FX_BG.doneAlt)).toBe(false)
@@ -225,7 +225,7 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input kee
   await ui.input({ key: 'search', text: 'ab', kind: 'change' })
   agents = agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
   await clock.advance(POLL_MS * 2)
-  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a1')?.fam).toBe('write')   // the publish redrew the Client
+  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a1')?.act).toBe('✏️ כותב')   // the publish redrew the Client
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('ab')
   expect((await officeProps(ui)).search).toBe('')           // not yet: the module waits SEARCH_DEBOUNCE_MS of quiet
   await ui.advance(SEARCH_DEBOUNCE_MS)                      // the search post goes out: the hook writes view.search, the pane redraws
@@ -238,7 +238,7 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input kee
   expect((await officeProps(ui)).search).toBe('')
   agents = agents.map(a => (a.id === 'a2' ? { ...a, tool: 'Grep' } : a))
   await clock.advance(POLL_MS * 2)
-  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.fam).toBe('search')
+  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.act).toBe('🔎 מחפש קוד')
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('')
   // a newcomer: n1 is the fifth row (layout line 8); no fault, no loop, no tint
   agents = [...agents, agent({ id: 'n1', persona_id: 5 })]
@@ -252,7 +252,8 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input kee
   await ui.unmount()
 })
 
-test('DESKTOP (2.4): the window — the card drawn whole with its rows windowed by line (a spacer per column for the rest), a click in full-layout coordinates', async ($, on) => {
+// (a mount, a scroll and clicks through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('DESKTOP (2.4): the window — the card drawn whole with its rows windowed by line (one spacer above and one below the table for the rest), a click in full-layout coordinates', { timeoutMs: 30_000 }, async ($, on) => {
   const many = Array.from({ length: 40 }, (_, i) => agent({ id: `a${i}` }))
   const { clock } = beneath(on, () => many, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -271,12 +272,14 @@ test('DESKTOP (2.4): the window — the card drawn whole with its rows windowed 
   expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   const card = (await cardsOf(ui))[0]!
   expect(rowsOf(card).map(r => r[1])).toEqual(Array.from({ length: 10 }, (_, i) => whoOf(p, `a${i + 2}`)))
-  const [, , table] = card.children as Drawn[]
-  for (const col of table!.children as Drawn[]) {
-    const ch = col.children as Drawn[]
-    expect(ch[0]).toMatchObject({ type: 'Box', props: { height: 2 } })
-    expect(ch[ch.length - 1]).toMatchObject({ type: 'Box', props: { height: 28 } })
-  }
+  // the table block: a column Box of the spacer for a0, a1 (above the window), the table, the spacer for a12..a39 — no spacer inside a column
+  const [, , block] = (card.children as Array<Drawn | string>).filter((k): k is Drawn => typeof k !== 'string')
+  expect(propsOf(block)).toMatchObject({ flexDirection: 'column' })
+  const [above, table, below] = (block!.children as Array<Drawn | string>).filter((k): k is Drawn => typeof k !== 'string')
+  expect(above).toMatchObject({ type: 'Box', props: { height: 2 } })
+  expect(table).toBe(tableOf(card))
+  expect(below).toMatchObject({ type: 'Box', props: { height: 28 } })
+  for (const col of table!.children as Drawn[]) expect((col.children as Drawn[]).every(c => c.type === 'Text')).toBe(true)
   // a12's row is layout line 16: just past the window; a9's (line 13) is inside: the click lands on it
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 5, y: chrome + 13, button: 'left' })
   expect((await officeProps(ui)).selected).toBe('a9')          // the click's `open` reached the hooks: a9's drawer

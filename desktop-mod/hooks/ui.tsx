@@ -32,9 +32,9 @@
 //            chrome rows + office-layout.ts rowCount, the layout's rows counted
 //            without building a cell), so the engine scrolls it natively
 //            and hands the window back as e.props.scroll (offset → props.offset,
-//            bodyRows → props.rows). The module draws the chrome and the text-cell
-//            agent rows (office-layout.ts), the hover and the fx motion (walk-in, hop),
-//            the selection/focus/status highlights, and POSTS
+//            bodyRows → props.rows). The module draws the chrome and the room
+//            cards with their agent rows (office-layout.ts), the head hover, the
+//            keyboard focus marker and the finish pulse, and POSTS
 //            what the person did (open / pin / roomDone / the toolbar / search —
 //            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
 //            applies each post as the text cards' press of the same name does
@@ -113,7 +113,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, REDRAW_LATCH_MS, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
-import { UNKNOWN_MODEL_PILL, WALK_IN_MS } from './office-svg'
+import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
 // count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
@@ -466,26 +466,6 @@ export function minuteClock(now: number): number {
   return Math.floor(now / 60_000) * 60_000
 }
 
-/**
- * PAGE .entering (the walk-in): ids first seen within WALK_IN_MS of `now`.
- * `firstSeen` is the caller's memory (agent id → when it first appeared);
- * stamped for every agent of the office and pruned to the office's ids. The
- * desktop render calls it for the stamps alone (`enteredAt` in the Client's
- * props: the module times its own walk-in fx from them).
- */
-export function walkIns(firstSeen: Record<string, number>, all: readonly Agent[], now: number): Set<string> {
-  const entering = new Set<string>()
-  const live = new Set<string>()
-  for (const a of all) {
-    live.add(a.id)
-    const t = firstSeen[a.id]
-    if (t === undefined) firstSeen[a.id] = now
-    if (now - (firstSeen[a.id] ?? now) < WALK_IN_MS) entering.add(a.id)
-  }
-  for (const id of Object.keys(firstSeen)) if (!live.has(id)) delete firstSeen[id]
-  return entering
-}
-
 /** The office the pane draws: the demo while `view.demo` (with the ⭐ the poll published for it), else the scanned payload. */
 export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number): Payload {
   return view.demo ? { ...demoPayload(now), stars: payload.stars } : payload
@@ -537,8 +517,6 @@ export function parseRoomDone(stored: unknown): Record<string, boolean> {
 
 /** PAGE roomDone, cached from $.store ('roomDone'); null until first read. */
 let roomDoneCache: Record<string, boolean> | null = null
-/** PAGE .entering: agent id → when it first appeared in the office (the desktop row's walk-in: `enteredAt` in the Client's props). */
-const firstSeen: Record<string, number> = {}
 
 async function loadRoomDone($: EngineInterface): Promise<Record<string, boolean>> {
   if (roomDoneCache !== null) return roomDoneCache
@@ -762,12 +740,11 @@ export function registerUi(on: On): void {
     //     register.tsx; /theater clears it): then the desktop falls through to the text cards below.
     if (e.surface === 'desktop' && 'Client' in els && !DESKTOP.clientFailed) {
       const { Client } = els
-      walkIns(firstSeen, all, now) // the newcomers' stamps (enteredAt): the module's walk-in fx reads them
       const footerBits: string[] = []
       if (office.oversized > 0) footerBits.push(L.oversizedN(office.oversized))
       if (scanError !== null && scanError !== '') footerBits.push(scanError)
       const props = buildOfficeProps({
-        payload, prefs, view, roomDone, now, firstSeen, usage: USAGE.fiveHour, footer: footerBits.join(' · '),
+        payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: footerBits.join(' · '),
         columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0,
       })
       const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)

@@ -377,7 +377,8 @@ test('a window reported without a reset time is never toasted (no store read or 
   await measure($, [])
 })
 
-test('SessionMode: the plugin adds no label there — the terminal and the desktop both draw $.ui.status, one label per surface', async ($, on) => {
+// (two mounts and a measurement through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('SessionMode: the plugin adds no label there — the terminal and the desktop both draw $.ui.status, one label per surface', { timeoutMs: 30_000 }, async ($, on) => {
   beneath(on, () => [], prefs('he'))
   const seen = usageBeneath(on)
   on('ui.render', { component: 'SessionMode' }, ($, e) => {
@@ -426,7 +427,8 @@ async function names5h(ui: Mounted) {
 
 const NO_BIDI = /[\r\n\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c]/
 
-test('desktop header: the Client gets the reading; a wide pane draws the full label, a narrow one the short form, ⚠ from 80, nothing without a reading', async ($, on) => {
+// (two mounts and six measurements, each a redraw: 3.8 s under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('desktop header: the Client gets the reading; a wide pane draws the full label, a narrow one the short form, ⚠ from 80, nothing without a reading', { timeoutMs: 30_000 }, async ($, on) => {
   const { clock } = beneath(on, () => [], prefs('he'))
   usageBeneath(on)
   await $.session.start(START)
@@ -460,7 +462,8 @@ test('desktop header: the Client gets the reading; a wide pane draws the full la
   await narrow.unmount()
 })
 
-test('terminal header: the card header ends with the short meter (wide and narrow), ⚠ from 80, nothing without a reading', async ($, on) => {
+// (two mounts and six measurements of the text cards: past the 5 s default under a full suite on a loaded machine with no code change)
+test('terminal header: the card header ends with the short meter (wide and narrow), ⚠ from 80, nothing without a reading', { timeoutMs: 30_000 }, async ($, on) => {
   const { clock } = beneath(on, () => [], prefs('he'))
   usageBeneath(on)
   await $.session.start({ ...START, surface: 'terminal' })
@@ -501,7 +504,8 @@ function agent(id: string, status: Agent['status']): Agent {
   }
 }
 
-test('terminal header: the meter is drawn whole or not at all — a narrow pane whose counts leave no room for it shows the counts alone', async ($, on) => {
+// (two mounts of the text cards and their measurements: past the 5 s default under a full suite on a loaded machine with no code change)
+test('terminal header: the meter is drawn whole or not at all — a narrow pane whose counts leave no room for it shows the counts alone', { timeoutMs: 30_000 }, async ($, on) => {
   const { clock } = beneath(on, () => [agent('r1', 'running'), agent('s1', 'stale'), agent('d1', 'done')], prefs('he'))
   usageBeneath(on)
   await $.session.start({ ...START, surface: 'terminal' })

@@ -72,10 +72,10 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   expect(LABEL_KEYS).toContain('scSettings')
   expect(LABEL_KEYS).not.toContain('tbHelp')
   expect(LABEL_KEYS).not.toContain('helpTitle')
-  // the agent rows carry no clock (the cards design): no string of the table names a row's minutes — the drawer's chip (dMinutes) is the one unit
+  // the agent rows carry no clock (the cards design): the drawer's chip (dMinutes) is the one unit of minutes in the table
   expect('rowMinutes' in L).toBe(false)
   expect('rowMinutes' in I18N.en).toBe(false)
-  // the tool table: an emoji leads every entry (the layout draws it as a run of its own); the Hebrew after it must pass alone
+  // the tool table: an emoji leads every entry (an activity cell may draw the emoji alone); the Hebrew after it must pass alone
   for (const [tool, label] of Object.entries(L.tools)) check(`tools.${tool}`, label.replace(/^\S+\s/, ''))
   for (const k of ['actDone', 'actStale', 'actThinking', 'actMcp'] as const) check(k, L[k].replace(/^\S+\s/, ''))
   expect(bad).toEqual([])

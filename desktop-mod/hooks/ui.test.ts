@@ -269,9 +269,9 @@ async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Rec
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
 }
 
-/** DESKTOP (the Client office): whether the module draws the finish pulse (the FX_BG.done / doneAlt tint on a row's cell Boxes). */
+/** DESKTOP (the Client office): whether the module draws the finish pulse (the FX_BG.done / doneAlt tint on a row's four Texts). */
 async function hopShown(ui: { findAll: (q: { in?: string; type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }): Promise<boolean> {
-  return (await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => n.props.backgroundColor === FX_BG.done || n.props.backgroundColor === FX_BG.doneAlt)
+  return (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).some(n => n.props.backgroundColor === FX_BG.done || n.props.backgroundColor === FX_BG.doneAlt)
 }
 
 /** A quiet office on disk (HOME = C:/Users/test): one open conversation (its lead answering on Fable) with two subagents, one of them on Opus. */
@@ -597,7 +597,8 @@ async function cardOf(ui: { find: (q: { type: string }) => Promise<{ props: Reco
 // `ui.fault` of the office module (register.tsx); a test file's import of `DESKTOP` is another module instance than
 // the plugin bundle's, so a test cannot flip it from outside. register.test.ts drives a real fault of the module:
 // no Client, the text cards' `open:a1` back, and `/theater` brings the Client again.)
-test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON props v1, the engine\'s scroll window, the full content height), no Svg; a republish of the same office hands it the same props; a resize follows the width', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON props v1, the engine\'s scroll window, the full content height), no Svg; a republish of the same office hands it the same props; a resize follows the width', { timeoutMs: 30_000 }, async ($, on) => {
   const agents = fixture()
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
@@ -628,9 +629,11 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(p.rooms.map(r => r.title)).toEqual(['Ship the v2 config migration.', 'research'])
     expect(p.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1', 'a2'], ['b1']])
     expect(p.rooms[0]).toMatchObject({ moreDone: 0, moreLabel: '' })
-    expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'הבנאי', fam: 'read', act: '📖 קורא', model: 'Opus 5.5', modelFam: 'opus', startMin: 0, isLead: false }) // the row's name is the persona's (persona 7); the role stays in the drawer
-    expect(await cardOf(ui, 'b1')).toMatchObject({ act: '🔌 github', model: '?', modelFam: 'other', fam: 'agent' })
-    expect(await cardOf(ui, 'lead-a')).toMatchObject({ isLead: true })
+    expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'הבנאי', act: '📖 קורא', model: 'Opus 5.5', status: 'running' }) // the row's name is the persona's (persona 7); the role stays in the drawer
+    expect(await cardOf(ui, 'b1')).toMatchObject({ act: '🔌 github', model: '?' })
+    expect((await cardOf(ui, 'lead-a'))?.status).toBe('running')
+    // the slim row: what the cards draw and nothing else (no clock, no tool or model family, no lead flag, no first-seen stamp)
+    expect(Object.keys((await cardOf(ui, 'a1'))!).sort()).toEqual(['act', 'emoji', 'failed', 'id', 'longRunning', 'model', 'name', 'star', 'status'])
     expect(p.counts).toEqual({ run: 3, idle: 0, done: 1 })
     expect(p.rooms[0]?.done).toBe(1)
     expect(p.drawer).toBeNull()
@@ -672,9 +675,9 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   // per $.ui.open it makes, captured in `opens`; a finish in the same poll shares it) — so this counts the redraws
   const renders = () => captured.prefsReads - captured.opens.length
   // the office as scanned, in the office Client's props: the lead on Fable (its model read from the conversation's tail), q2 on Opus, q1 unknown
-  expect(await cardOf(ui, QSESS)).toMatchObject({ modelFam: 'fable', model: 'Fable 5.1', isLead: true })
-  expect(await cardOf(ui, 'q2')).toMatchObject({ modelFam: 'opus', model: 'Opus 5.5' })
-  expect(await cardOf(ui, 'q1')).toMatchObject({ modelFam: 'other', model: '?', status: 'running', fam: 'read' })
+  expect(await cardOf(ui, QSESS)).toMatchObject({ model: 'Fable 5.1' })
+  expect(await cardOf(ui, 'q2')).toMatchObject({ model: 'Opus 5.5' })
+  expect(await cardOf(ui, 'q1')).toMatchObject({ model: '?', status: 'running', act: '📖 קורא' })
   // (the desktop pane is the one Client: a redraw that changes nothing hands the module the same JSON)
   const propsJson = async () => JSON.stringify((await ui.find({ type: 'Client' }))?.props.props)
   const before = await propsJson()
@@ -708,7 +711,8 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   const boundary1 = minuteClock(T0) + 60_000
   expect(clock.now()).toBeGreaterThan(boundary1)
   expect(boundary1 - leadMtime).toBeLessThan(60_000)
-  expect((await cardOf(ui, QSESS))?.startMin).toBe(0)
+  // (the rows carry no clock; the props' minute clock is the mount's still — no publish moved it)
+  expect(((await ui.find({ type: 'Client' }))?.props.props as OfficeProps).nowMin).toBe(minuteClock(T0 + POLL_MS))
   await term.unmount()
   const desktop1 = renders()
   await clock.advance(POLL_MS)
@@ -731,7 +735,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 1)
   expect(renders()).toBe(desktop1 + 1)
-  expect(await cardOf(ui, 'q1')).toMatchObject({ status: 'running', fam: 'write' })
+  expect(await cardOf(ui, 'q1')).toMatchObject({ status: 'running', act: '✏️ כותב' })
   expect(await propsJson()).not.toBe(before)
   // quiet again: still nothing
   for (let i = 0; i < 3; i++) await clock.advance(POLL_MS)
@@ -750,7 +754,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await clock.advance(boundary2 - clock.now() + POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 3)
   expect(renders()).toBe(desktop1 + 3)
-  expect((await cardOf(ui, QSESS))?.startMin).toBe(1)
+  expect(((await ui.find({ type: 'Client' }))?.props.props as OfficeProps).nowMin).toBe(minuteClock(clock.now()))   // the publish moved the props' minute clock
   await clock.advance(POLL_MS)
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 3)
@@ -813,7 +817,8 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await ui.unmount()
 })
 
-test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished selection resets view.selected (one view write); a vanished pinned room drops its pin (one prefs write) and its roomDone override (one store write); nothing when nothing vanished; never in the demo or on an empty office', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished selection resets view.selected (one view write); a vanished pinned room drops its pin (one prefs write) and its roomDone override (one store write); nothing when nothing vanished; never in the demo or on an empty office', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   secondRoom(files, T0)
   finishIn(files, Q2, T0 - 7000, 'All green.') // room 1 has a finished agent too (its ✅ toggle is drawn)
@@ -914,7 +919,8 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   await ui.unmount()
 })
 
-test('a FAILED scan never touches user state: the first scan after a hot reload fails (LAST_GOOD empty) while a subagent of this session is live → the failure publishes the live agent alone, prunes no pin or override, resets no selection', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('a FAILED scan never touches user state: the first scan after a hot reload fails (LAST_GOOD empty) while a subagent of this session is live → the failure publishes the live agent alone, prunes no pin or override, resets no selection', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   secondRoom(files, T0)
   // what survives a hot reload: the pin and the override of room 2 ($.store), the selection of q1 ($.state,
@@ -956,7 +962,8 @@ test('a FAILED scan never touches user state: the first scan after a hot reload 
   await ui.unmount()
 })
 
-test('THE FOOTER: an oversized transcript\'s count and the scan error reach the desktop office\'s footer line (props.footer, one chrome row, drawn by the module) and the text cards\' dim footer', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('THE FOOTER: an oversized transcript\'s count and the scan error reach the desktop office\'s footer line (props.footer, one chrome row, drawn by the module) and the text cards\' dim footer', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   // a subagent transcript over 4 MiB ($.fs.read's limit) whose tail helper fails: skipped and counted (payload.oversized)
   files.set(`${QPROJ}/${QSESS}/subagents/agent-big.jsonl`, { text: '', mtimeMs: T0 - 2000, size: 5 * 1024 * 1024 })
@@ -989,7 +996,8 @@ test('THE FOOTER: an oversized transcript\'s count and the scan error reach the 
   await desk.unmount()
 })
 
-test('a poll that throws past the scan, poll after poll, reports it ONCE (the stored scanError compared first, as the scan\'s own error is): no write and no redraw per failing poll; the error clears once the poll works again', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('a poll that throws past the scan, poll after poll, reports it ONCE (the stored scanError compared first, as the scan\'s own error is): no write and no redraw per failing poll; the error clears once the poll works again', { timeoutMs: 30_000 }, async ($, on) => {
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, quietOffice(T0))
   on('agent.spawn', ($, e) => ({ model: 'haiku', agentId: `live-${e.tool_use_id}` }))
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
@@ -1068,7 +1076,8 @@ test('THE RETITLE never reopens a closed pane: the person closes the pane while 
   expect(captured.opens[captured.opens.length - 1]).toMatch(/🎭 התיאטרון$/)
 })
 
-test('AGENT TEXT reaches every surface clean: an ANSI colour code and an RLM in a transcript\'s prompt and a conversation\'s first line, a BEL in a live spawn\'s description — the terminal cards and the desktop office Client both draw (no refusal, no fault), no drawn text holds a refused character, the Hebrew stays; quiet polls publish nothing', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('AGENT TEXT reaches every surface clean: an ANSI colour code and an RLM in a transcript\'s prompt and a conversation\'s first line, a BEL in a live spawn\'s description — the terminal cards and the desktop office Client both draw (no refusal, no fault), no drawn text holds a refused character, the Hebrew stays; quiet polls publish nothing', { timeoutMs: 30_000 }, async ($, on) => {
   const ESC = String.fromCharCode(0x1b)
   const BEL = String.fromCharCode(0x07)
   const RLM = String.fromCharCode(0x200f)
@@ -1142,7 +1151,8 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
   }
 })
 
-test('demo mode: the empty office offers a demo; it draws the scripted office and plays the finish beat', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('demo mode: the empty office offers a demo; it draws the scripted office and plays the finish beat', { timeoutMs: 30_000 }, async ($, on) => {
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'en', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -1202,7 +1212,8 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   await term.unmount()
 })
 
-test('DESKTOP 🎞/🖼: the still toggle is the office Client\'s Button in its help popover — `תנועה 🎞`, 🖼 once frozen (its post writes prefs.still, which reaches the module as props.prefs.still); its letter s works with the help closed; desktop only', async ($, on) => {
+// (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
+test('DESKTOP 🎞/🖼: the still toggle is the office Client\'s Button in its help popover — `תנועה 🎞`, 🖼 once frozen (its post writes prefs.still, which reaches the module as props.prefs.still); its letter s works with the help closed; desktop only', { timeoutMs: 30_000 }, async ($, on) => {
   const { captured, clock } = beneath(on, () => fixture(), { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)

@@ -11,15 +11,19 @@
 // the header line (bold counts at the reading edge, the dim 5h meter at the
 // other), the toolbar (`הצג שסיימו ☐` · `צליל 🔔` · `הגדרות ⚙️`, gap 2), the
 // search with a blank line above and below, then a framed card per room: the
-// title line (the pin at the reading edge, the counts at the other edge, the
-// title between them cut on a word), a dim rule, and the agents as a
+// title line (the title flush at the reading edge — a 📌 before it only when
+// the room is pinned or its head is under the pointer — the counts at the
+// other edge, the title cut on a word), a dim rule, and the agents as a
 // COLUMN-MAJOR table — four rigid column Boxes (status mark · who · model ·
-// activity; the activity column grows), every value in a height-1 Box with
-// one padding cell on the reading side, so rows align across the desktop's
-// proportional font and no wrap can change a row's height. No selection band:
-// the open drawer says which agent is selected; the keyboard focus is a small
-// marker beside the status mark; the finish pulse a subtle tint on the row's
-// cells, and ⭐ ❌ ⏰ ride the status column (office-layout.ts markOf). The
+// activity; the activity column grows), the padding cell on the column's
+// reading side, every value ONE Text that never wraps (`wrap: 'truncate'`), so
+// rows align across the desktop's proportional font and no wrap can change a
+// row's height — and a row costs the desktop four Texts, no Box (THE RENDER
+// COST: office-client.test.ts guards the node count per row and per card). No
+// selection band: the open drawer says which agent is selected; the keyboard
+// focus is a small marker on the inner side of the status mark (the mark
+// stays at the reading edge); the finish pulse a subtle tint on the row's
+// four Texts, and ⭐ ❌ ⏰ ride the status column (office-layout.ts markOf). The
 // drawer is a card in the same style; the settings popover (titled הגדרות)
 // holds the demo, motion and language Buttons and the shortcuts.
 //
@@ -41,9 +45,12 @@
 // a frameless FRAGMENT (its lines from there to its bottom, the frame's bottom
 // a rule, nothing of it above the window). Layout line y is Client row
 // chromeRows + y either way, so a hit is `hitAt(model, x, y - chromeRows)` on
-// the line map — on the window's lines only: a line past it, a row the budget
-// left blank or the spacer above answers nothing. The keyboard walk (j / k)
-// keeps to the agent rows drawn.
+// the line map — on the lines DRAWN in the viewport only: the window's lines,
+// and past the row budget's cut the frame, title and more lines of a card the
+// window touches (drawn whole, so live); a row the budget left blank, a card
+// past the cut or the spacer above answers nothing. The keyboard walk (j / k)
+// keeps to the agent rows drawn, and `o` opens the focus only while its row is
+// among them.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while a finish pulse is active and is stopped when the last one ends;
@@ -68,8 +75,8 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { CHROME_ROWS, COMPACT_BELOW, DRAWER_FRAME_ROWS, HELP, HELP_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, drawerInner, drawerLines, emptyLines, labelsFit, overlayInWindow, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { CARD_BORDER, CARD_FRAME, EMOJI_CELLS, NO_DECOR, PIN, TITLE_GAP, cut, fitLine, hitAt, iconLabel, officeModel, textWidth, trimWindow } from './office-layout'
-import type { Hit, OfficeDecor, OfficeModel, RoomView, RowView } from './office-layout'
+import { CARD_BORDER, CARD_FRAME, NO_DECOR, PIN, TITLE_GAP, cut, fitLine, hitAt, iconLabel, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import type { Hit, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort } from './usage'
 
@@ -102,8 +109,14 @@ export type OfficeInst = {
   order: string[]
   /** Line y → the UNPINNED room whose title line it is: the head hover. A pinned head draws its 📌 anyway, so the pointer over it sets no hoverRoom — no setState, no redraw for a change nothing would show. */
   titleAt: Map<number, string>
-  /** The layout lines last drawn: [from, from + count). The pointer answers on these alone. */
+  /** The window last drawn: [from, from + count) — the lines whose agent rows are drawn (the row budget's cut included). */
   win: { from: number; count: number }
+  /** The viewport's lines from `win.from` (before the row budget's cut): a line of a drawn card past the cut is drawn too, and live, unless it is an agent row. */
+  view: number
+  /** The rooms whose card the window touches: drawn whole (or as the fragment), so their non-row lines past the row budget are live. */
+  drawn: Set<string>
+  /** THE ROOM MEMO (office-layout.ts roomCache): a room's texts are measured again only when its props or the width changed. */
+  cache: RoomCache
   drawerKey: string
   drawer: DrawerLine[]
   fx: Fx[]
@@ -135,7 +148,7 @@ function decorOf(s: OfficeState): OfficeDecor {
 
 /** The model of the props under the decor, and the indexes the events read from it (the rows' lines, their order, the unpinned heads). */
 function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
-  const model = officeModel(p, d)
+  const model = officeModel(p, d, inst.cache)
   const rowAt = new Map<string, number>()
   const order: string[] = []
   const titleAt = new Map<number, string>()
@@ -155,7 +168,7 @@ function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
 
 function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
-    props: p, chrome: 0, model: { rooms: [], lines: [], hits: [] }, rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, drawerKey: '', drawer: [],
+    props: p, chrome: 0, model: { rooms: [], lines: [], hits: [] }, rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
     fx: [], stop: null, seen: null, query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
   }
   setModel(inst, p, NO_DECOR)
@@ -221,10 +234,13 @@ function listen(surface: Surface): void {
       const cur = surface.state
       if (!cur) return
       const inst = cur.inst
-      // only the window's lines answer: not the chrome, not the spacer above the window, not a line past it
-      // (the row budget leaves the rows past `from + count` blank, so `y >= chrome + from + count` is nothing)
+      // only the lines drawn in the viewport answer: the window's lines, and — past the row budget's cut but inside the
+      // viewport — the frame, title and more lines of a card the window touches (drawn whole); not the chrome, not the
+      // spacer above the window, not a row the budget left blank, not a card past the cut
       const y = ev.y - inst.chrome
-      const drawn = y >= inst.win.from && y < inst.win.from + inst.win.count
+      const { from, count } = inst.win
+      const line = inst.model.lines[y]
+      const drawn = (y >= from && y < from + count) || (y >= from + count && y < from + inst.view && line !== undefined && line.kind !== 'row' && inst.drawn.has(line.room))
       const hit: Hit | undefined = drawn ? hitAt(inst.model, ev.x, y) : undefined
       if (ev.type === 'down') {
         if (ev.button !== 'left' || !hit) return
@@ -270,7 +286,9 @@ function listen(surface: Surface): void {
         // local only: one post per frame, so a `focus` post could displace a meaningful one (a click's `open`)
         surface.setState({ ...cur, focus: id })
       } else if (k === 'o' || k === 'return') {
-        if (cur.focus && inst.rowAt.has(cur.focus)) send(surface, { t: 'open', id: cur.focus })
+        // only a focus whose row is drawn (in the window): one scrolled away would open a drawer for a row the person cannot see
+        const y = cur.focus ? inst.rowAt.get(cur.focus) : undefined
+        if (cur.focus && y !== undefined && y >= inst.win.from && y < inst.win.from + inst.win.count) send(surface, { t: 'open', id: cur.focus })
       } else {
         const m = KEY_MESSAGES[k]
         if (m) send(surface, m)
@@ -401,7 +419,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       // (the icons alone keep their states, as the toolbar's ☑ / 🔕 do: `🎬 ✕` while the demo runs — the pair reversed for the Hebrew
       // reader as in the worded label, iconLabel — 🖼 while frozen)
       const hb = labelsFit(hWorded, props.columns - 4) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
-      overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, height: HELP_ROWS, marginBottom: OVERLAY_GAP, overflow: 'hidden', children: [
+      overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, height: HELP_ROWS, marginBottom: OVERLAY_GAP, overflow: 'hidden', children: [
         line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 3))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between' }),
         line([
           Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, { t: 'demo' }) }),
@@ -431,6 +449,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     if (props.empty) {
       // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no cards, so nothing to click ---
       inst.win = { from: 0, count: 0 }
+      inst.view = 0
+      inst.drawn = new Set()
       if (overlay) kids.push(overlay)
       const e = emptyLines(props)
       kids.push(Box({ key: 'empty', flexDirection: 'column', alignItems: 'center', children: [
@@ -452,8 +472,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const w0 = windowOf(inst.chrome, props.offset, body, model.lines.length, overlayRows)
       const { from, count } = trimWindow(model, w0.from, w0.count, WINDOW_ROWS)
       inst.win = { from, count }
+      inst.view = w0.count
       const hi = from + count
       const drawn = count > 0 ? model.rooms.filter(r => r.top < hi && r.top + r.height > from) : []
+      inst.drawn = new Set(drawn.map(r => r.id))
       const atTop = overlay !== null && overlayInWindow(overlayRows, body)
       const fragmentFirst = atTop && drawn.length > 0 && from > drawn[0]!.top
       const spacer = fragmentFirst || drawn.length === 0 ? from : drawn[0]!.top
@@ -461,23 +483,20 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       if (spacer > 0) kids.push(Box({ key: 'spacer', height: spacer }))
       if (overlay && atTop) kids.push(overlay)
       const pulseBg = s.frame % 2 === 0 ? FX_BG.done : FX_BG.doneAlt
-      /** One value of the table: a height-1 Box with its padding cell on the reading side, one Text (the row's tint on the Box). */
-      const cell = (text: string, style: Record<string, unknown>, r: RowView) => Box({ height: 1, ...(rtl ? { paddingLeft: 1 } : { paddingRight: 1 }), width: '100%', justifyContent: edge, ...(r.pulse ? { backgroundColor: pulseBg } : {}), children: [Text({ ...style, children: [text || ' '] })] })
-      /** One column of the table: the window's rows one cell each, aligned to the reading edge, a spacer for the rows above and below. */
-      const column = (rows: readonly RowView[], above: number, below: number, pick: (r: RowView) => string, style: (r: RowView) => Record<string, unknown>, grow: boolean) => Box({
-        flexDirection: 'column', alignItems: edge, flexShrink: 0, flexGrow: grow ? 1 : 0, children: [
-          ...(above > 0 ? [Box({ height: above })] : []),
-          ...rows.map(r => cell(pick(r), style(r), r)),
-          ...(below > 0 ? [Box({ height: below })] : []),
-        ],
+      /** One value of the table: ONE Text that never wraps (the row stays one line tall), the row's tint on it while its pulse runs. */
+      const cell = (text: string, style: Record<string, unknown>, r: RowView) => Text({ wrap: 'truncate', ...style, ...(r.pulse ? { backgroundColor: pulseBg } : {}), children: [text || ' '] })
+      /** One column of the table: the window's rows one Text each, aligned to the reading edge, the padding cell on the column's reading side (the probe's cell padding, once per column). */
+      const column = (rows: readonly RowView[], pick: (r: RowView) => string, style: (r: RowView) => Record<string, unknown>, grow: boolean) => Box({
+        flexDirection: 'column', alignItems: edge, flexShrink: 0, flexGrow: grow ? 1 : 0, ...(rtl ? { paddingLeft: 1 } : { paddingRight: 1 }),
+        children: rows.map(r => cell(pick(r), style(r), r)),
       })
       /**
-       * The title line: the pin (bright pinned, dim under the pointer, a blank cell otherwise, so the title never moves), the title
-       * cut on a word, the counts (the room's ✅ toggle) at the far edge; the gap the probe's (office-layout.ts TITLE_GAP: PIN_ZONE
-       * and cutTitle count it).
+       * The title line: the 📌 only when there is one to draw (bright pinned, dim under the pointer — then the title shifts by the
+       * pin and its gap; otherwise the title sits flush at the reading edge, as the probe's), the title cut on a word, the counts
+       * (the room's ✅ toggle) at the far edge; the gap the probe's (office-layout.ts TITLE_GAP: PIN_ZONE and cutTitle count it).
        */
       const titleLine = (room: RoomView): RenderElement => Box({ flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, paddingX: 1, gap: TITLE_GAP, overflow: 'hidden', children: [
-        Box({ flexShrink: 0, height: 1, width: EMOJI_CELLS, children: [room.pin === 'none' ? Text({ children: [' '] }) : Text({ ...(room.pin === 'dim' ? { dimColor: true } : {}), children: [PIN] })] }),
+        ...(room.pin === 'none' ? [] : [Text({ ...(room.pin === 'dim' ? { dimColor: true } : {}), children: [PIN] })]),
         Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: edge, children: [Text({ bold: true, children: [room.title] })] }),
         Box({ flexShrink: 0, height: 1, children: [Text({ dimColor: true, children: [room.counts] })] }),
       ] })
@@ -486,20 +505,22 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       /** The `▸ עוד N שסיימו` / `▸ הסתר שסיימו` line, the blank line over it as its margin (none in a fragment that starts on the line itself). */
       const moreLine = (room: RoomView, blank: boolean): RenderElement => Box({ flexDirection: row, ...(blank ? { marginTop: 1 } : {}), paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [room.more] })] })
       /**
-       * The table of a card: the window's rows as cells, a spacer per column for the rows below the window and for the `above`
-       * ones (the rows above the window in a whole card; none in a fragment, which starts at the window); no row in the window:
-       * one spacer of the rows it stands for.
+       * The table of a card: the window's rows as cells in the four column Boxes; the rows below the window and the `above` ones
+       * (the rows above the window in a whole card; none in a fragment, which starts at the window) ONE spacer each, around the
+       * table in a column Box; no row in the window: one spacer of the rows it stands for.
        */
       const table = (room: RoomView, above: number): RenderElement => {
         const rows = room.rows.filter(r => r.y >= from && r.y < hi)
         const below = room.rows.filter(r => r.y >= hi).length
         if (rows.length === 0) return Box({ height: above + below })
-        return Box({ flexDirection: row, width: '100%', children: [
-          column(rows, above, below, r => r.status, r => ({ color: r.color }), false),
-          column(rows, above, below, r => r.who, r => ({ bold: !r.dim, dimColor: r.dim }), false),
-          ...(room.showModel ? [column(rows, above, below, r => r.model, () => ({ dimColor: true }), false)] : []),
-          column(rows, above, below, r => r.act, r => ({ dimColor: r.dim }), true),
+        const tbl = Box({ flexDirection: row, width: '100%', children: [
+          column(rows, r => r.status, r => ({ color: r.color }), false),
+          column(rows, r => r.who, r => ({ bold: !r.dim, dimColor: r.dim }), false),
+          ...(room.showModel ? [column(rows, r => r.model, () => ({ dimColor: true }), false)] : []),
+          column(rows, r => r.act, r => ({ dimColor: r.dim }), true),
         ] })
+        if (above === 0 && below === 0) return tbl
+        return Box({ flexDirection: 'column', width: '100%', children: [...(above > 0 ? [Box({ height: above })] : []), tbl, ...(below > 0 ? [Box({ height: below })] : [])] })
       }
       /** A whole card: the frame, the title line, the rule, the table (every row of the room a cell or a spacer line), the more line. */
       const card = (room: RoomView): RenderElement => Box({ flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden', children: [
@@ -534,7 +555,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
   } catch (err) {
     // nothing of the office is drawn now: the pointer must not hit-test the window of the last good render
     const st = surface.state
-    if (st) st.inst.win = { from: 0, count: 0 }
+    if (st) {
+      st.inst.win = { from: 0, count: 0 }
+      st.inst.view = 0
+      st.inst.drawn = new Set()
+    }
     return Text({ color: 'red', children: [`office: ${err instanceof Error ? err.message : String(err)}`] })
   }
 }

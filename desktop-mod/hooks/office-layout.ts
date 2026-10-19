@@ -63,13 +63,13 @@ export function fitLine(cells: number): number {
 /** The card's frame in cells: a border and a padding cell on each side (the inner width is `columns - CARD_FRAME`). */
 export const CARD_FRAME = 4
 /**
- * The title line's gap between the pin, the title and the counts. The probe's title Box had `gap={2}` between its two
- * children (the title, the counts); the Client's line holds the pin too, and a second gap cell would cut the probe's third
- * title one word shorter at the probe's own 51 columns (cutTitle counts the gaps by FIT) — so one, until a live check says
- * the desktop has room for two.
+ * The title line's gap between its children (the probe's `gap={2}`): the title and the counts, and the pin before the title
+ * when one is drawn — a pinned room's bright 📌, or the dim one under the pointer; otherwise the title sits flush at the
+ * reading edge, as the probe's, and cutTitle counts the pin's cells only for a pinned room (the hover's dim pin rides FIT's
+ * slack, so the title does not re-cut under the pointer).
  */
-export const TITLE_GAP = 1
-/** The pin's zone on the title line, from the reading edge: border, padding, the title's padding, the glyph and its gap. */
+export const TITLE_GAP = 2
+/** The pin's zone on the title line, from the reading edge — drawn or not: border, padding, the title's padding, the glyph and its gap. */
 export const PIN_ZONE = CARD_FRAME / 2 + 1 + EMOJI_CELLS + TITLE_GAP
 /** The lines of a card around its rows: the two borders, the two padding lines, the title, the rule, the gap after the card. */
 export const CARD_LINES = 7
@@ -195,7 +195,7 @@ export type RowView = {
   id: string
   /** The line of the row. */
   y: number
-  /** The status cell: the mark (markOf: the badge or the dot), with the focus marker or its blank (the column's width never moves with the focus). */
+  /** The status cell: the mark (markOf: the badge or the dot) alone, with the focus marker on its inner side when focused — the mark sits at the reading edge either way, so the focus never shifts the dots. */
   status: string
   color: string
   who: string
@@ -256,12 +256,20 @@ export function rowCount(props: OfficeProps): number {
 
 /**
  * The title line's text: the room's title cut on a word with a trailing … (the probe's cut) to what the line leaves it
- * beside the pin and the counts, by FIT; never under 8 cells.
+ * beside the counts — and beside the 📌 and its gap when the room is pinned — by FIT; never under 8 cells.
  */
-export function cutTitle(title: string, columns: number, counts: string): string {
-  // the frame, the title line's own padding, the pin and its gap, the counts and the gap before them
-  const room = columns - CARD_FRAME - 2 - (EMOJI_CELLS + TITLE_GAP) - textWidth(counts) - TITLE_GAP
+export function cutTitle(title: string, columns: number, counts: string, pinned = false): string {
+  // the frame, the title line's own padding, the pin and its gap when drawn, the counts and the gap before them
+  const room = columns - CARD_FRAME - 2 - (pinned ? EMOJI_CELLS + TITLE_GAP : 0) - textWidth(counts) - TITLE_GAP
   return cutWords(title, Math.max(8, fitCells(room)))
+}
+
+/**
+ * The counts' zone on the title line (the room's ✅ toggle), from the far edge, in cells: the border and the paddings, then
+ * the counts as the desktop draws them — wider than their cells, by FIT — never into the pin zone.
+ */
+export function countsZone(counts: string, columns: number): number {
+  return Math.max(1, Math.min(CARD_FRAME / 2 + 1 + Math.ceil(textWidth(counts) / FIT), columns - PIN_ZONE))
 }
 
 /** The widths a room's table needs per column: the widest value plus the padding cell (the desktop sizes the columns by them). */
@@ -280,65 +288,114 @@ function needOf(room: OfficeRoom, nameMax: number, full: boolean): Need {
   return { status: n.status + 1 + 1, who: n.who + 1, model: n.model + 1, actWord: n.actWord + 1, actEmoji: n.actEmoji + 1 }
 }
 
-/** What a room's table draws at `columns`: the activity word or the emoji alone, the model column or not, the names' cap. */
-export function tableFit(room: OfficeRoom, columns: number): { actWord: boolean; showModel: boolean; nameMax: number } {
-  const inner = fitCells(columns - CARD_FRAME)
-  const full = columns >= MODEL_FULL_FROM
+/** What a room's table draws: the activity word or the emoji alone, the model column or not and with its version or not, the names' cap. */
+export type TableFit = { actWord: boolean; showModel: boolean; modelFull: boolean; nameMax: number }
+
+/** What a room's table draws at `columns` (tableFitAt, with the card's inner width by FIT and the version rule MODEL_FULL_FROM). */
+export function tableFit(room: OfficeRoom, columns: number): TableFit {
+  return tableFitAt(room, fitCells(columns - CARD_FRAME), columns >= MODEL_FULL_FROM)
+}
+
+/**
+ * THE DROP ORDER (spec refinement 2: never clip). The four columns whole when their widest values fit `inner` cells; else, in
+ * this order until the table fits: (1) the activity word goes (its emoji stays) and the names shrink to what is left, down to
+ * NAME_MIN; (2) the model's version goes (`Opus 5.5` → `Opus`, when `full` had it riding); (3) last resort, the model column
+ * goes. The model column never goes before the activity word.
+ */
+export function tableFitAt(room: OfficeRoom, inner: number, full: boolean): TableFit {
   const whole = needOf(room, NAME_MAX, full)
-  if (whole.status + whole.who + whole.model + whole.actWord <= inner) return { actWord: true, showModel: true, nameMax: NAME_MAX }
-  // (1) the activity to its emoji; (2) the names down to NAME_MIN; (3) the model column away
+  if (whole.status + whole.who + whole.model + whole.actWord <= inner) return { actWord: true, showModel: true, modelFull: full, nameMax: NAME_MAX }
   const clampName = (budget: number) => Math.max(NAME_MIN, Math.min(NAME_MAX, budget - 1 - EMOJI_CELLS - 1))
-  const nameMax = clampName(inner - whole.status - whole.model - whole.actEmoji)
-  const cut1 = needOf(room, nameMax, full)
-  if (cut1.status + cut1.who + cut1.model + cut1.actEmoji <= inner) return { actWord: false, showModel: true, nameMax }
-  return { actWord: false, showModel: false, nameMax: clampName(inner - whole.status - whole.actEmoji) }
+  /** The table with the emoji activity, the model as `modelFull` says, the names cut to what is left: the fit, or null. */
+  const emojiFit = (modelFull: boolean): TableFit | null => {
+    const need = needOf(room, NAME_MAX, modelFull)
+    const nameMax = clampName(inner - need.status - need.model - need.actEmoji)
+    const cutTo = needOf(room, nameMax, modelFull)
+    return cutTo.status + cutTo.who + cutTo.model + cutTo.actEmoji <= inner ? { actWord: false, showModel: true, modelFull, nameMax } : null
+  }
+  return emojiFit(full) ?? (full ? emojiFit(false) : null) ?? { actWord: false, showModel: false, modelFull: false, nameMax: clampName(inner - whole.status - whole.actEmoji) }
+}
+
+/** A room's card as its props and the width alone decide it — the title cut, the counts, the fit, every row's texts — before the decor and the line map. */
+type RoomBase = {
+  counts: string
+  title: string
+  fit: TableFit
+  rows: Array<{ id: string; mark: string; color: string; who: string; model: string; act: string; dim: boolean }>
+}
+/**
+ * THE ROOM MEMO: a surface module keeps one across its renders (office-client.tsx), so a redraw rebuilds the base of a room
+ * only when that room's props or the width changed — a poll that changes one room leaves the others' texts as they were, and
+ * a decor change (a hover, the focus, a pulse) measures no text at all. `builds` counts the bases built (the tests' guard).
+ */
+export type RoomCache = { rooms: Map<string, { key: string; base: RoomBase }>; builds: number }
+export function roomCache(): RoomCache {
+  return { rooms: new Map(), builds: 0 }
+}
+
+function roomBase(room: OfficeRoom, columns: number, cache: RoomCache | undefined): RoomBase {
+  // (the key is the room's JSON: cheap next to the text measuring it saves, and exact — a props object is new on every render)
+  const key = cache ? `${columns}\n${JSON.stringify(room)}` : ''
+  if (cache) {
+    const hit = cache.rooms.get(room.id)
+    if (hit && hit.key === key) return hit.base
+  }
+  const counts = countsText(room)
+  const fit = tableFit(room, columns)
+  const base: RoomBase = {
+    counts, title: cutTitle(room.title, columns, counts, room.pinned), fit,
+    rows: room.agents.map(a => ({
+      id: a.id, mark: markOf(a), color: DOT_FG[a.status], who: `${a.emoji} ${cut(a.name, fit.nameMax)}`,
+      model: modelText(a.model, fit.modelFull), act: fit.actWord ? a.act : firstGlyph(a.act), dim: a.status === 'done',
+    })),
+  }
+  if (cache) {
+    cache.rooms.set(room.id, { key, base })
+    cache.builds += 1
+  }
+  return base
 }
 
 /**
  * The rooms as cards, the line map and the hit rectangles of the whole office. Card lines, in order: the top border, a
  * padding line, the title (pin · title · counts), the rule, one line per agent, [a blank line, the more / hide line], a
  * padding line, the bottom border, the gap. A row's hit is its whole width; so is the more line's; the title line keeps
- * PIN_ZONE cells at the reading edge for the pin and the counts' cells at the other edge for the room's ✅ toggle (when
- * the room has finished agents). The decor changes only the pin of the head it hovers, the focus marker and the pulse
- * flags — never a line, never a hit.
+ * PIN_ZONE cells at the reading edge for the pin and the counts' zone (countsZone) at the other edge for the room's ✅
+ * toggle (when the room has finished agents). The decor changes only the pin of the head it hovers, the focus marker and
+ * the pulse flags — never a line, never a hit. With a `cache` (THE ROOM MEMO), a room whose props and width did not change
+ * is not measured again.
  */
-export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR): OfficeModel {
+export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, cache?: RoomCache): OfficeModel {
   const { columns, rtl } = props
   const rooms: RoomView[] = []
   const lines: Line[] = []
   const hits: Hit[] = []
   const line = (kind: LineKind, room: string, agent: string | null = null) => { lines.push({ kind, room, agent }) }
+  const seen = new Set<string>()
   for (const room of props.rooms) {
+    seen.add(room.id)
     const top = lines.length
-    const counts = countsText(room)
-    const fit = tableFit(room, columns)
-    const full = columns >= MODEL_FULL_FROM
+    const base = roomBase(room, columns, cache)
+    const { counts, fit } = base
     line('border', room.id)
     line('pad', room.id)
     const titleAt = lines.length
     line('title', room.id)
     hits.push({ kind: 'pin', id: room.id, x: rtl ? Math.max(0, columns - PIN_ZONE) : 0, y: titleAt, w: PIN_ZONE, h: 1 })
     if (room.done) {
-      const cw = Math.max(1, Math.min(textWidth(counts) + 3, columns - PIN_ZONE))
+      const cw = countsZone(counts, columns)
       hits.push({ kind: 'roomDone', id: room.id, x: rtl ? 0 : Math.max(0, columns - cw), y: titleAt, w: cw, h: 1 })
     }
     line('rule', room.id)
     const rows: RowView[] = []
-    for (const a of room.agents) {
+    for (const r of base.rows) {
       const y = lines.length
-      const mark = markOf(a)
-      const focus = decor.focus === a.id
-      const marker = focus ? FOCUS_MARK[rtl ? 'rtl' : 'ltr'] : ' '
-      rows.push({
-        id: a.id, y, color: DOT_FG[a.status],
-        status: rtl ? `${mark}${marker}` : `${marker}${mark}`,
-        who: `${a.emoji} ${cut(a.name, fit.nameMax)}`,
-        model: modelText(a.model, full),
-        act: fit.actWord ? a.act : firstGlyph(a.act),
-        dim: a.status === 'done', focus, pulse: decor.pulse.has(a.id),
-      })
-      line('row', room.id, a.id)
-      hits.push({ kind: 'agent', id: a.id, x: 0, y, w: columns, h: 1 })
+      const focus = decor.focus === r.id
+      // the mark at the reading edge, the marker on its inner side when focused (a Text with no Hebrew is laid left to right)
+      const status = !focus ? r.mark : rtl ? `${FOCUS_MARK.rtl}${r.mark}` : `${r.mark}${FOCUS_MARK.ltr}`
+      rows.push({ id: r.id, y, status, color: r.color, who: r.who, model: r.model, act: r.act, dim: r.dim, focus, pulse: decor.pulse.has(r.id) })
+      line('row', room.id, r.id)
+      hits.push({ kind: 'agent', id: r.id, x: 0, y, w: columns, h: 1 })
     }
     let moreAt = -1
     const more = room.moreLabel ? `${MORE_MARK} ${room.moreLabel}` : ''
@@ -353,11 +410,12 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR): 
     line('gap', room.id)
     rooms.push({
       id: room.id, top, height: lines.length - top,
-      title: cutTitle(room.title, columns, counts), counts,
+      title: base.title, counts,
       pin: room.pinned ? 'bright' : decor.hoverRoom === room.id ? 'dim' : 'none',
       titleAt, rows, more, moreAt, actWord: fit.actWord, showModel: fit.showModel,
     })
   }
+  if (cache) for (const id of [...cache.rooms.keys()]) if (!seen.has(id)) cache.rooms.delete(id)
   return { rooms, lines, hits }
 }
 

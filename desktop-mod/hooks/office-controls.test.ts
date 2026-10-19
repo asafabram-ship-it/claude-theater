@@ -18,6 +18,17 @@
 // RECENT_DONE most recent and a "N more finished" line for the rest — and
 // room B with one MCP agent (the one that matches the search "triage"). The
 // pane is the probe's 51 columns.
+//
+// THE POINTER THROUGH THE LINE MAP (the last section): every click lands at
+// Client row chromeRows + y of its layout line, whatever the engine's scroll
+// offset and whether the drawer or the settings are open (under the fixed
+// chrome at the top, or AT THE WINDOW'S TOP over a frameless fragment once
+// the pane is scrolled). A tall office (room A's card runs past a 25-row
+// window) is scrolled by the pane's props, and every line of the window and
+// around it is clicked: a row opens its drawer, the rest open nothing — the
+// rows above the window (the spacer), past it, the overlay's own rows and
+// the chrome included — and the card controls lower down (A's more line, B's
+// pin and ✅ counts, B's head hover) answer where the window shows them.
 
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
@@ -26,10 +37,10 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import { I18N } from './i18n'
 import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
 import type { Agent, Prefs } from './model'
-import { CHROME_ROWS, HELP_ROWS, OVERLAY_GAP, REFUSED_RE, WINDOW_ROWS, chromeRows, overlayRows, windowOf } from './office-chrome'
+import { CHROME_ROWS, HELP_ROWS, OVERLAY_GAP, REFUSED_RE, WINDOW_ROWS, chromeRows, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { CARD_BORDER, FOCUS_MARK, PIN, PIN_ZONE, officeModel, trimWindow } from './office-layout'
-import type { Hit } from './office-layout'
+import type { Hit, RoomView } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaName } from './personas'
@@ -76,14 +87,19 @@ type Ui = Mounted<'desktop', 'Pane'>
 type Drawn = { type: string; props?: Record<string, unknown>; children?: Array<Drawn | string> }
 const propsOf = (n: Drawn | undefined): Record<string, unknown> => n?.props ?? {}
 
-/** The pane mounted on the desktop over `agents` (the fixture unless given), the poll run once, the Client sized. */
-async function mountOffice($: Engine, on: On, agents: () => Agent[] = fixture) {
+/** The pane mounted on the desktop over `agents` (the fixture unless given), the poll run once, the Client sized; `scroll` the pane's window (the top of a 30-row body unless given). */
+async function mountOffice($: Engine, on: On, agents: () => Agent[] = fixture, scroll: { offset: number; bodyRows: number } = PANE.props.scroll) {
   const { captured, clock } = beneath(on, agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.resize({ in: OFFICE_KEY, columns: COLUMNS, rows: ROWS })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, scroll } })
+  await ui.resize({ in: OFFICE_KEY, columns: COLUMNS, rows: scroll.bodyRows })
   return { ui, captured, clock }
+}
+/** The pane scrolled to `offset` (the engine's window offset reaches the Client as props.offset), the body `bodyRows` tall. */
+async function scrollTo(ui: Ui, offset: number, bodyRows: number): Promise<void> {
+  await ui.redraw({ ...PANE.props, scroll: { offset, bodyRows } })
+  expect((await officeProps(ui)).offset).toBe(offset)
 }
 
 /** The office Client's props as last drawn. */
@@ -116,28 +132,45 @@ function textOf(n: Drawn | string | null | undefined): string {
 const nodesOf = (n: unknown): Drawn[] => (isNode(n) ? [n, ...(n.children ?? []).flatMap(nodesOf)] : [])
 /** The element children of a node (the kit's tree may hold strings and holes among them). */
 const elements = (n: Drawn | undefined): Drawn[] => (n?.children ?? []).filter(isNode)
-/** The room cards drawn, in order: the framed Boxes in the cards' style without a key. */
+/** The room cards drawn, in order: the framed Boxes in the cards' style without a key, and the frameless FRAGMENT of the window's first card under an overlay at the window's top (THE OVERLAY IN VIEW). */
 async function cardsOf(ui: Ui): Promise<Drawn[]> {
-  return (await kidsOf(ui)).filter(k => k.type === 'Box' && propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined)
+  return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined) || propsOf(k).key === 'fragment'))
 }
-/** The card of `room` as drawn (the cards come in the props' order). */
+const isFragment = (card: Drawn) => propsOf(card).key === 'fragment'
+/** The window of layout lines the module drew for `p` — what the pointer answers on (office-chrome.ts windowOf, office-layout.ts trimWindow). */
+function windowNow(p: OfficeProps): { from: number; count: number } {
+  const m = officeModel(p)
+  const w = windowOf(chromeRows(p), p.offset, p.rows, m.lines.length, overlayRows(p))
+  return trimWindow(m, w.from, w.count, WINDOW_ROWS)
+}
+/** The rooms whose card the window touches, in the props' order: the cards drawn (a card per room, the first a fragment under an overlay at the window's top). */
+function touched(p: OfficeProps): RoomView[] {
+  const { from, count } = windowNow(p)
+  return officeModel(p).rooms.filter(r => r.top < from + count && r.top + r.height > from)
+}
+/** The card of `room` as drawn (the cards come in the props' order, the rooms the window touches alone). */
 async function cardOf(ui: Ui, p: OfficeProps, room: string): Promise<Drawn> {
-  const i = p.rooms.findIndex(r => r.id === room)
-  expect(i, `room ${room}`).toBeGreaterThanOrEqual(0)
+  const i = touched(p).findIndex(r => r.id === room)
+  expect(i, `room ${room} in the window`).toBeGreaterThanOrEqual(0)
   const card = (await cardsOf(ui))[i]
   expect(card, `card of ${room}`).toBeDefined()
   return card!
 }
-/** The parts of a card: the title line's pin, title and counts Boxes, the rule, the table, the more line. */
+/** The parts of a WHOLE card: the title line's pin, title and counts Boxes, the rule, the table, the more line. */
 function partsOf(card: Drawn): { pin: Drawn; title: Drawn; counts: Drawn; table: Drawn; more: Drawn | undefined } {
+  expect(isFragment(card), 'a whole card').toBe(false)
   const [titleLine, , table, more] = elements(card)
   const [pin, title, counts] = elements(titleLine)
   return { pin: pin!, title: title!, counts: counts!, table: table!, more }
 }
-/** The texts of a card's drawn rows, one array per row: [status, who, model?, act]. */
+/** The table of a card or a fragment: the Box of column Boxes (undefined when no row of it is in the window: a spacer, or nothing). */
+function tableOf(card: Drawn): Drawn | undefined {
+  return elements(card).find(n => n.type === 'Box' && elements(n).length > 0 && (n.children ?? []).every(c => isNode(c) && propsOf(c).flexDirection === 'column'))
+}
+/** The texts of a card's drawn rows, one array per row: [status, who, model?, act] — the window's rows only. */
 function rowsOf(card: Drawn): string[][] {
-  const { table } = partsOf(card)
-  if (propsOf(table).flexDirection === undefined) return []
+  const table = tableOf(card)
+  if (!table) return []
   const cols = elements(table).map(col => elements(col).filter(c => propsOf(c).paddingLeft !== undefined || propsOf(c).paddingRight !== undefined))
   return cols[0]!.map((_, i) => cols.map(col => textOf(col[i])))
 }
@@ -164,17 +197,20 @@ async function headOf(ui: Ui, p: OfficeProps, room: string): Promise<{ title: st
   const { title, counts, more } = partsOf(await cardOf(ui, p, room))
   return { title: textOf(title), counts: textOf(counts), more: more ? textOf(more) : '' }
 }
-/** The global constraints on what is drawn: a card per room the window touches, every row's cells one Text each, nothing a surface refuses, no tint. */
+/** The global constraints on what is drawn: a card per room the window touches, the rows drawn the line map's rows in the window, every row's cells one Text each, nothing a surface refuses, no tint. */
 async function rowsOk(ui: Ui, p: OfficeProps): Promise<void> {
   const cards = await cardsOf(ui)
   const m = officeModel(p)
-  const w = trimWindow(m, ...(Object.values(windowOf(chromeRows(p), p.offset, p.rows, m.lines.length, overlayRows(p))) as [number, number]), WINDOW_ROWS)
-  expect(cards.length).toBe(m.rooms.filter(r => r.top < w.from + w.count && r.top + r.height > w.from).length)
+  const w = windowNow(p)
+  expect(cards.length).toBe(touched(p).length)
+  expect(cards.reduce((n, c) => n + rowsOf(c).length, 0)).toBe(m.lines.slice(w.from, w.from + w.count).filter(l => l.kind === 'row').length)
   for (const card of cards) {
-    const { title, counts } = partsOf(card)
-    expect(propsOf(title).height).toBe(1)
-    expect(textOf(title)).not.toMatch(REFUSED_RE)
-    expect(textOf(counts)).toMatch(/^🟢\d+/)
+    if (!isFragment(card)) {
+      const { title, counts } = partsOf(card)
+      expect(propsOf(title).height).toBe(1)
+      expect(textOf(title)).not.toMatch(REFUSED_RE)
+      expect(textOf(counts)).toMatch(/^🟢\d+/)
+    }
     for (const row of rowsOf(card)) {
       expect([3, 4]).toContain(row.length)
       for (const v of row) { expect(v).not.toMatch(REFUSED_RE); expect(v).not.toMatch(/\n|⏱|′/) }
@@ -710,5 +746,306 @@ test('▶ watch a demo: the empty office\'s Button starts the demo (view.demo): 
   expect(p2.demo).toBe(false)
   expect(p2.rooms).toEqual([])
   expect(p2.empty?.kind).toBe('office')
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// the pointer through the line map: the pane scrolled, the drawer or the settings open
+// ---------------------------------------------------------------------------
+
+/** The tall office's body: a 25-row window, so room A's card runs past it and the drawer and the settings both leave the window a row (overlayInWindow). */
+const BODY = 25
+const READERS = 30
+/**
+ * The tall office: room A (its lead, READERS readers, the RECENT_DONE + 1 finished writers — the room draws the RECENT_DONE and
+ * the "1 more finished" line) is a card of CARD_LINES + 1 + READERS + RECENT_DONE + MORE_LINES lines, past any 25-row window;
+ * room B holds a working agent and a finished one (drawn: it is among the recent), so its title line has ✅ counts to click.
+ */
+function tallFixture(): Agent[] {
+  const inB = { session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research' }
+  return [
+    agent({ id: 'lead-a', is_session: true, tool: '', phase: 'thinking', task: TITLE_A, task_short: TITLE_A }),
+    ...Array.from({ length: READERS }, (_, i) => agent({ id: `r${i + 1}`, role: `read part ${i + 1}`, persona_id: 7 })),
+    ...DONE.map((id, i) => agent({ id, role: `write part ${i + 1}`, status: 'done', tool: 'Write', end_ms: T0 - (i + 1) * 1000, result: 'Done.', persona_id: 11 + i })),
+    agent({ id: 'b1', role: 'triage open bugs', tool: 'mcp__github__search_issues', persona_id: 9, ...inB }),
+    agent({ id: 'bd', role: 'file the report', status: 'done', tool: 'Write', end_ms: T0 - 5000, result: 'Filed.', persona_id: 10, ...inB }),
+  ]
+}
+/** A left click inside the Client at the middle cell of Client row `y`. */
+async function clickRow(ui: Ui, y: number): Promise<void> {
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: Math.floor(COLUMNS / 2), y, button: 'left' })
+}
+/** A click on Client row `y` that must change nothing: the props after it are the props before it. */
+async function deadRow(ui: Ui, y: number, why: string): Promise<void> {
+  const before = JSON.stringify(await officeProps(ui))
+  await clickRow(ui, y)
+  expect(JSON.stringify(await officeProps(ui)), why).toBe(before)
+}
+
+test('SCROLLED (the line map): the pane scrolled into room A, every line of the window and around it is clicked at Client row chromeRows + y — a row in the window opens its drawer (the first click puts the drawer AT THE WINDOW\'S TOP: the rows under it still answer at chromeRows + y, the window shorter by its rows), a frame line or the title\'s middle nothing; a row above the window (the spacer), past it, the drawer\'s own rows and the chrome open nothing; j lands on the window\'s first row; the settings open while scrolled: the same', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await mountOffice($, on, tallFixture, { offset: 0, bodyRows: BODY })
+  const p0 = await officeProps(ui)
+  expect(p0.rooms.map(r => r.id)).toEqual([SA, SB])
+  expect(ids(p0, SA)).toEqual(['lead-a', ...Array.from({ length: READERS }, (_, i) => `r${i + 1}`), ...DONE.slice(0, RECENT_DONE)])
+  const lines = officeModel(p0).lines
+  expect(lines.length).toBeGreaterThan(CHROME_ROWS + BODY)   // taller than the window: the pane scrolls
+  expect(windowNow(p0)).toEqual({ from: 0, count: BODY - CHROME_ROWS })
+  // scrolled 15 lines into A's rows (the engine's offset: the chrome and 15 layout lines)
+  const FROM = 15
+  await scrollTo(ui, CHROME_ROWS + FROM, BODY)
+  const p1 = await officeProps(ui)
+  expect(p1.rows).toBe(BODY)
+  expect(windowNow(p1)).toEqual({ from: FROM, count: BODY })
+  expect(lines[FROM]).toMatchObject({ kind: 'row', room: SA })
+  await rowsOk(ui, p1)
+  expect(rowsOf(await cardOf(ui, p1, SA)).map(r => r[1])).toEqual(lines.slice(FROM, FROM + BODY).filter(l => l.kind === 'row').map(l => whoOf(p1, l.agent!)))
+  // j from no focus: the window's first row (line FROM's agent), not the lead on line 4; k stays there; o opens it, x closes it
+  await ui.key({ in: OFFICE_KEY, key: 'j' })
+  expect(await focused(ui, p1)).toEqual([whoOf(p1, lines[FROM]!.agent!)])
+  await ui.key({ in: OFFICE_KEY, key: 'k' })
+  expect(await focused(ui, p1)).toEqual([whoOf(p1, lines[FROM]!.agent!)])
+  await ui.key({ in: OFFICE_KEY, key: 'o' })
+  expect((await officeProps(ui)).drawer?.id).toBe(lines[FROM]!.agent)
+  await ui.key({ in: OFFICE_KEY, key: 'x' })
+  expect((await officeProps(ui)).drawer).toBeNull()
+  // THE SWEEP: four lines above the window to four past it, each clicked at the middle cell of Client row chromeRows + y of the
+  // props as last drawn (the window and the chrome re-read before every click: the first row click opens the drawer, which
+  // rides the window's top and shortens the window — the rows past it are then dead)
+  let opened = 0
+  let dead = 0
+  for (let y = FROM - 4; y < FROM + BODY + 4; y++) {
+    const line = lines[y]!
+    if (line.kind === 'more') continue   // the room's toggle: the next test's
+    const p = await officeProps(ui)
+    const { from, count } = windowNow(p)
+    const inWin = y >= from && y < from + count
+    const at = `line ${y} (${line.kind}${inWin ? ', in the window' : ''})`
+    if (line.kind === 'row' && inWin) {
+      await clickRow(ui, chromeRows(p) + y)
+      const q = await officeProps(ui)
+      expect(q.selected, at).toBe(line.agent)
+      expect(q.drawer?.id, at).toBe(line.agent)
+      expect(q.offset, at).toBe(p.offset)   // nothing scrolled
+      expect(await focused(ui, q), at).toEqual([whoOf(q, line.agent!)])
+      opened++
+    } else {
+      await deadRow(ui, chromeRows(p) + y, at)
+      dead++
+    }
+  }
+  // the drawer opened on line FROM's row shortened the window: the rows from FROM to FROM + BODY - H - 1 opened, the rest were dead
+  const pd = await officeProps(ui)
+  const H = overlayRows(pd)
+  expect(pd.drawer).not.toBeNull()
+  expect(overlayInWindow(H, BODY)).toBe(true)
+  expect(windowNow(pd)).toEqual({ from: FROM, count: BODY - H })
+  expect(opened).toBe(BODY - H)
+  expect(dead).toBeGreaterThanOrEqual(8)
+  expect(pd.selected).toBe(lines[FROM + BODY - H - 1]!.agent)   // the last row in the shortened window
+  await rowsOk(ui, pd)
+  // the module's tree now: the chrome, a spacer of the FROM lines above the window, the drawer at Client row `offset`, A's fragment
+  const kids = await kidsOf(ui)
+  expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
+  expect(propsOf(kids[3]).height).toBe(FROM)
+  expect(CHROME_ROWS + FROM).toBe(pd.offset)
+  expect(chromeRows(pd) + FROM).toBe(pd.offset + H)   // the first row under the drawer: the viewport's row H
+  // the drawer's own rows (the viewport's first H), its old place under the chrome (the spacer's rows now) and the chrome: dead
+  for (let yy = pd.offset; yy < pd.offset + H; yy++) await deadRow(ui, yy, `the drawer's row ${yy - pd.offset}`)
+  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + H; yy++) await deadRow(ui, yy, `the spacer's row ${yy}`)
+  for (let yy = 0; yy < CHROME_ROWS; yy++) await deadRow(ui, yy, `the chrome's row ${yy}`)
+  // the first row under the drawer opens line FROM's agent; the viewport's last row the window's last
+  await clickRow(ui, pd.offset + H)
+  expect((await officeProps(ui)).drawer?.id).toBe(lines[FROM]!.agent)
+  await clickRow(ui, pd.offset + BODY - 1)
+  expect((await officeProps(ui)).drawer?.id).toBe(lines[FROM + BODY - H - 1]!.agent)
+  expect(captured.store.roomDone ?? {}).toEqual({})   // no title or more line was ever hit
+  expect((captured.store.prefs as Prefs).pins).toEqual([])
+  // the settings while scrolled (the drawer closed by x first): at the window's top too; a row past their window and their own rows
+  // are dead; a row in their window opens its drawer and closes them
+  await ui.key({ in: OFFICE_KEY, key: 'x' })
+  expect((await officeProps(ui)).drawer).toBeNull()
+  await ui.key({ in: OFFICE_KEY, key: 'h' })
+  const ph = await officeProps(ui)
+  expect(ph.helpOpen).toBe(true)
+  const Hh = overlayRows(ph)
+  expect(Hh).toBe(HELP_ROWS + OVERLAY_GAP)
+  expect(windowNow(ph)).toEqual({ from: FROM, count: BODY - Hh })
+  expect((await kidsOf(ui)).map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
+  await rowsOk(ui, ph)
+  await deadRow(ui, chromeRows(ph) + FROM + BODY - Hh, 'the first row past the settings\' window')
+  await deadRow(ui, ph.offset + 2, 'a settings row')
+  await deadRow(ui, chromeRows(ph) + FROM - 1, 'the row above the window')
+  expect((await officeProps(ui)).helpOpen).toBe(true)
+  await clickRow(ui, chromeRows(ph) + FROM + BODY - Hh - 1)
+  const pq = await officeProps(ui)
+  expect(pq.helpOpen).toBe(false)
+  expect(pq.drawer?.id).toBe(lines[FROM + BODY - Hh - 1]!.agent)
+  expect(await focused(ui, pq)).toEqual([whoOf(pq, lines[FROM + BODY - Hh - 1]!.agent!)])
+  await ui.unmount()
+})
+
+test('SCROLLED (the card controls lower down): with the window on A\'s end and B\'s card — B\'s title under the pointer draws its dim 📌; A\'s more line shows its held-back writer (the hide line one lower) and hides it again; B\'s ✅ counts give B its hide line and take it away; B\'s pin zone pins B, which leaves the window for the top (its 📌 bright there, unpinned after a scroll back)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured, clock } = await mountOffice($, on, tallFixture, { offset: 0, bodyRows: BODY })
+  const p0 = await officeProps(ui)
+  const m0 = officeModel(p0)
+  const roomA = m0.rooms[0]!
+  const roomB = m0.rooms[1]!
+  // the window from A's last rows: A's more line, its frame, and B whole
+  const FROM = roomA.moreAt - 9
+  await scrollTo(ui, CHROME_ROWS + FROM, BODY)
+  const p1 = await officeProps(ui)
+  const w1 = windowNow(p1)
+  expect(w1.from).toBe(FROM)
+  expect(FROM + w1.count).toBeGreaterThanOrEqual(roomB.top + roomB.height)   // B's card lies whole in the window
+  expect(touched(p1).map(r => r.id)).toEqual([SA, SB])
+  expect(await cardsOf(ui)).toHaveLength(2)
+  await rowsOk(ui, p1)
+  expect(hitOf(p1, 'pin', SB).y).toBe(roomB.titleAt)
+  expect(hitOf(p1, 'moreDone', SA).y).toBe(roomA.moreAt)
+  // the head hover at B's scrolled title line: B's 📌 dim, A's none; off it, none; no post
+  const writes = { ...captured.writes }
+  await moveOver(ui, 'pin', SB)
+  expect(await pinOf(ui, p1, SB)).toBe('dim')
+  expect(await pinOf(ui, p1, SA)).toBe('none')
+  expect(JSON.stringify(await officeProps(ui))).toBe(JSON.stringify(p1))
+  await moveOver(ui, 'agent', 'b1')
+  expect(await pinOf(ui, p1, SB)).toBe('none')
+  await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
+  expect(captured.writes).toEqual(writes)
+  // A's more line at its scrolled Client row: A's override; after the latch the held-back writer is drawn and the hide line is one lower
+  expect((await headOf(ui, p1, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  await click(ui, 'moreDone', SA)
+  expect(captured.store.roomDone).toEqual({ [SA]: true })
+  await clock.advance(REDRAW_LATCH_MS)
+  const p2 = await officeProps(ui)
+  expect(roomOf(p2, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
+  expect(ids(p2, SA)).toEqual([...ids(p1, SA), DONE[RECENT_DONE]])
+  expect(hitOf(p2, 'moreDone', SA).y).toBe(roomA.moreAt + 1)
+  expect(p2.offset).toBe(p1.offset)
+  expect((await headOf(ui, p2, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  await rowsOk(ui, p2)
+  await click(ui, 'moreDone', SA)
+  await clock.advance(REDRAW_LATCH_MS)
+  const p3 = await officeProps(ui)
+  expect(captured.store.roomDone).toEqual({})
+  expect(ids(p3, SA)).toEqual(ids(p1, SA))
+  expect((await headOf(ui, p3, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  // B's ✅ counts at its scrolled title line: B's override; B drew its one finished already (among the recent), so the change
+  // is its hide line; clicked again, gone
+  expect((await headOf(ui, p3, SB)).counts).toBe('🟢1 ✅1')
+  expect((await headOf(ui, p3, SB)).more).toBe('')
+  expect(roomOf(p3, SB).moreLabel).toBe('')
+  await click(ui, 'roomDone', SB)
+  expect(captured.store.roomDone).toEqual({ [SB]: true })
+  await clock.advance(REDRAW_LATCH_MS)
+  const p4 = await officeProps(ui)
+  expect(roomOf(p4, SB)).toMatchObject({ showDone: true, moreLabel: HIDE_LABEL })
+  expect(ids(p4, SB)).toEqual(['b1', 'bd'])
+  expect(roomOf(p4, SA).showDone).toBe(false)
+  expect(p4.prefs.showDone).toBe(false)
+  expect((await headOf(ui, p4, SB)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect(officeModel(p4).rooms[1]!.height).toBe(roomB.height + 2)
+  await rowsOk(ui, p4)
+  await click(ui, 'roomDone', SB)
+  await clock.advance(REDRAW_LATCH_MS)
+  const p5 = await officeProps(ui)
+  expect(captured.store.roomDone).toEqual({})
+  expect((await headOf(ui, p5, SB)).more).toBe('')
+  // B's pin zone at its scrolled title line: B pinned, first — out of this window, which keeps A's rows (one card drawn)
+  await click(ui, 'pin', SB)
+  const p6 = await officeProps(ui)
+  expect((captured.store.prefs as Prefs).pins).toEqual([SB])
+  expect(p6.rooms.map(r => [r.id, r.pinned])).toEqual([[SB, true], [SA, false]])
+  expect(p6.offset).toBe(p1.offset)
+  expect(touched(p6).map(r => r.id)).toEqual([SA])
+  expect(await cardsOf(ui)).toHaveLength(1)
+  expect(hitOf(p6, 'pin', SB).y).toBe(2)
+  await rowsOk(ui, p6)
+  // scrolled back to the top: B's card first with its bright 📌; a click in its pin zone unpins it
+  await scrollTo(ui, 0, BODY)
+  const p7 = await officeProps(ui)
+  expect(touched(p7).map(r => r.id)).toEqual([SB, SA])
+  expect(await pinOf(ui, p7, SB)).toBe('bright')
+  await click(ui, 'pin', SB)
+  const p8 = await officeProps(ui)
+  expect((captured.store.prefs as Prefs).pins).toEqual([])
+  expect(p8.rooms.map(r => r.id)).toEqual([SA, SB])
+  expect(await pinOf(ui, p8, SA)).toBe('none')
+  await ui.unmount()
+})
+
+test('OVERLAID at the top: under the open settings a row click opens its drawer (the settings close), B\'s pin zone pins B (the settings stay) and A\'s ✅ counts toggle A\'s finished; the settings\' own rows are dead; under the open drawer the pin and the more line land too (the drawer stays), and the drawer\'s rows are dead', { timeoutMs: 30_000 }, async ($, on) => {
+  // (a 40-row body: the settings' 14 rows over a 30-row one would leave B's title line past the window)
+  const { ui, captured, clock } = await mountOffice($, on, fixture, { offset: 0, bodyRows: 40 })
+  const p0 = await officeProps(ui)
+  expect(windowNow(p0)).toEqual({ from: 0, count: officeModel(p0).lines.length })   // the whole office in view
+  // the settings: the cards pushed down by their rows; the popover's rows dead; a row under them
+  await ui.key({ in: OFFICE_KEY, key: 'h' })
+  const p1 = await officeProps(ui)
+  expect(p1.helpOpen).toBe(true)
+  expect(chromeRows(p1)).toBe(CHROME_ROWS + HELP_ROWS + OVERLAY_GAP)
+  expect(hitOf(p1, 'agent', 'a1').y).toBe(hitOf(p0, 'agent', 'a1').y)   // the layout is the same: only the chrome grew
+  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + HELP_ROWS; yy++) await deadRow(ui, yy, `settings row ${yy}`)
+  await deadRow(ui, CHROME_ROWS + hitOf(p1, 'agent', 'a1').y, 'a1\'s old Client row, under the popover now')
+  expect((await officeProps(ui)).helpOpen).toBe(true)
+  await click(ui, 'agent', 'a1')
+  const p2 = await officeProps(ui)
+  expect(p2.helpOpen).toBe(false)
+  expect(p2.drawer?.id).toBe('a1')
+  expect(await focused(ui, p2)).toEqual([whoOf(p2, 'a1')])
+  // the settings again: B's pin zone under them pins B (the view untouched: the settings stay); A's counts toggle A's finished
+  await ui.key({ in: OFFICE_KEY, key: 'x' })
+  await ui.key({ in: OFFICE_KEY, key: 'h' })
+  expect((await officeProps(ui)).helpOpen).toBe(true)
+  await click(ui, 'pin', SB)
+  const p3 = await officeProps(ui)
+  expect((captured.store.prefs as Prefs).pins).toEqual([SB])
+  expect(p3.helpOpen).toBe(true)
+  expect(p3.rooms.map(r => r.id)).toEqual([SB, SA])
+  expect(await pinOf(ui, p3, SB)).toBe('bright')
+  await click(ui, 'pin', SB)
+  const p4 = await officeProps(ui)
+  expect((captured.store.prefs as Prefs).pins).toEqual([])
+  expect(p4.rooms.map(r => r.id)).toEqual([SA, SB])
+  await click(ui, 'roomDone', SA)
+  expect(captured.store.roomDone).toEqual({ [SA]: true })
+  await clock.advance(REDRAW_LATCH_MS)
+  const p5 = await officeProps(ui)
+  expect(p5.helpOpen).toBe(true)
+  expect(ids(p5, SA)).toEqual(ALL_A)
+  expect((await headOf(ui, p5, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  await rowsOk(ui, p5)
+  await click(ui, 'roomDone', SA)
+  await clock.advance(REDRAW_LATCH_MS)
+  expect(captured.store.roomDone).toEqual({})
+  expect(ids(await officeProps(ui), SA)).toEqual(DRAWN_A)
+  await ui.press({ key: 'closeHelp' })
+  // the drawer: its rows dead; B's pin zone and A's more line under it land, the drawer staying open on a1
+  await click(ui, 'agent', 'a1')
+  const p6 = await officeProps(ui)
+  expect(p6.drawer?.id).toBe('a1')
+  const H = overlayRows(p6)
+  expect(chromeRows(p6)).toBe(CHROME_ROWS + H)
+  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + H; yy++) await deadRow(ui, yy, `drawer row ${yy}`)
+  await click(ui, 'pin', SB)
+  const p7 = await officeProps(ui)
+  expect((captured.store.prefs as Prefs).pins).toEqual([SB])
+  expect(p7.drawer?.id).toBe('a1')
+  expect(p7.rooms.map(r => r.id)).toEqual([SB, SA])
+  await rowsOk(ui, p7)
+  await click(ui, 'pin', SB)
+  expect((await officeProps(ui)).rooms.map(r => r.id)).toEqual([SA, SB])
+  await click(ui, 'moreDone', SA)
+  expect(captured.store.roomDone).toEqual({ [SA]: true })
+  await clock.advance(REDRAW_LATCH_MS)
+  const p8 = await officeProps(ui)
+  expect(p8.drawer?.id).toBe('a1')
+  expect(ids(p8, SA)).toEqual(ALL_A)
+  expect((await headOf(ui, p8, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect(await focused(ui, p8)).toEqual([whoOf(p8, 'a1')])
+  await click(ui, 'moreDone', SA)
+  await clock.advance(REDRAW_LATCH_MS)
+  expect(captured.store.roomDone).toEqual({})
+  expect(ids(await officeProps(ui), SA)).toEqual(DRAWN_A)
   await ui.unmount()
 })

@@ -13,7 +13,7 @@ import { I18N, hebrewRuleOk } from './i18n'
 import { CHROME_ROWS, COMPACT_BELOW, DRAWER_FRAME_ROWS, HELP, HELP_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, ROW_CHARS, SEARCH_MAX, TASK_LINES, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, drawerInner, drawerLines, officeHeight, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import Office, { FX_BG, FX_DONE_MS, FX_TICK_MS, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP } from './office-client'
 import type { OfficeState } from './office-client'
-import { CARD_BORDER, DOT_FG, FOCUS_MARK, PIN, fitLine, officeModel, rowCount, textWidth } from './office-layout'
+import { CARD_BORDER, DOT_FG, FOCUS_MARK, PIN, cut, fitLine, officeModel, rowCount, textWidth } from './office-layout'
 import type { Hit } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
 import { usageLabel, usageShort } from './usage'
@@ -110,15 +110,31 @@ function withBg(tree: unknown, bg: string): Node[] {
 const kidsOf = (tree: unknown) => (tree as Node).children as Node[]
 /** The Box with `key` (a Button may share a key with a Box: the toolbar's `help` opens the Box `help`). */
 const byKey = (tree: unknown, key: string, type = 'Box') => nodes(tree).find(n => n.type === type && n.props.key === key)
-/** The room cards of the tree: the framed Boxes in the cards' style that are neither the drawer nor the settings popover. */
-const cards = (tree: unknown) => nodes(tree).filter(n => n.type === 'Box' && n.props.borderStyle === 'round' && n.props.borderColor === CARD_BORDER && n.props.key === undefined)
-/** The parts of a card: its title line, its rule, its table (the Box of column Boxes, or a spacer when no row is in the window), its more line. */
+/** The room cards of the tree: the framed Boxes in the cards' style that are neither the drawer nor the settings popover, and the frameless FRAGMENT of the window's first card under an overlay (THE OVERLAY IN VIEW). */
+const cards = (tree: unknown) => nodes(tree).filter(n => n.type === 'Box' && ((n.props.borderStyle === 'round' && n.props.borderColor === CARD_BORDER && n.props.key === undefined) || n.props.key === 'fragment'))
+/** The parts of a WHOLE card: its title line, its rule, its table (the Box of column Boxes, or a spacer when no row is in the window), its more line. */
 function partsOf(card: Node): { title: Node; rule: Node; table: Node; more: Node | undefined } {
   const [title, rule, table, more] = card.children as Node[]
   return { title: title!, rule: rule!, table: table!, more }
 }
+/** The table of a card or a fragment: the Box of column Boxes (undefined when no row of it is in the window: a spacer, or nothing). */
+const tableOf = (card: Node) => (card.children as Node[]).find(n => n.type === 'Box' && n.children.length > 0 && (n.children as Node[]).every(c => c.props.flexDirection === 'column'))
 /** The column Boxes of a card's table (none when the table is a spacer). */
-const columnsOf = (card: Node) => (partsOf(card).table.props.flexDirection ? partsOf(card).table.children as Node[] : [])
+const columnsOf = (card: Node) => (tableOf(card)?.children as Node[] | undefined) ?? []
+/**
+ * The Client row a root child with `key` starts at: the rows of the root's children before it (each a Box of explicit height
+ * plus its margins — the chrome's lines, the spacer and the overlays all say their height; a card does not, and lies after them).
+ */
+function clientRowOf(tree: unknown, key: string): number {
+  let row = 0
+  for (const n of kidsOf(tree)) {
+    if (n.props.key === key) return row
+    const h = n.props.height
+    if (typeof h !== 'number') throw new Error(`no height on ${String(n.props.key ?? n.props.borderStyle)} before ${key}`)
+    row += h + ((n.props.marginTop as number | undefined) ?? 0) + ((n.props.marginBottom as number | undefined) ?? 0)
+  }
+  throw new Error(`no ${key} in the tree`)
+}
 /** The value cells of a column: its height-1 Boxes (the spacers have no padding). */
 const cellsOf = (col: Node) => (col.children as Node[]).filter(n => n.props.paddingLeft !== undefined || n.props.paddingRight !== undefined)
 /** The texts of the window's rows of a card, one array per row: [status, who, model?, act]. */
@@ -331,10 +347,16 @@ test('render: the chrome (header with the words and a blank line, the toolbar, t
   expect(cellsOf(model!).every(c => (c.children[0] as Node).props.dimColor === true && (c.children[0] as Node).props.color === undefined)).toBe(true)
   expect(cellsOf(act!).every(c => (c.children[0] as Node).props.color === undefined)).toBe(true)
   expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
-  // the footer rides in the chrome (the engine scrolls natively: a line at the content's end would hide until the end), one dim line
-  const t3 = Office({ ...p, footer: 'scan: 1 skipped · דולגו 4 תמלילים גדולים מדי' }, fake(45, 0).surface)
+  // the footer rides in the chrome (the engine scrolls natively: a line at the content's end would hide until the end), one dim
+  // line, cut to the line by LINE_FIT with an ellipsis (its 44 cells to 37 at 45 columns; whole at 70)
+  const note = 'scan: 1 skipped · דולגו 4 תמלילים גדולים מדי'
+  const t3 = Office({ ...p, footer: note }, fake(45, 0).surface)
   expect(kidsOf(t3).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'footer', 'round'])
-  expect(texts(byKey(t3, 'footer'))).toBe('scan: 1 skipped · דולגו 4 תמלילים גדולים מדי')
+  expect(textWidth(note)).toBe(44)
+  expect(texts(byKey(t3, 'footer'))).toBe(cut(note, fitLine(45)))
+  expect(texts(byKey(t3, 'footer'))).toMatch(/…$/)
+  expect(textWidth(texts(byKey(t3, 'footer')))).toBeLessThanOrEqual(fitLine(45))
+  expect(texts(byKey(Office({ ...p, columns: 70, footer: note }, fake(70, 0).surface), 'footer'))).toBe(note)
   // LTR: the rows the same, the padding on the right, the columns aligned to the left, the toolbar a row
   const en = Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)
   expect(byKey(en, 'toolbar')).toMatchObject({ props: { flexDirection: 'row' } })
@@ -602,48 +624,130 @@ test('window: the cards the window touches are drawn whole, their rows only wher
   expect(h.posts).toHaveLength(0)
 })
 
-test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pane is scrolled is drawn after the spacer, before the window\'s first card, and the cards under it start where they did; a click on the overlay hits no row, the rows under it answer; an overlay as tall as the window stays under the fixed chrome', () => {
-  // 60 agents at 45 columns: 67 layout lines (rows on 4..63); a 25-row window scrolled 40 rows down shows lines from 34
+test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pane is scrolled is drawn AT THE WINDOW\'S TOP — Client row `offset` — after a spacer of the lines above the window; the card the window cuts through continues under it from the window\'s first line as a frameless fragment (no lines above the window drawn), the cards under it where they were; a click on the overlay hits no row, the rows under it answer; an overlay as tall as the window stays under the fixed chrome', () => {
+  // 60 agents at 45 columns: 67 layout lines (rows on 4..63, the bottom padding 64, the bottom border 65, the gap 66); a 25-row
+  // window scrolled 40 rows down shows lines from 34
   const crowd = withAgents(props({ rows: 25, offset: 40 }), Array.from({ length: 60 }, (_, i) => ag(`g${i}`)))
   expect(rowCount(crowd)).toBe(67)
-  // no overlay: the card from its top (line 0: no spacer), rows g30.. (line 34) in the window, 30 rows spacered above
+  // no overlay: the card from its top (line 0: no spacer), rows g30.. (line 34) in the window, 30 rows spacered above — the
+  // lines above the window lie above the viewport, which the engine's native scroll hides
   const plain = Office(crowd, fake(45, 0).surface)
   expect(kidsOf(plain).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   expect(rowsOf(cards(plain)[0]!)[0]![1]).toBe('🦉 g30')
-  // the drawer opens (a click on g43): drawn right after the chrome — the window's first card is the one card, which starts at
-  // line 0 — so the drawer sits at the card's top; the rows under it start at the same layout line 34
+  // the drawer opens (a click on g43): a spacer of the 34 lines above the window, then the drawer — at Client row 6 + 34 = 40,
+  // the engine's offset: the viewport's first rows — then the card from line 34 as a FRAGMENT: no frame (the frame's cells as
+  // padding), no spacer for the rows above the window, the window's rows as cells and the rest a spacer, the bottom padding line,
+  // the frame's bottom as a rule, the gap as its margin; its height exact, so line y stays at Client row C + y
   const p = { ...crowd, selected: 'g43', drawer: drawer({ id: 'g43' }) }
   const C = chromeRows(p)
   const H = overlayRows(p)
   expect(C).toBe(CHROME_ROWS + H)
   const f = fake(45, 0)
   const tree = Office(p, f.surface)
-  expect(kidsOf(tree).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round'])
+  expect(kidsOf(tree).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
+  expect(byKey(tree, 'spacer')!.props.height).toBe(34)
+  expect(clientRowOf(tree, 'drawer')).toBe(p.offset)
   expect(byKey(tree, 'drawer')).toMatchObject({ props: { borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: OVERLAY_GAP, height: H - OVERLAY_GAP, overflow: 'hidden' } })
   expect(texts(byKey(tree, 'drawer'))).toMatch(/המנהל/)
   expect(f.surface.state!.inst.win).toEqual({ from: 34, count: 25 - H })
-  expect(rowsOf(cards(tree)[0]!)[0]![1]).toBe('🦉 g30')
-  expect(rowsOf(cards(tree)[0]!)).toHaveLength(25 - H)
-  // Client rows: layout line y is Client row C + y, as the pointer reads it; the drawer's rows (Client rows 6..6+H under the
-  // card's top) map to lines before the window and answer nothing
+  const frag = byKey(tree, 'fragment')!
+  expect(cards(tree)).toEqual([frag])
+  expect(frag).toMatchObject({ props: { flexDirection: 'column', paddingX: 2, marginBottom: 1, width: '100%', height: 66 - 34, overflow: 'hidden' } })
+  expect(frag.props.borderStyle).toBeUndefined()
+  expect(clientRowOf(tree, 'fragment')).toBe(C + 34)
+  expect(rowsOf(frag)[0]![1]).toBe('🦉 g30')
+  expect(rowsOf(frag)).toHaveLength(25 - H)
+  for (const col of columnsOf(frag)) {
+    const ch = col.children as Node[]
+    expect(cellsOf(col)).toHaveLength(25 - H)
+    expect(ch[0]).toBe(cellsOf(col)[0])                                        // no spacer above: those rows are not in the fragment
+    expect(ch[ch.length - 1]).toMatchObject({ type: 'Box', props: { height: 30 - (25 - H) } })   // g30.. past the window
+    expect(ch).toHaveLength(25 - H + 1)
+  }
+  const fl = frag.children as Node[]
+  expect(fl).toHaveLength(3)                                                    // the table, the bottom padding line, the frame's bottom
+  expect(fl[0]).toBe(tableOf(frag))
+  expect(fl[1]).toMatchObject({ type: 'Box', props: { height: 1 } })
+  expect(fl[2]).toMatchObject({ type: 'Box', props: { height: 1, overflow: 'hidden' } })
+  expect(texts(fl[2])).toBe('─'.repeat(45))
+  // the pointer: the drawer's rows (offset..offset + H - 1, its gap included) and the drawer's old place under the chrome (the
+  // spacer's rows now) answer nothing; the first row under the drawer — Client row offset + H = C + 34 — opens g30
+  for (let yy = p.offset; yy < p.offset + H; yy++) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
   for (let yy = CHROME_ROWS; yy < CHROME_ROWS + H; yy++) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
   expect(f.posts).toEqual([])
-  f.pointer({ type: 'down', x: 5, y: C + 34, button: 'left' })
+  expect(C + 34).toBe(p.offset + H)
+  f.pointer({ type: 'down', x: 5, y: p.offset + H, button: 'left' })
   expect(f.posts).toEqual([{ t: 'open', id: 'g30' }])
-  // two rooms, the window past the first card: the drawer rides right before the second card, after the spacer
+  f.pointer({ type: 'down', x: 5, y: p.offset + 25 - 1, button: 'left' })     // the viewport's last row: g43's (line 34 + 13)
+  expect(f.posts[1]).toEqual({ t: 'open', id: `g${30 + 25 - H - 1}` })
+  // two rooms — A lines 0..36, B 37..73 (its title 39, its rule 40, its rows 41..70, its gap 73) — the window from line 40 (B's
+  // rule): the spacer is 40 lines (A whole, B's border, padding and title), the drawer at the offset, B's fragment from its rule
   const two = props({ rows: 25, offset: 6 + 40, rooms: [room('A', Array.from({ length: 30 }, (_, i) => ag(`a${i}`))), room('B', Array.from({ length: 30 }, (_, i) => ag(`b${i}`)))], selected: 'b5', drawer: drawer({ id: 'b5' }) })
   const H2 = overlayRows(two)
+  const C2 = chromeRows(two)
   const t2 = Office(two, fake(45, 0).surface)
-  expect(kidsOf(t2).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'round'])
-  expect(byKey(t2, 'spacer')!.props.height).toBe(37)
-  expect(rowsOf(cards(t2)[0]!)).toHaveLength(25 - H2 - 1)   // (lines 40..: B's title at 39; the window's first line is its rule, then its rows)
+  expect(kidsOf(t2).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
+  expect(byKey(t2, 'spacer')!.props.height).toBe(40)
+  expect(clientRowOf(t2, 'drawer')).toBe(two.offset)
+  const f2 = byKey(t2, 'fragment')!
+  expect((f2.children as Node[]).map(n => texts(n).startsWith('─') ? 'rule' : n === tableOf(f2) ? 'table' : `h${n.props.height}`)).toEqual(['rule', 'table', 'h1', 'rule'])
+  expect(f2.props.height).toBe(73 - 40)
+  expect(rowsOf(f2)).toHaveLength(25 - H2 - 1)
+  expect(rowsOf(f2)[0]![1]).toBe('🦉 b0')
+  // the window's top at B's title (line 39): the fragment opens with the title line — its pin zone and head hover answer, as in a
+  // whole card; at B's padding line (38) a blank line leads; at B's top (37) B is a whole card after a spacer of A's lines
+  const g = fake(45, 0)
+  const atTitle = Office({ ...two, offset: 6 + 39 }, g.surface)
+  const f3 = byKey(atTitle, 'fragment')!
+  expect((f3.children as Node[]).length).toBe(5)
+  expect(texts((f3.children as Node[])[0])).toMatch(/room B/)
+  g.pointer({ type: 'move', x: 20, y: C2 + 39 })
+  expect(g.surface.state!.hoverRoom).toBe('B')
+  expect(texts(((byKey(Office({ ...two, offset: 6 + 39 }, g.surface), 'fragment')!.children as Node[])[0]!.children as Node[])[0])).toBe(PIN)
+  g.pointer({ type: 'down', x: 44, y: C2 + 39, button: 'left' })
+  expect(g.posts).toEqual([{ t: 'pin', room: 'B' }])
+  g.pointer({ type: 'down', x: 5, y: C2 + 41, button: 'left' })
+  expect(g.posts[1]).toEqual({ t: 'open', id: 'b0' })
+  const atPad = byKey(Office({ ...two, offset: 6 + 38 }, fake(45, 0).surface), 'fragment')!
+  expect((atPad.children as Node[]).length).toBe(6)
+  expect((atPad.children as Node[])[0]).toMatchObject({ type: 'Box', props: { height: 1 } })
+  expect(atPad.props.height).toBe(73 - 38)
+  const edge = Office({ ...two, offset: 6 + 37 }, fake(45, 0).surface)
+  expect(kidsOf(edge).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'round'])
+  expect(byKey(edge, 'spacer')!.props.height).toBe(37)
+  expect(clientRowOf(edge, 'drawer')).toBe(6 + 37)
+  expect(rowsOf(cards(edge)[0]!)).toHaveLength(25 - H2 - 4)
+  // every window top through B: the drawer at the offset, the fragment (or the whole card at B's top) right under it at C + from,
+  // its height the lines from `from` to B's bottom border (the gap its margin; the gap alone a one-row spacer), the rows drawn the
+  // window's row lines
+  const mB = officeModel(two)
+  for (let from = 37; from <= 73; from++) {
+    const q = { ...two, offset: 6 + from }
+    const fq = fake(45, 0)
+    const tq = Office(q, fq.surface)
+    const at = `from ${from}`
+    expect(clientRowOf(tq, 'drawer'), at).toBe(q.offset)
+    const { count } = fq.surface.state!.inst.win
+    expect(fq.surface.state!.inst.win.from, at).toBe(from)
+    const cs = cards(tq)
+    if (from === 37) expect(cs[0]!.props.key, at).toBeUndefined()
+    else {
+      expect(cs[0]!.props.key, at).toBe('fragment')
+      expect(clientRowOf(tq, 'fragment'), at).toBe(C2 + from)
+      if (from < 73) expect(cs[0]!.props, at).toMatchObject({ height: 73 - from, marginBottom: 1 })
+      else expect(cs[0]!.props, at).toEqual({ key: 'fragment', height: 1 })
+    }
+    expect(cs.reduce((n, c) => n + rowsOf(c).length, 0), at).toBe(mB.lines.slice(from, from + count).filter(l => l.kind === 'row').length)
+  }
   // the settings likewise (they win over the drawer)
   const ph = { ...p, helpOpen: true }
   const help = Office(ph, fake(45, 0).surface)
-  expect(kidsOf(help).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'help', 'round'])
+  expect(kidsOf(help).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
+  expect(clientRowOf(help, 'help')).toBe(ph.offset)
   expect(byKey(help, 'help')).toMatchObject({ props: { height: HELP_ROWS, marginBottom: OVERLAY_GAP } })
   expect(texts(byKey(help, 'help'))).toMatch(/^הגדרות$/m)
-  // at the top the drawer sits under the fixed chrome, the cards from line 0
+  expect(rowsOf(cards(help)[0]!)).toHaveLength(25 - overlayRows(ph))
+  // at the top the drawer sits under the fixed chrome, the cards from line 0 — whole, no fragment
   const top = Office({ ...p, offset: 0 }, fake(45, 0).surface)
   expect(kidsOf(top).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round'])
   expect(rowsOf(cards(top)[0]!)[0]![1]).toBe('🦉 g0')
@@ -802,15 +906,25 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   const p = props({ selected: 'lead', drawer: drawer({ result: 'found 3 docs', truncated: true }) })
   let tree = Office(p, f.surface)
   const t = texts(tree)
-  // the name line (the persona with its emoji, one bold Text), the chips, the model line as ONE Text of its parts, the headings, the ✂ note
+  // the name line (the persona with its emoji, one bold Text), the chips, the headings; a composed line (the model line, the ✂
+  // note) is ONE Text of its parts a space apart, drawn as drawerLines cut it to the inner width — at 45 columns (30 cells) the
+  // model line loses the activity's word and the note its end, each to an ellipsis (the height-1 Box would chop them at the edge
+  // without one); at 70 columns (49 cells) both are whole; a long model id is cut the same way
   expect(t).toMatch(/^💼 המנהל$/m)
   expect(t).toMatch(/^משימה$/m)
   expect(t).toMatch(/map the docs/)
   expect(t).toMatch(/^תוצאה$/m)
   expect(t).toMatch(/found 3 docs/)
-  expect(t).toMatch(/^✂ התוצאה קוצרה — לפלט המלא פתחו את הטרמינל$/m)
-  expect(t).toMatch(/^מודל 🧠 Opus 5\.5 · פעולה 🧠 חושב$/m)
   expect(t).toMatch(/ זמן 3 דק׳ /)
+  const inner45 = drawerInner(45)
+  expect(inner45).toBe(30)
+  expect(t).toMatch(/^מודל 🧠 Opus 5\.5 · פעולה 🧠 ח…$/m)
+  expect(t).toMatch(/^✂ התוצאה קוצרה — לפלט המלא פ…$/m)
+  for (const l of drawerLines(p.drawer!, LABELS, inner45)) if (l.kind !== 'chips') { expect(t).toContain(l.text); expect(textWidth(l.text)).toBeLessThanOrEqual(inner45) }
+  const wide = texts(Office({ ...p, columns: 70 }, fake(70).surface))
+  expect(wide).toMatch(/^✂ התוצאה קוצרה — לפלט המלא פתחו את הטרמינל$/m)
+  expect(wide).toMatch(/^מודל 🧠 Opus 5\.5 · פעולה 🧠 חושב$/m)
+  expect(texts(Office({ ...p, drawer: drawer({ model: 'my-long-custom-model-20260101' }) }, fake().surface))).toMatch(/^מודל 🧠 my-long-custom-model-…$/m)
   const box = byKey(tree, 'drawer')!
   expect(box).toMatchObject({ props: { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: OVERLAY_GAP, width: '100%', overflow: 'hidden', alignItems: 'flex-end' } })
   // every line of the drawer is one row tall by construction; the card has a fixed height so the cards below never move
@@ -824,8 +938,7 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   expect((nodes(Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'close')!.props as { label: string }).label).toBe('✕ Close')
   ;(close.props.onPress as () => void)()
   expect(f.posts).toEqual([{ t: 'close' }])
-  // the selection: flagged in the model, no band in the tree (the open drawer says which agent is selected)
-  expect(officeModel(p).rooms[0]!.rows[0]!.selected).toBe(true)
+  // the selection: no band in the tree, no flag in the view model (the open drawer says which agent is selected)
   expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   // the settings popover: titled הגדרות, the rows, the ✕; it wins over the drawer
   tree = Office({ ...p, helpOpen: true }, f.surface)

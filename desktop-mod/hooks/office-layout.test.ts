@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, CARD_FRAME, CARD_LINES, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_MAX, NAME_MIN, NO_DECOR, PIN_ZONE, cardLines, countsText, cut, cutTitle, cutWords, firstGlyph, fitCells, fitLine, glyphs, hitAt, iconLabel, markOf, modelText, officeModel, rowCount, tableFit, textWidth, trimWindow } from './office-layout'
+import { ACT_MAX, CARD_FRAME, CARD_LINES, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_MAX, NAME_MIN, NO_DECOR, PIN_ZONE, TITLE_GAP, cardLines, countsText, cut, cutTitle, cutWords, firstGlyph, fitCells, fitLine, glyphs, hitAt, iconLabel, markOf, modelText, officeModel, rowCount, tableFit, textWidth, trimWindow } from './office-layout'
 import type { Line, OfficeDecor } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -87,14 +87,17 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   expect(fitLine(0)).toBe(0)
   const counts = '🟢3 ⏳1 ✅2'
   // 51 columns: 51 - 4 (frame) - 2 (the title's padding) - 3 (pin + gap) - 11 (counts) - 1 (gap) = 30 → 22 cells: the probe's
-  // third room reads `בדיקת תיאטרון הסוכנים…` as it did on the desktop (round 7)
+  // third room reads `בדיקת תיאטרון הסוכנים…` as it did on the desktop (round 7). The gap stays one cell: a second (the probe's
+  // `gap={2}`, with no pin on its line) would leave 28 → 21 cells and cut that title one word shorter
+  expect(TITLE_GAP).toBe(1)
+  expect(PIN_ZONE).toBe(6)
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 51, counts)).toBe('בדיקת תיאטרון הסוכנים…')
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 40, counts)).toBe('בדיקת תיאטרון…')
   expect(cutTitle('תיאטרון הסוכנים', 51, counts)).toBe('תיאטרון הסוכנים')
   expect(cutTitle('abcdefghijklmnopqrstuvwxyz', 24, counts)).toBe('abcdefg…')   // the floor of 8
   for (let columns = 24; columns <= 200; columns++) {
     const t = cutTitle('x'.repeat(300), columns, counts)
-    expect(textWidth(t), `${columns}: ${t}`).toBeLessThanOrEqual(Math.max(8, fitCells(columns - CARD_FRAME - 2 - 3 - textWidth(counts) - 1)))
+    expect(textWidth(t), `${columns}: ${t}`).toBeLessThanOrEqual(Math.max(8, fitCells(columns - CARD_FRAME - 2 - (EMOJI_CELLS + TITLE_GAP) - textWidth(counts) - TITLE_GAP)))
     expect(t.endsWith('…'), `${columns}: ${t}`).toBe(true)
   }
 })
@@ -227,7 +230,7 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   ])
   expect(room0.rows.map(x => x.color)).toEqual([DOT_FG.running, DOT_FG.running, DOT_FG.stale, DOT_FG.done])
   expect(room0.rows.map(x => x.dim)).toEqual([false, false, false, true])
-  expect(room0.rows.every(x => !x.selected && !x.focus && !x.pulse)).toBe(true)
+  expect(room0.rows.every(x => !x.focus && !x.pulse)).toBe(true)
   for (const x of room0.rows) for (const v of [x.status, x.who, x.model, x.act]) { expect(v).not.toMatch(/⏱|′|min|\d+ דק/); expect(v).not.toMatch(LONE_SURROGATE) }
   expect(officeModel(props({ rooms: [r], columns: 60 })).rooms[0]!.rows.map(x => x.model)).toEqual(['Opus 5.5', 'Sonnet 4.5', 'Opus 5.5', 'Opus 5.5'])
   // the hits (RTL): the pin zone at the right edge of the title line, the counts zone at the left edge, a row and the more line the whole width
@@ -270,12 +273,13 @@ test('officeModel: the line map of a card — border, pad, title, rule, a row pe
   expect(JSON.stringify(officeModel(p))).toBe(JSON.stringify(m))
 })
 
-test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker beside the status mark pointing in from the reading edge (the cell\'s width never moves), a pulse flags its row; the selection flags its row; nothing of it moves a line or a hit', () => {
+test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker beside the status mark pointing in from the reading edge (the cell\'s width never moves), a pulse flags its row; nothing of it moves a line or a hit; the selection is no decor (the open drawer says which agent is selected)', () => {
   const rooms = [room({ id: 'a' }), room({ id: 'b', agents: [ag('b1', 1)], pinned: true })]
   const p = props({ rooms, selected: 'a1' })
   const base = officeModel(p)
   expect(base.rooms.map(x => x.pin)).toEqual(['none', 'bright'])
-  expect(base.rooms[0]!.rows.map(x => x.selected)).toEqual([false, true])
+  expect(JSON.stringify(officeModel({ ...p, selected: null }))).toBe(JSON.stringify(base))
+  expect(Object.keys(base.rooms[0]!.rows[0]!).sort()).toEqual(['act', 'color', 'dim', 'focus', 'id', 'model', 'pulse', 'status', 'who', 'y'])
   const hovered = officeModel(p, decor({ hoverRoom: 'a' }))
   expect(hovered.rooms[0]!.pin).toBe('dim')
   expect(officeModel(p, decor({ hoverRoom: 'b' })).rooms[1]!.pin).toBe('bright')
@@ -300,7 +304,7 @@ test('officeModel: a narrow pane — the activity cells keep their emoji alone, 
   const narrow = officeModel(props({ rooms: [r], columns: 30 })).rooms[0]!
   expect(narrow.actWord).toBe(false)
   expect(narrow.rows.map(x => x.act)).toEqual(['🤔', '🔎'])
-  expect(narrow.rows.map(x => x.mark)).toEqual(['❌', '⏰'])
+  expect(narrow.rows.map(x => x.status)).toEqual(['❌ ', '⏰ '])
   expect(narrow.rows[1]!.who.endsWith('…')).toBe(true)
   expect(textWidth(narrow.rows[1]!.who)).toBeLessThan(EMOJI_CELLS + 1 + 24)
   const wide = officeModel(props({ rooms: [r], columns: 120 })).rooms[0]!

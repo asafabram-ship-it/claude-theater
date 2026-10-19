@@ -108,19 +108,19 @@ export function cleanSearch(q: string): string {
   return Array.from(q.replace(BIDI_RE, '').slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
 }
 
-/** One drawn line of the drawer: `text` as a string; `parts` when the line is composed of labels and values (drawn as runs, THE HEBREW RULE); `chips` for the chips line. */
-export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[]; parts?: string[] }
+/** One drawn line of the drawer: `text` as the Client draws it, one Text cut or wrapped to the inner width (a composed line — the model line, the ✂ note — is its parts a space apart: the desktop lays a Hebrew-first Text right-to-left); `chips` for the chips line, a Text per chip. */
+export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
 
 /**
  * THE OVERLAY IN VIEW: whether the settings popover | the drawer (`overlay` rows, part of the chrome) is drawn at
  * the top of the engine's window rather than under the fixed chrome — whenever it leaves the window a row for the
  * office. Under the native scroll the chrome scrolls away with the content, so a drawer opened while the pane is
  * scrolled down would otherwise be drawn above the window: the person would see the cards jump and no drawer.
- * Drawn before the first card of the window instead, it opens in view and the cards under it stay where they
- * were (the person's place is kept; when the window's top cuts through a card, the overlay sits at that card's
- * top, a few rows above the window: a short scroll up shows it whole); scrolled back to the top it sits under the
- * fixed chrome as before. An overlay as tall as the window keeps its place in the chrome, so the person can still
- * scroll through all of it.
+ * Drawn at the window's top instead — after a spacer of every layout line above the window, at Client row
+ * `offset` — it opens in view and the cards under it stay where they were (the person's place is kept; the card
+ * the window's top cuts through goes on under the overlay from the window's first line as a frameless fragment:
+ * office-client.tsx); scrolled back to the top it sits under the fixed chrome as before. An overlay as tall as the
+ * window keeps its place in the chrome, so the person can still scroll through all of it.
  */
 export function overlayInWindow(overlay: number, bodyRows: number): boolean {
   return overlay > 0 && overlay < bodyRows
@@ -208,16 +208,15 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
     used += w
   }
   lines.push({ kind: 'chips', text: shown.map(c => ` ${c} `).join(' '), chips: shown })
-  // the model line and the ✂ note are parts (a label, a value, a mark): the Client lays them in reading order as the runs the
-  // engine will not swap (office-layout.ts blocksOfParts); no colon after a label — it would be drawn before the Hebrew word
-  const model = [lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act]
-  lines.push({ kind: 'head', text: cut(model.join(' '), inner), parts: model })
+  // the model line and the ✂ note are composed (a label, a value, a mark) as the probe writes its lines — one Text, the parts a
+  // space apart; no colon after a label — it would be drawn before the Hebrew word
+  lines.push({ kind: 'head', text: cut([lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act].join(' '), inner) })
   lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
   for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })
   if (d.result) {
     lines.push({ kind: 'head', text: cut(lbl('dResult'), inner) })
     for (const t of wrapLines(d.result, inner, RESULT_LINES)) lines.push({ kind: 'body', text: t })
-    if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner), parts: ['✂', lbl('resultTruncated')] })
+    if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner) })
   }
   return lines
 }

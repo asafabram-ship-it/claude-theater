@@ -26,19 +26,24 @@
 // Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
 // Client as tall as the content (`officeHeight`); `props.offset` is the
 // engine's window offset and `props.rows` the pane's body height. The module
-// draws the fixed chrome, then ONE spacer Box for the lines above the first
-// card of the window, then the settings | drawer when one is open — before the
-// window's first card (office-chrome.ts overlayInWindow: so it opens in view
-// however far the pane is scrolled, the cards under it staying where they
-// were; an overlay as tall as the window stays under the fixed chrome, before
-// the spacer) — then only the cards the window touches: every card drawn whole
+// draws the fixed chrome, then ONE spacer Box for the lines above the window's
+// first card, then only the cards the window touches: every card drawn whole
 // (its frame, title, rule, more line), its agent rows only where they lie in
 // the window (office-layout.ts trimWindow caps them at WINDOW_ROWS), a spacer
-// Box in each column standing in for the rows above and below. Layout line y
-// is Client row chromeRows + y either way, so a hit is `hitAt(model, x, y -
-// chromeRows)` on the line map — on the window's lines only: a line past it, a
-// row the budget left blank or the spacer above answers nothing. The keyboard
-// walk (j / k) keeps to the agent rows drawn.
+// Box in each column standing in for the rows above and below — the lines
+// above the window lie above the viewport, which the native scroll hides. The
+// settings | drawer: under the fixed chrome while the pane is at the top or
+// the overlay is as tall as the window; else (office-chrome.ts
+// overlayInWindow) AT THE WINDOW'S TOP — after a spacer of every line above
+// the window, at Client row `offset`, so it opens in view however far the pane
+// is scrolled and the cards under it stay where they were — and the card the
+// window's top cuts through goes on under it from the window's first line as
+// a frameless FRAGMENT (its lines from there to its bottom, the frame's bottom
+// a rule, nothing of it above the window). Layout line y is Client row
+// chromeRows + y either way, so a hit is `hitAt(model, x, y - chromeRows)` on
+// the line map — on the window's lines only: a line past it, a row the budget
+// left blank or the spacer above answers nothing. The keyboard walk (j / k)
+// keeps to the agent rows drawn.
 //
 // Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
 // only while a finish pulse is active and is stopped when the last one ends;
@@ -63,7 +68,7 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { CHROME_ROWS, COMPACT_BELOW, DRAWER_FRAME_ROWS, HELP, HELP_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, drawerInner, drawerLines, emptyLines, labelsFit, overlayInWindow, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { CARD_BORDER, EMOJI_CELLS, NO_DECOR, PIN, cut, fitLine, hitAt, iconLabel, officeModel, textWidth, trimWindow } from './office-layout'
+import { CARD_BORDER, CARD_FRAME, EMOJI_CELLS, NO_DECOR, PIN, TITLE_GAP, cut, fitLine, hitAt, iconLabel, officeModel, textWidth, trimWindow } from './office-layout'
 import type { Hit, OfficeDecor, OfficeModel, RoomView, RowView } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort } from './usage'
@@ -379,11 +384,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       onSubmit: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, true) },
     })] }))
 
-    // --- footer (the props cap's `+N`, the scan notes): in the chrome, so it is seen without scrolling to the end; one dim line ---
-    if (props.footer) kids.push(Box({ key: 'footer', flexDirection: row, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [props.footer] })] }))
+    // --- footer (the props cap's `+N`, the scan notes): in the chrome, so it is seen without scrolling to the end; one dim line,
+    //     cut to the line by LINE_FIT with an ellipsis (the height-1 Box would chop it at the edge without one) ---
+    if (props.footer) kids.push(Box({ key: 'footer', flexDirection: row, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [cut(props.footer, Math.max(1, fit))] })] }))
 
-    // --- settings popover | drawer: fixed heights, so the cards under them never move; pushed further down — before the
-    //     window's first card, or under the fixed chrome ---
+    // --- settings popover | drawer: fixed heights, so the cards under them never move; pushed further down — at the window's
+    //     top (THE OVERLAY IN VIEW, below), or under the fixed chrome ---
     let overlay: RenderElement | null = null
     if (props.helpOpen) {
       // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs), the
@@ -413,11 +419,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
           Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, { t: 'close' }) }),
         ], { justifyContent: 'space-between', width: '100%' })
         if (l.kind === 'chips') return line((l.chips ?? []).map(ch => Text({ inverse: true, children: [` ${ch} `] })))
-        // a composed line (the model line, the ✂ note) is one Text of its parts a space apart; a heading or a body line one Text
-        const text = l.parts ? l.parts.join(' ') : l.text
-        if (l.kind === 'head') return line([Text({ bold: true, children: [text] })], { key: `d${i}` })
-        if (l.kind === 'dim' || l.kind === 'note') return line([Text({ dimColor: true, children: [text] })], { key: `d${i}` })
-        return line([Text({ children: [text] })], { key: `d${i}` })
+        // every other line one Text of the text drawerLines cut or wrapped to the inner width (a composed line — the model line,
+        // the ✂ note — included: its ellipsis is drawn, where the height-1 Box would chop an overflow without one)
+        if (l.kind === 'head') return line([Text({ bold: true, children: [l.text] })], { key: `d${i}` })
+        if (l.kind === 'dim' || l.kind === 'note') return line([Text({ dimColor: true, children: [l.text] })], { key: `d${i}` })
+        return line([Text({ children: [l.text] })], { key: `d${i}` })
       })
       overlay = Box({ key: 'drawer', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: OVERLAY_GAP, width: '100%', height: DRAWER_FRAME_ROWS + inst.drawer.length, overflow: 'hidden', alignItems: edge, children: items })
     }
@@ -434,18 +440,23 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, { t: 'demo' }) })] : []),
       ] }))
     } else {
-      // --- the cards: a spacer for the lines above the window's first card, the settings | drawer before it (THE OVERLAY IN
-      //     VIEW, office-chrome.ts; one as tall as the window before the spacer, under the fixed chrome), then every card the
-      //     window touches, its rows windowed by line ---
+      // --- the cards: the settings | drawer, a spacer, then every card the window touches, its rows windowed by line. THE
+      //     OVERLAY IN VIEW (office-chrome.ts overlayInWindow): an overlay that leaves the window a row rides the window's top —
+      //     after a spacer of every line above the window, at Client row `offset` — and the card the window's top cuts through
+      //     goes on under it from the window's first line as a frameless FRAGMENT (its lines above `from` cannot be drawn before
+      //     the overlay: they would push it above the viewport). One as tall as the window stays under the fixed chrome, before
+      //     a spacer of the cards above the first drawn one, which is drawn whole: its lines above the window lie above the
+      //     viewport. (A window past the content — an offset the engine never hands a Client of this height — draws its spacer
+      //     alone.) ---
       const body = props.rows > 0 ? props.rows : 30
       const w0 = windowOf(inst.chrome, props.offset, body, model.lines.length, overlayRows)
       const { from, count } = trimWindow(model, w0.from, w0.count, WINDOW_ROWS)
       inst.win = { from, count }
       const hi = from + count
       const drawn = count > 0 ? model.rooms.filter(r => r.top < hi && r.top + r.height > from) : []
-      // (a window past the content — an offset the engine never hands a Client of this height — draws its spacer alone)
-      const spacer = drawn.length ? drawn[0]!.top : from
-      const atTop = overlayInWindow(overlayRows, body)
+      const atTop = overlay !== null && overlayInWindow(overlayRows, body)
+      const fragmentFirst = atTop && drawn.length > 0 && from > drawn[0]!.top
+      const spacer = fragmentFirst || drawn.length === 0 ? from : drawn[0]!.top
       if (overlay && !atTop) kids.push(overlay)
       if (spacer > 0) kids.push(Box({ key: 'spacer', height: spacer }))
       if (overlay && atTop) kids.push(overlay)
@@ -460,32 +471,64 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
           ...(below > 0 ? [Box({ height: below })] : []),
         ],
       })
-      const card = (room: RoomView): RenderElement => {
+      /**
+       * The title line: the pin (bright pinned, dim under the pointer, a blank cell otherwise, so the title never moves), the title
+       * cut on a word, the counts (the room's ✅ toggle) at the far edge; the gap the probe's (office-layout.ts TITLE_GAP: PIN_ZONE
+       * and cutTitle count it).
+       */
+      const titleLine = (room: RoomView): RenderElement => Box({ flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, paddingX: 1, gap: TITLE_GAP, overflow: 'hidden', children: [
+        Box({ flexShrink: 0, height: 1, width: EMOJI_CELLS, children: [room.pin === 'none' ? Text({ children: [' '] }) : Text({ ...(room.pin === 'dim' ? { dimColor: true } : {}), children: [PIN] })] }),
+        Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: edge, children: [Text({ bold: true, children: [room.title] })] }),
+        Box({ flexShrink: 0, height: 1, children: [Text({ dimColor: true, children: [room.counts] })] }),
+      ] })
+      /** The dim rule under the title (the frame's bottom too, in a fragment): one line, cut by its Box. */
+      const rule = (): RenderElement => Box({ height: 1, overflow: 'hidden', width: '100%', children: [Text({ dimColor: true, children: ['─'.repeat(Math.max(4, props.columns))] })] })
+      /** The `▸ עוד N שסיימו` / `▸ הסתר שסיימו` line, the blank line over it as its margin (none in a fragment that starts on the line itself). */
+      const moreLine = (room: RoomView, blank: boolean): RenderElement => Box({ flexDirection: row, ...(blank ? { marginTop: 1 } : {}), paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [room.more] })] })
+      /**
+       * The table of a card: the window's rows as cells, a spacer per column for the rows below the window and for the `above`
+       * ones (the rows above the window in a whole card; none in a fragment, which starts at the window); no row in the window:
+       * one spacer of the rows it stands for.
+       */
+      const table = (room: RoomView, above: number): RenderElement => {
         const rows = room.rows.filter(r => r.y >= from && r.y < hi)
-        const above = room.rows.filter(r => r.y < from).length
-        const below = room.rows.length - rows.length - above
-        const table = rows.length === 0
-          ? Box({ height: room.rows.length })
-          : Box({ flexDirection: row, width: '100%', children: [
-            column(rows, above, below, r => r.status, r => ({ color: r.color }), false),
-            column(rows, above, below, r => r.who, r => ({ bold: !r.dim, dimColor: r.dim }), false),
-            ...(room.showModel ? [column(rows, above, below, r => r.model, () => ({ dimColor: true }), false)] : []),
-            column(rows, above, below, r => r.act, r => ({ dimColor: r.dim }), true),
-          ] })
-        return Box({ flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden', children: [
-          // the title line: the pin (bright pinned, dim under the pointer, a blank cell otherwise, so the title never moves), the
-          // title cut on a word, the counts (the room's ✅ toggle) at the far edge
-          Box({ flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, paddingX: 1, gap: 1, overflow: 'hidden', children: [
-            Box({ flexShrink: 0, height: 1, width: EMOJI_CELLS, children: [room.pin === 'none' ? Text({ children: [' '] }) : Text({ ...(room.pin === 'dim' ? { dimColor: true } : {}), children: [PIN] })] }),
-            Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: edge, children: [Text({ bold: true, children: [room.title] })] }),
-            Box({ flexShrink: 0, height: 1, children: [Text({ dimColor: true, children: [room.counts] })] }),
-          ] }),
-          Box({ height: 1, overflow: 'hidden', width: '100%', children: [Text({ dimColor: true, children: ['─'.repeat(Math.max(4, props.columns))] })] }),
-          table,
-          ...(room.more ? [Box({ flexDirection: row, marginTop: 1, paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [room.more] })] })] : []),
+        const below = room.rows.filter(r => r.y >= hi).length
+        if (rows.length === 0) return Box({ height: above + below })
+        return Box({ flexDirection: row, width: '100%', children: [
+          column(rows, above, below, r => r.status, r => ({ color: r.color }), false),
+          column(rows, above, below, r => r.who, r => ({ bold: !r.dim, dimColor: r.dim }), false),
+          ...(room.showModel ? [column(rows, above, below, r => r.model, () => ({ dimColor: true }), false)] : []),
+          column(rows, above, below, r => r.act, r => ({ dimColor: r.dim }), true),
         ] })
       }
-      for (const room of drawn) kids.push(card(room))
+      /** A whole card: the frame, the title line, the rule, the table (every row of the room a cell or a spacer line), the more line. */
+      const card = (room: RoomView): RenderElement => Box({ flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden', children: [
+        titleLine(room),
+        rule(),
+        table(room, room.rows.filter(r => r.y < from).length),
+        ...(room.more ? [moreLine(room, true)] : []),
+      ] })
+      /**
+       * The window's first card drawn from line `from` inside it (under an overlay at the window's top): a frameless column Box with
+       * the frame's cells as padding, holding the card's lines from `from` on — the top padding line, the title, the rule, the rows
+       * (none above `from`), the more line with its blank, the bottom padding line, the frame's bottom as a rule — each only when
+       * `from` lies at or before it, the gap after the card as its margin; its height exact, so every line y sits at Client row
+       * chrome + y as in a whole card. From the gap line alone, a one-row spacer.
+       */
+      const fragment = (room: RoomView): RenderElement => {
+        const end = room.top + room.height - 1          // the gap line
+        if (from >= end) return Box({ key: 'fragment', height: 1 })
+        const lines: RenderElement[] = []
+        if (from <= room.top + 1) lines.push(Box({ height: 1 }))
+        if (from <= room.titleAt) lines.push(titleLine(room))
+        if (from <= room.titleAt + 1) lines.push(rule())
+        if (room.rows.some(r => r.y >= from)) lines.push(table(room, 0))
+        if (room.more && from <= room.moreAt) lines.push(moreLine(room, from < room.moreAt))
+        if (from <= end - 2) lines.push(Box({ height: 1 }))
+        lines.push(rule())
+        return Box({ key: 'fragment', flexDirection: 'column', paddingX: CARD_FRAME / 2, marginBottom: 1, width: '100%', height: end - from, overflow: 'hidden', children: lines })
+      }
+      drawn.forEach((room, i) => kids.push(fragmentFirst && i === 0 ? fragment(room) : card(room)))
     }
     return Box({ flexDirection: 'column', children: kids })
   } catch (err) {

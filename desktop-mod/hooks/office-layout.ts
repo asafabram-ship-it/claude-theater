@@ -62,8 +62,15 @@ export function fitLine(cells: number): number {
 }
 /** The card's frame in cells: a border and a padding cell on each side (the inner width is `columns - CARD_FRAME`). */
 export const CARD_FRAME = 4
+/**
+ * The title line's gap between the pin, the title and the counts. The probe's title Box had `gap={2}` between its two
+ * children (the title, the counts); the Client's line holds the pin too, and a second gap cell would cut the probe's third
+ * title one word shorter at the probe's own 51 columns (cutTitle counts the gaps by FIT) — so one, until a live check says
+ * the desktop has room for two.
+ */
+export const TITLE_GAP = 1
 /** The pin's zone on the title line, from the reading edge: border, padding, the title's padding, the glyph and its gap. */
-export const PIN_ZONE = 6
+export const PIN_ZONE = CARD_FRAME / 2 + 1 + EMOJI_CELLS + TITLE_GAP
 /** The lines of a card around its rows: the two borders, the two padding lines, the title, the rule, the gap after the card. */
 export const CARD_LINES = 7
 /** The more / hide line and the blank line over it. */
@@ -188,16 +195,14 @@ export type RowView = {
   id: string
   /** The line of the row. */
   y: number
-  /** The status cell: the mark, with the focus marker or its blank (the column's width never moves with the focus). */
+  /** The status cell: the mark (markOf: the badge or the dot), with the focus marker or its blank (the column's width never moves with the focus). */
   status: string
-  mark: string
   color: string
   who: string
   model: string
   act: string
   /** A finished agent: its who and activity dim, the who not bold. */
   dim: boolean
-  selected: boolean
   focus: boolean
   /** A `done` fx is running on it: the module tints the row's cells by frame parity. */
   pulse: boolean
@@ -254,7 +259,8 @@ export function rowCount(props: OfficeProps): number {
  * beside the pin and the counts, by FIT; never under 8 cells.
  */
 export function cutTitle(title: string, columns: number, counts: string): string {
-  const room = columns - CARD_FRAME - 2 - (EMOJI_CELLS + 1) - textWidth(counts) - 1
+  // the frame, the title line's own padding, the pin and its gap, the counts and the gap before them
+  const room = columns - CARD_FRAME - 2 - (EMOJI_CELLS + TITLE_GAP) - textWidth(counts) - TITLE_GAP
   return cutWords(title, Math.max(8, fitCells(room)))
 }
 
@@ -324,12 +330,12 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR): 
       const focus = decor.focus === a.id
       const marker = focus ? FOCUS_MARK[rtl ? 'rtl' : 'ltr'] : ' '
       rows.push({
-        id: a.id, y, mark, color: DOT_FG[a.status],
+        id: a.id, y, color: DOT_FG[a.status],
         status: rtl ? `${mark}${marker}` : `${marker}${mark}`,
         who: `${a.emoji} ${cut(a.name, fit.nameMax)}`,
         model: modelText(a.model, full),
         act: fit.actWord ? a.act : firstGlyph(a.act),
-        dim: a.status === 'done', selected: props.selected === a.id, focus, pulse: decor.pulse.has(a.id),
+        dim: a.status === 'done', focus, pulse: decor.pulse.has(a.id),
       })
       line('row', room.id, a.id)
       hits.push({ kind: 'agent', id: a.id, x: 0, y, w: columns, h: 1 })

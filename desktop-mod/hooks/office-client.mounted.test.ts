@@ -61,14 +61,19 @@ function textOf(n: Drawn | string): string {
 }
 /** The settings popover | the drawer: the module's keyed framed Boxes. */
 const isOverlay = (k: Drawn) => k.type === 'Box' && propsOf(k).borderStyle !== undefined && propsOf(k).key !== undefined
-/** The room cards of the drawn tree: the framed Boxes in the cards' style without a key. */
+/** The room cards of the drawn tree: the framed Boxes in the cards' style without a key, and the frameless fragment of the window's first card under an overlay (THE OVERLAY IN VIEW). */
 async function cardsOf(ui: Finder): Promise<Drawn[]> {
-  return (await kidsOf(ui)).filter(k => k.type === 'Box' && propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined)
+  return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined) || propsOf(k).key === 'fragment'))
+}
+/** The table of a card or of the fragment: the Box of column Boxes (undefined when no row of it is in the window). */
+function tableOf(card: Drawn): Drawn | undefined {
+  const els = (card.children ?? []).filter((k): k is Drawn => typeof k !== 'string')
+  return els.find(n => n.type === 'Box' && (n.children ?? []).length > 0 && (n.children ?? []).every(c => typeof c !== 'string' && propsOf(c).flexDirection === 'column'))
 }
 /** The texts of a card's drawn rows: one array per row — [status, who, model?, act] — the window's rows only. */
 function rowsOf(card: Drawn): string[][] {
-  const [, , table] = (card.children ?? []) as Drawn[]
-  if (!table || propsOf(table).flexDirection === undefined) return []
+  const table = tableOf(card)
+  if (!table) return []
   const cols = (table.children as Drawn[]).map(col => (col.children as Drawn[]).filter(c => propsOf(c).paddingLeft !== undefined || propsOf(c).paddingRight !== undefined))
   return cols[0]!.map((_, i) => cols.map(col => textOf(col[i]!)))
 }
@@ -94,7 +99,7 @@ function lineOf(p: OfficeProps, id: string): number {
   return hit!.y
 }
 
-test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per room with the agent rows; a click on a row focuses it; a newcomer gets a row; a finisher pulses on the fx clock, which then stops', { timeoutMs: 30_000 }, async ($, on) => {
+test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per room with the agent rows; a click on a row focuses it; a newcomer gets a row; a finisher\'s row turns done with no pulse of the module\'s own (the ⭐ stamp and the pulse it starts are the poll\'s: ui.test.ts)', { timeoutMs: 30_000 }, async ($, on) => {
   let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 })]
   const { clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -162,7 +167,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   await ui.unmount()
 })
 
-test('DESKTOP (2.4): the engine scrolls natively — the Client is full height (the chrome and the cards\' lines) and the engine\'s offset reaches it as props.offset', async ($, on) => {
+test('DESKTOP (2.4): the engine scrolls natively — the Client is full height (the chrome and the cards\' lines) and the engine\'s offset reaches it as props.offset', { timeoutMs: 30_000 }, async ($, on) => {
   const many = Array.from({ length: 30 }, (_, i) => agent({ id: `a${i}`, session_full: `s${i % 3}`, session: `s${i % 3}` }))
   const { clock } = beneath(on, () => many, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -290,8 +295,8 @@ test('DESKTOP (2.4): the window — the card drawn whole with its rows windowed 
   await ui.unmount()
 })
 
-test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens IN VIEW — drawn before the window\'s first card, with the rows under it where they were (the clicked row still drawn, focused); closed, the window is as before', async ($, on) => {
-  // 60 agents at 30 columns: one card of 67 lines (rows 4..63); a 25-row window scrolled 40 rows down shows lines from 34
+test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens IN VIEW — at the engine\'s offset, after a spacer of the lines above the window, the card continuing under it from the window\'s first line as a frameless fragment (the clicked row still drawn, focused; the rows under the overlay answer at their Client rows); closed, the window is as before', { timeoutMs: 30_000 }, async ($, on) => {
+  // 60 agents at 30 columns: one card of 67 lines (rows 4..63, the gap 66); a 25-row window scrolled 40 rows down shows lines from 34
   const many = Array.from({ length: 60 }, (_, i) => agent({ id: `a${i}` }))
   const { clock } = beneath(on, () => many, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -309,31 +314,51 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   const p1 = await officeProps(ui)
   expect(p1.drawer?.id).toBe('a36')
   expect(p1.offset).toBe(40)                                         // nothing scrolled: the engine's window stays
-  // the module's tree: the fixed chrome, the DRAWER (before the window's first card: the card starts at line 0, so no spacer),
-  // then the card — its rows from the same layout line 34, the clicked row drawn and focused
+  const H = chromeRows(p1) - CHROME_ROWS
+  // the module's tree: the fixed chrome, a spacer of the 34 lines above the window, the DRAWER at Client row 6 + 34 = 40 — the
+  // engine's offset, so it opens in the viewport's first rows — then the card's FRAGMENT from line 34: no frame, no rows above
+  // the window, its rows from a30 (the same layout line 34), the clicked row drawn and focused
   const kids = await kidsOf(ui)
-  expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round'])
-  expect(kids[3]).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER } })
-  expect(textOf(kids[3]!)).toMatch(/משימה/)        // the drawer's task heading
+  expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
+  expect(propsOf(kids[3]).height).toBe(34)
+  expect(CHROME_ROWS + 34).toBe(p1.offset)
+  expect(kids[4]).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER, height: H - 1, marginBottom: 1 } })
+  expect(textOf(kids[4]!)).toMatch(/משימה/)        // the drawer's task heading
+  expect(propsOf(kids[5]).borderStyle).toBeUndefined()
+  expect(propsOf(kids[5])).toMatchObject({ paddingX: 2, height: 66 - 34, marginBottom: 1 })
   const open = rowsOf((await cardsOf(ui))[0]!)
   expect(open[0]![1]).toBe(whoOf(p1, 'a30'))
   expect(open.map(r => r[1])).toContain(whoOf(p1, 'a36'))
   expect(await focused(ui, p1)).toEqual([whoOf(p1, 'a36')])          // the click's focus on its row
-  expect(open.length).toBe(25 - (chromeRows(p1) - CHROME_ROWS))      // the window less the drawer's rows
-  // the settings (h) take the same place; h again closes them, x the drawer: the window is as before
+  expect(open.length).toBe(25 - H)                                   // the window less the drawer's rows
+  // the pointer: a drawer row (the viewport's first H) opens nothing; the first row under the drawer — the viewport's row H,
+  // Client row chromeRows + 34 — is a30's: its drawer replaces a36's and the focus moves there
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 5, y: p1.offset + 1, button: 'left' })
+  expect((await officeProps(ui)).drawer?.id).toBe('a36')
+  expect(chromeRows(p1) + 34).toBe(p1.offset + H)
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 5, y: p1.offset + H, button: 'left' })
+  const p1b = await officeProps(ui)
+  expect(p1b.drawer?.id).toBe('a30')
+  expect(chromeRows(p1b)).toBe(chromeRows(p1))
+  expect(await focused(ui, p1b)).toEqual([whoOf(p1b, 'a30')])
+  // the settings (h) take the same place; h again closes them, x the drawer: the window is as before, the card whole again
   await ui.key({ in: OFFICE_KEY, key: 'h' })
   const p2 = await officeProps(ui)
   expect(p2.helpOpen).toBe(true)
   const help = await kidsOf(ui)
-  expect(help.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'help', 'round'])
-  expect(textOf(help[3]!)).toMatch(/k \/ j/)
-  expect(textOf(help[3]!)).toMatch(/הגדרות/)
+  expect(help.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
+  expect(propsOf(help[3]).height).toBe(34)
+  expect(textOf(help[4]!)).toMatch(/k \/ j/)
+  expect(textOf(help[4]!)).toMatch(/הגדרות/)
+  expect(rowsOf((await cardsOf(ui))[0]!)).toHaveLength(25 - (chromeRows(p2) - CHROME_ROWS))
   await ui.key({ in: OFFICE_KEY, key: 'h' })
   await ui.key({ in: OFFICE_KEY, key: 'x' })
   const p3 = await officeProps(ui)
   expect(p3.drawer).toBeNull()
-  expect((await kidsOf(ui)).some(isOverlay)).toBe(false)
-  expect(rowsOf((await cardsOf(ui))[0]!).map(r => r.slice(1))).toEqual(before.map(r => r.slice(1)))   // (the focus marker stays on a36's row)
-  expect(await focused(ui, p3)).toEqual([whoOf(p3, 'a36')])
+  const closed = await kidsOf(ui)
+  expect(closed.some(isOverlay)).toBe(false)
+  expect(closed.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  expect(rowsOf((await cardsOf(ui))[0]!).map(r => r.slice(1))).toEqual(before.map(r => r.slice(1)))   // (the focus marker stays on a30's row)
+  expect(await focused(ui, p3)).toEqual([whoOf(p3, 'a30')])
   await ui.unmount()
 })

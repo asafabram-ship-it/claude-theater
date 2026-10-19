@@ -72,7 +72,7 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   expect(LABEL_KEYS).toContain('scSettings')
   expect(LABEL_KEYS).not.toContain('tbHelp')
   expect(LABEL_KEYS).not.toContain('helpTitle')
-  // the row's minutes unit is office-layout.ts ROW_MINUTES alone: no string of the table carries it (i18n imports no value from the layout)
+  // the agent rows carry no clock (the cards design): no string of the table names a row's minutes — the drawer's chip (dMinutes) is the one unit
   expect('rowMinutes' in L).toBe(false)
   expect('rowMinutes' in I18N.en).toBe(false)
   // the tool table: an emoji leads every entry (the layout draws it as a run of its own); the Hebrew after it must pass alone

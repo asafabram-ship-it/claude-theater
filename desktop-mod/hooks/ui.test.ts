@@ -449,7 +449,8 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
   }
 })
 
-test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room toggle, drawer, search', async ($, on) => {
+// (a mount and a dozen presses, each a redraw: 5.1 s under a full suite on a loaded machine with no code change)
+test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room toggle, drawer, search', { timeoutMs: 30_000 }, async ($, on) => {
   const agents = fixture()
   const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
@@ -524,7 +525,8 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
   }
 })
 
-test('the finish beat (the poll\'s, over the scanned office): a shown agent that turns done gets ⭐, confetti, a toast and the chime (unless muted); a hidden finish is never celebrated', async ($, on) => {
+// (several mounts and polls: a loaded machine stretches it past the 5 s default — it ran 5.1 s under a full suite with no code change)
+test('the finish beat (the poll\'s, over the scanned office): a shown agent that turns done gets ⭐, confetti, a toast and the chime (unless muted); a hidden finish is never celebrated', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   files.set(Q3, subagentMidTool('q3', 'Count the tests.', T0 - 9000)) // a third subagent, for the hidden finish
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: true, pins: [] } }, files)

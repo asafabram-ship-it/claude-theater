@@ -8,6 +8,19 @@ The office Client drew every row as cells padded with spaces, assuming every gly
 ## Reference
 `docs/research/2026-10-19-cards-probe/register.tsx` is the approved drawing (round 7). Copy its structure and styling; the strings in it (e.g. `${emoji} ${name}`, `🤔 חושב`, toolbar `שסיימו ☐`) were seen correct on the desktop as written — do not re-derive their order with the old LTR-paragraph model (screenshots show the desktop lays a Hebrew-first Text right-to-left).
 
+## Responsive behaviour and polish (probe rounds 8-9, approved by Asaf 19.10: "זה אחלה") — overrides the sections below where they differ
+The reference file `docs/research/2026-10-19-cards-probe/register.tsx` is now round 9; its header comment and code are the spec for width behaviour. In short:
+- One reading column at every width: up to 99 cells it is the pane; from 100 it is frozen at 100 and centred.
+- The card's shape never changes with width (frame, title, a BLANK line where the rule was, rows, more line); widening/narrowing changes words and columns, never a line's position.
+- ONE table mode for the whole office (from the widest values across all drawn rooms) with 2-cell hysteresis: below ~38 no model column and the activity as its emoji only; the model column back from ~39 (narrowing) / 42 (widening); the activity word from ~51/54; the model version from 60; toolbar + search on one line from 64; padding 2 and columns aligned across cards (minWidth floors) from 80; a dim task column from 100.
+- Header/toolbar label ladder by LINE_FIT: full meter → header words → toolbar words → short/tiny meter; the meter is never cut.
+- Counts show non-zero statuses only and shrink (✅ goes, then ⏳) before the title is cut below TITLE_MIN.
+- Weight, not colour: working = bold name; waiting = regular name, dim activity; finished = all dim; ❌ keeps a regular name. ⭐ and ❌ rows rank first among the finished shown and are never hidden behind the more line.
+- **No rule under the title** (round 9): it never stretched with the card. Title emphasis = bold + the blank line.
+- **One-line texts never wrap** (round 9): spaces in titles, names and the more line become no-break spaces (U+00A0), so a text a little too long is clipped by its height-1 Box instead of breaking onto a second line; titles are cut by LINE_FIT.
+- Search field only when more than 12 agents are shown (spec 2026-10-10 §2 item 22); an active search stays visible.
+- The drawer: one dim status line (`● עובד · זמן 12 דק׳ · general-purpose`) and a blank line between identity and content.
+
 ## Refinements from rounds 5-7 (Asaf, 19.10) — these override anything below
 1. **No selection background** (the dark band is gone). The open drawer shows which agent is selected; keyboard focus may show a small `›` marker beside the dot, nothing more.
 2. **Every column is rigid and content-sized** (`flexShrink 0`): a shrinking activity column collapsed to nothing on the desktop. If the table cannot fit the pane, drop the activity WORD (keep its emoji) below a width threshold the implementer derives conservatively (the desktop draws letters wider than a cell; round 6 fit at 51 columns with 4 columns), never clip.

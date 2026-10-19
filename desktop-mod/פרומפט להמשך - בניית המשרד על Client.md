@@ -1,6 +1,6 @@
 # פרומפט להמשך: בניית המשרד על Client (תיאטרון הסוכנים בדסקטופ)
 
-נשמר: 2026-10-18 10:30 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 (או Opus כבקר + סוכנים על Fable) · Ultracode מופעל
+נשמר: 2026-10-19 17:50 · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 (או Opus כבקר + סוכנים על Fable) · Ultracode מופעל
 
 ---
 
@@ -8,12 +8,13 @@
 
 אתה ממשיך את העבודה על המוד "תיאטרון הסוכנים" (ריפו `C:\Users\asafa\agent-theater`, ענף `feat/desktop-mod`). עבור לתיקייה הזו (change_directory) לפני כל דבר.
 
-**תור ראשון:** `get_usage` (self) בשקט (בלי CronCreate - כלל אסף מ-12.10). קרא: `desktop-mod/HANDOFF.md` - הסעיף העליון "נקודת שמירה 2026-10-18 10:30"; אפיון `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` סעיף 2 (פריטים 1-18); אפיון `docs/superpowers/specs/2026-10-17-office-ui-polish-design.md`; הלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט). אם `git status` מראה קבצים לא מקומטים - קמט ודחוף (`docs(mod): checkpoint <תאריך>`).
+**תור ראשון:** `get_usage` (self) בשקט (בלי CronCreate - כלל אסף מ-12.10). קרא: `desktop-mod/HANDOFF.md` - הסעיף העליון "נקודת שמירה 2026-10-19 17:50" (ואחריו 18.10); אפיון `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` סעיף 2 (פריטים 1-18); אפיון `docs/superpowers/specs/2026-10-17-office-ui-polish-design.md`; הלדג'ר `.superpowers/sdd/2026-10-10-client-office-and-usage-plan/progress.md` (לא בגיט). אם `git status` מראה קבצים לא מקומטים - קמט ודחוף (`docs(mod): checkpoint <תאריך>`).
 
 **איפה אנחנו:** המוד מופעל (`CLAUDE_CODE_PLUGIN_DIRS` ב-settings, מ-17.10). אין הבהוב (נבדק חי). העיצוב החדש (שורה לכל סוכן, שעון לעובדים, שם שיחה מהסרגל, סרגל במילים, עזרה עם דמו/תנועה/שפה, 📌 בריחוף) כתוב, נסקר ונדחף; 190 בדיקות על מנועים 2.1.293 ו-2.1.295.
 
 **המשימה, לפי הסדר:**
-1. **בדיקה חיה 4 עם אסף:** שיחה חדשה, `/theater`, משימה עם כמה סוכנים. עבור איתו על רשימות הבדיקה ב-`task-2.8b-4-report.md` ו-`task-2.8b-3-report.md` (בתיקיית הלדג'ר). כל ממצא: הכרעה עם אסף אם זה עיצוב (AskUserQuestion עם preview), ואז מממש + סוקר על Fable.
+0. **לבנות את סבב 9 (עיצוב לפי רוחב) לתוך ה-Client** - האפיון `docs/superpowers/specs/2026-10-19-office-cards-design.md` והעתק המוד `docs/research/2026-10-19-cards-probe/register.tsx`; טלאי חלקי ב-`stopped/` בתיקיית הלדג'ר; רווחים בלתי-שבירים בכל ערך של שורה אחת.
+1. **בדיקה חיה 5 עם אסף** (מחליפה את 4): שיחה חדשה, `/theater`, משימה עם כמה סוכנים. עבור איתו על רשימות הבדיקה ב-`task-2.8b-4-report.md` ו-`task-2.8b-3-report.md` (בתיקיית הלדג'ר). כל ממצא: הכרעה עם אסף אם זה עיצוב (AskUserQuestion עם preview), ואז מממש + סוקר על Fable.
 2. **Task 1.5** - מדידת CPU באותה הפעלה (תוכנית 2026-10-10).
 3. סגירת Task 2.8: HANDOFF, README (סעיף דסקטופ - Carry בלדג'ר), CHANGELOG `0.5.0`, צילום ל-`docs/screenshots/`.
 4. **Task 4.1** - מחיקת השיבוטים ו-`~/.claude/dev-mods/*/theater-probe` (באישור אסף); מיזוג ל-main רק בהכרעת אסף.

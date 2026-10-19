@@ -1,8 +1,8 @@
 // office-chrome.ts: the pure maths of the desktop office's chrome — the rows
-// the surface module draws above the rooms (header, toolbar, search, the
-// footer line, the help popover or the drawer), their exact heights, the
-// drawer's wrapped lines, and the window of layout rows the engine's scroll
-// offset shows; and the ONE definition of the characters the surfaces refuse
+// the surface module draws above the cards (header, toolbar, search, each
+// with its blank line, the footer line, the settings popover or the drawer),
+// their exact heights, the drawer's wrapped lines, and the window of layout
+// lines the engine's scroll offset shows; and the ONE definition of the characters the surfaces refuse
 // (REFUSED_RE), with the two cleaners built on it: cleanSearch (the search
 // text) and cleanAgentText (every agent text the payload carries, cleaned by
 // the hooks' poll). Shared by the surface module (office-client.tsx draws with it)
@@ -10,12 +10,12 @@
 // engine, no clock, so both sides import it — the hooks never import the
 // surface module itself.
 
-import { cut, textWidth } from './office-layout'
+import { CARD_FRAME, cut, fitCells, fitLine, textWidth } from './office-layout'
 import type { OfficeDrawer, OfficeProps } from './office-props'
 
-/** The chrome rows always there: header, toolbar, search. */
-export const CHROME_ROWS = 3
-/** Under this many columns the pane draws icons alone and no key-hint chips (ui.tsx's rule; the Client's toolbar puts hotkeys on its Buttons only from here, since the desktop draws a chip per hotkey). */
+/** The chrome rows always there, as the probe lays them: the header, a blank line, the toolbar, a blank line, the search, a blank line. */
+export const CHROME_ROWS = 6
+/** Under this many columns the pane draws no key-hint chips (ui.tsx's rule; the Client's toolbar puts hotkeys on its Buttons only from here, since the desktop draws a chip per hotkey). */
 export const COMPACT_BELOW = 60
 /** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested). */
 export const TASK_LINES = 4
@@ -26,26 +26,32 @@ export const RESULT_LINES = 3
  * ClientKeyEvent) — so the help must not offer it.
  */
 export const HELP: ReadonlyArray<readonly [string, string]> = [
-  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scStill', 's'], ['scHelp', 'h'],
+  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scStill', 's'], ['scSettings', 'h'],
 ]
-/** The help popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
+/** The settings popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
 export const HELP_BUTTON_ROWS = 1
-/** The help popover's height: the border, the title row, the Buttons row, one row per shortcut. */
+/** The settings popover's height: the border, the title row, the Buttons row, one row per shortcut. */
 export const HELP_ROWS = 2 + 1 + HELP_BUTTON_ROWS + HELP.length
+/** The blank line under the settings popover | the drawer, before the first card (the cards' own gap). */
+export const OVERLAY_GAP = 1
+/** The drawer card's frame: its border and its padding line, top and bottom (the cards' style). */
+export const DRAWER_FRAME_ROWS = 4
 
-/** Whether `labels`, a cell apart, fit in `width` cells: the toolbar and the help's Buttons row draw their words only then, else their icons alone. */
-export function labelsFit(labels: readonly string[], width: number): boolean {
-  return labels.reduce((n, l, i) => n + (i ? 1 : 0) + textWidth(l), 0) <= width
+/** Whether `labels`, `gap` cells apart, fit in `width` cells by LINE_FIT (the desktop draws letters wider than a cell): the toolbar and the settings' Buttons row draw their words only then, else their icons alone. */
+export function labelsFit(labels: readonly string[], width: number, gap = 1): boolean {
+  return labels.reduce((n, l, i) => n + (i ? gap : 0) + textWidth(l), 0) <= fitLine(width)
 }
 /**
- * The window's byte budget. A drawn row serializes to about ROW_CHARS_PER_COLUMN characters per
- * column (measured 2026-10-11: 57,033 for a 200 × 40 window with the drawer open); the Client's
- * whole tree must stay under 100,000 characters or the instance unmounts, so the rows drawn are
- * capped at WINDOW_CHARS — a maximized pane on a large monitor (≈ 250 × 75) leaves its lowest rows
- * blank rather than losing the pane.
+ * The window's budget. The Client's whole tree must stay under 100,000 characters serialized or the
+ * instance unmounts; a drawn agent row (four cells, a Box and a Text each) serializes to about
+ * ROW_CHARS characters whatever the width (measured 2026-10-19 on the fake surface: 706 at most), so
+ * the rows drawn in one window are capped at WINDOW_ROWS — a pane taller than that leaves its lowest
+ * rows blank rather than losing the pane. (The chrome, the drawer and the card frames of a window
+ * cost about 10,000 more: office-client.test.ts's limits sweep guards the whole tree.)
  */
-export const ROW_CHARS_PER_COLUMN = 7
-export const WINDOW_CHARS = 70_000
+export const WINDOW_CHARS = 80_000
+export const ROW_CHARS = 800
+export const WINDOW_ROWS = Math.floor(WINDOW_CHARS / ROW_CHARS)
 /** The longest search text, in code points: what the module keeps and posts and the hooks store (a pasted page must not swell a post, the Input's value or the Client's props past their bounds). */
 export const SEARCH_MAX = 200
 /** C0 and C1 controls (an escape sequence in a paste): the surface refuses an Input value or a Text holding one (a Text takes tab and newline alone). */
@@ -106,37 +112,44 @@ export function cleanSearch(q: string): string {
 export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[]; parts?: string[] }
 
 /**
- * THE OVERLAY IN VIEW: whether the help popover | the drawer (`overlay` rows, part of the chrome) is drawn at the
- * top of the engine's window rather than under the fixed chrome — whenever it leaves the window a row for the
- * office. Under the native scroll the chrome scrolls away with the content, so a drawer or help opened while the
- * pane is scrolled down would otherwise be drawn above the window: the person would see the grid jump and no
- * drawer. Drawn at the window's top instead, it opens in view and the office rows under it stay where they were
- * (the person's place is kept); scrolled back to the top it sits under the fixed chrome as before. An overlay as
- * tall as the window keeps its place in the chrome, so the person can still scroll through all of it.
+ * THE OVERLAY IN VIEW: whether the settings popover | the drawer (`overlay` rows, part of the chrome) is drawn at
+ * the top of the engine's window rather than under the fixed chrome — whenever it leaves the window a row for the
+ * office. Under the native scroll the chrome scrolls away with the content, so a drawer opened while the pane is
+ * scrolled down would otherwise be drawn above the window: the person would see the cards jump and no drawer.
+ * Drawn before the first card of the window instead, it opens in view and the cards under it stay where they
+ * were (the person's place is kept; when the window's top cuts through a card, the overlay sits at that card's
+ * top, a few rows above the window: a short scroll up shows it whole); scrolled back to the top it sits under the
+ * fixed chrome as before. An overlay as tall as the window keeps its place in the chrome, so the person can still
+ * scroll through all of it.
  */
 export function overlayInWindow(overlay: number, bodyRows: number): boolean {
   return overlay > 0 && overlay < bodyRows
 }
 
 /**
- * The layout rows the engine's window shows, in layout coordinates: `from` is
- * the first row (the rows above it are one spacer), `count` how many — never
- * more than the content holds (so `windowRows` has nothing to clamp and the
- * rows stay under the pointer), never more than the byte budget allows.
- * `chrome` is chromeRows (the overlay included) and `overlay` the help | drawer
- * rows inside it: when the overlay is drawn at the window's top
- * (overlayInWindow), the layout continues from the row the window starts at,
- * under the overlay; either way layout row y sits at Client row chrome + y.
+ * The layout lines the engine's window shows, in layout coordinates: `from` is
+ * the first line (the cards above it are one spacer; a card the window cuts is
+ * drawn from its own top, its rows above `from` left blank), `count` how many —
+ * never more than the content holds. `chrome` is chromeRows (the overlay
+ * included) and `overlay` the settings | drawer rows inside it: when the overlay
+ * is drawn at the window's top (overlayInWindow), the layout continues from the
+ * line the window starts at, under the overlay; either way layout line y sits at
+ * Client row chrome + y. (The row budget, WINDOW_ROWS, is the module's cut on
+ * the line map: office-layout.ts trimWindow.)
  */
-export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, columns: number, overlay = 0): { from: number; count: number } {
+export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overlay = 0): { from: number; count: number } {
   const inWindow = overlayInWindow(overlay, bodyRows)
   // the rows above the layout that the window scrolls past before the office starts: the fixed chrome alone when the
   // overlay rides the window's top, the whole chrome otherwise
   const lead = inWindow ? chrome - overlay : chrome
   const from = Math.max(0, offset - lead)
   const visible = Math.max(0, bodyRows - (inWindow ? overlay : 0) - Math.max(0, lead - offset))
-  const budget = Math.max(1, Math.floor(WINDOW_CHARS / (ROW_CHARS_PER_COLUMN * Math.max(1, columns))))
-  return { from, count: Math.max(0, Math.min(visible, budget, len - from)) }
+  return { from, count: Math.max(0, Math.min(visible, len - from)) }
+}
+
+/** The cells the drawer's lines are wrapped to: the card's inner width (border and padding off) by FIT, so a line drawn wider than a cell still fits its height-1 Box. */
+export function drawerInner(columns: number): number {
+  return Math.max(1, fitCells(columns - CARD_FRAME))
 }
 
 /** `s` without a trailing ellipsis (what `cut` appends when it drops glyphs). */
@@ -178,7 +191,7 @@ export function wrapLines(text: string, width: number, max: number): string[] {
   return out
 }
 
-/** The drawer's lines at `inner` cells (its box is `2 + lines.length` rows tall), from the drawer and the labels. */
+/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels. */
 export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number): DrawerLine[] {
   const lbl = (k: string) => L[k] ?? ''
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
@@ -209,33 +222,33 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   return lines
 }
 
-/** The empty office's lines: the message, the sub's sentences (split at each " - " / " — "), each wrapped. */
+/** The empty office's lines: the message, the sub's sentences (split at each " - " / " — "), each wrapped by FIT. */
 export function emptyLines(p: OfficeProps): { msg: string[]; sub: string[] } {
   if (!p.empty) return { msg: [], sub: [] }
-  const w = Math.max(1, p.columns)
+  const w = Math.max(1, fitCells(p.columns))
   return { msg: wrapLines(p.empty.msg, w, 2), sub: p.empty.sub ? p.empty.sub.split(/\s[-—]\s/).flatMap(s => wrapLines(s, w, 2)) : [] }
 }
 
-/** The rows the empty-office block takes (a margin row, 🏢, the lines, the demo Button). */
+/** The rows the empty-office block takes (🏢, the lines, the demo Button; the blank line over it is the search's). */
 export function emptyRows(p: OfficeProps): number {
   if (!p.empty) return 0
   const e = emptyLines(p)
-  return 1 + 1 + e.msg.length + e.sub.length + (p.empty.kind === 'office' ? 1 : 0)
+  return 1 + e.msg.length + e.sub.length + (p.empty.kind === 'office' ? 1 : 0)
 }
 
-/** The rows above the layout: header, toolbar, search, the footer line when there is one, then the help popover or the drawer. */
+/** The rows above the layout: the chrome's six, the footer line when there is one, then the settings popover or the drawer. */
 export function chromeRows(p: OfficeProps): number {
   return CHROME_ROWS + (p.footer ? 1 : 0) + overlayRows(p)
 }
 
-/** The help popover's or the drawer's rows (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
+/** The settings popover's or the drawer's rows, their gap included (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
 export function overlayRows(p: OfficeProps): number {
-  if (p.helpOpen) return HELP_ROWS
-  if (p.drawer) return 2 + drawerLines(p.drawer, p.labels, Math.max(1, p.columns - 4)).length
+  if (p.helpOpen) return HELP_ROWS + OVERLAY_GAP
+  if (p.drawer) return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns)).length + OVERLAY_GAP
   return 0
 }
 
-/** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `rowCount(p)`, office-layout.ts: no cell is built for it). */
+/** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `rowCount(p)`, office-layout.ts: no row is built for it). */
 export function officeHeight(p: OfficeProps, layoutRows: number): number {
   return chromeRows(p) + (p.empty ? emptyRows(p) : layoutRows)
 }

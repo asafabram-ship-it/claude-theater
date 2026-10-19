@@ -23,7 +23,7 @@ import {
 } from './ui'
 import { CHROME_ROWS, REFUSED_RE, chromeRows, emptyLines, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
-import { layoutOffice, type Hit } from './office-layout'
+import { officeModel, rowCount, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'
@@ -264,14 +264,14 @@ async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Pro
  */
 async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Record<string, unknown> } | undefined>; pointer: (ev: { in?: string; type: 'down'; x: number; y: number; button: 'left' }) => Promise<void> }, kind: Hit['kind'], id: string): Promise<void> {
   const p = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
-  const hit = layoutOffice(p).hits.find(h => h.kind === kind && h.id === id)
+  const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit).toBeDefined()
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
 }
 
-/** DESKTOP (the Client office): whether the module draws the finish hop (the FX_BG.done / doneAlt pulse on a tile's head row). */
+/** DESKTOP (the Client office): whether the module draws the finish pulse (the FX_BG.done / doneAlt tint on a row's cell Boxes). */
 async function hopShown(ui: { findAll: (q: { in?: string; type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }): Promise<boolean> {
-  return (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).some(n => n.props.backgroundColor === FX_BG.done || n.props.backgroundColor === FX_BG.doneAlt)
+  return (await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => n.props.backgroundColor === FX_BG.done || n.props.backgroundColor === FX_BG.doneAlt)
 }
 
 /** A quiet office on disk (HOME = C:/Users/test): one open conversation (its lead answering on Fable) with two subagents, one of them on Opus. */
@@ -620,7 +620,7 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(p.lang).toBe('he')
     expect(p.rtl).toBe(true)
     expect(p.usage).toBeNull() // Phase 3 fills the meter
-    expect(client.props.height).toBe(officeHeight(p, layoutOffice(p).rows.length))
+    expect(client.props.height).toBe(officeHeight(p, rowCount(p)))
     // the office as the text cards draw it: room A (its topic) first, B (its project); a1 shown, a2 (finished) among room A's
     // recent finished (THE RECENT FINISHED: the Client's rooms draw up to RECENT_DONE of them, the text cards none); the counts
     expect(p.rooms.map(r => r.title)).toEqual(['Ship the v2 config migration.', 'research'])
@@ -648,7 +648,7 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(wide?.props.width).toBe(90)
     expect(pw.columns).toBe(90)
     expect(pw.offset).toBe(0)
-    expect(wide?.props.height).toBe(officeHeight(pw, layoutOffice(pw).rows.length))
+    expect(wide?.props.height).toBe(officeHeight(pw, rowCount(pw)))
     await clock.advance(POLL_MS)
     expect(JSON.stringify((await ui.find({ type: 'Client' }))?.props.props)).toBe(JSON.stringify(pw))
     // the plugin's own tree never holds the text toolbar's keys on the desktop: the 🎞/🖼 toggle is the Client's alone

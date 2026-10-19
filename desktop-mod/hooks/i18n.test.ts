@@ -51,19 +51,27 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   // empty office's demo Button, the failed chip: the WORD passes on its own; the icon is laid after it in the string so the
   // reader meets it first (office-layout.ts iconLabel, proven by office-layout.test.ts visualRtlReading) — a trailing icon is
   // the one trailing neutral the rule allows for, because it is meant to be read before the word
-  for (const k of ['tbDone', 'tbSound', 'tbHelp', 'hbMotion', 'demoLabel', 'exitDemo', 'scStill', 'close', 'dFailed'] as const) check(k, L[k])
+  for (const k of ['tbDone', 'tbSound', 'tbSettings', 'hbMotion', 'demoLabel', 'exitDemo', 'scStill', 'close', 'dFailed'] as const) check(k, L[k])
   check('placeholder word', L.searchPlaceholder.replace(/…$/, ''))
   check('watchDemo word', L.watchDemo.replace(/^\S+\s/, ''))
   expect(L.watchDemo).toMatch(/^▶ /)   // (worded mark-first for the text cards; the office Client re-lays it)
-  expect(L.tbDone).toBe('שסיימו')
+  // the toolbar's words and the settings popover (the cards design, refinement 7): `הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️`
+  expect(L.tbDone).toBe('הצג שסיימו')
   expect(L.tbSound).toBe('צליל')
-  expect(L.tbHelp).toBe('עזרה')
-  expect(I18N.en.tbDone).toBe('Finished')
+  expect(L.tbSettings).toBe('הגדרות')
+  expect(I18N.en.tbDone).toBe('Show finished')
   expect(I18N.en.tbSound).toBe('Sound')
-  expect(I18N.en.tbHelp).toBe('Help')
-  // the help's title names the popover, which hosts controls now, not shortcuts alone
+  expect(I18N.en.tbSettings).toBe('Settings')
+  // the popover is titled הגדרות (it hosts the language, demo and motion controls and the shortcuts); the text cards keep their help
+  expect(L.settingsTitle).toBe('הגדרות')
+  expect(I18N.en.settingsTitle).toBe('Settings')
   expect(L.helpTitle).toBe('עזרה')
   expect(I18N.en.helpTitle).toBe('Help')
+  expect(LABEL_KEYS).toContain('settingsTitle')
+  expect(LABEL_KEYS).toContain('tbSettings')
+  expect(LABEL_KEYS).toContain('scSettings')
+  expect(LABEL_KEYS).not.toContain('tbHelp')
+  expect(LABEL_KEYS).not.toContain('helpTitle')
   // the row's minutes unit is office-layout.ts ROW_MINUTES alone: no string of the table carries it (i18n imports no value from the layout)
   expect('rowMinutes' in L).toBe(false)
   expect('rowMinutes' in I18N.en).toBe(false)

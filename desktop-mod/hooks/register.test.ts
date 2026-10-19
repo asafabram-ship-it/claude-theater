@@ -18,7 +18,7 @@ import type { Agent } from './model'
 import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
 import { SEARCH_MAX, chromeRows } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
-import { layoutOffice, type Hit } from './office-layout'
+import { officeModel, type Hit } from './office-layout'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { T0, beneath } from './test-kit'
 
@@ -64,10 +64,10 @@ async function propsOf(ui: Ui): Promise<OfficeProps> {
   return c!.props.props as OfficeProps
 }
 
-/** A left click inside the Client on the layout hit `kind`/`id` (a tile, a room's pin or its ✅ counts), where the module draws it. */
+/** A left click inside the Client on the layout hit `kind`/`id` (a row, a room's pin or its ✅ counts), where the module draws it. */
 async function click(ui: Ui, kind: Hit['kind'], id: string): Promise<void> {
   const p = await propsOf(ui)
-  const hit = layoutOffice(p).hits.find(h => h.kind === kind && h.id === id)
+  const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit).toBeDefined()
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
 }
@@ -182,11 +182,11 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect((await propsOf(ui)).lang).toBe('en')
   expect((await propsOf(ui)).rtl).toBe(false)
   expect((await ui.find({ in: OFFICE_KEY, key: 'lang' }))?.text).toBe('🌐 עברית')
-  expect((await ui.find({ in: OFFICE_KEY, key: 'showDone' }))?.text).toBe('☐ Finished')
+  expect((await ui.find({ in: OFFICE_KEY, key: 'showDone' }))?.text).toBe('☐ Show finished')
   await ui.press({ key: 'help' })
   await ui.key({ in: OFFICE_KEY, key: 'l' })
   expect((await propsOf(ui)).lang).toBe('he')
-  expect((await ui.find({ in: OFFICE_KEY, key: 'showDone' }))?.text).toBe('שסיימו ☐')
+  expect((await ui.find({ in: OFFICE_KEY, key: 'showDone' }))?.text).toBe('הצג שסיימו ☐')
   expect(await writesOf(captured, () => ui.key({ in: OFFICE_KEY, key: 'd' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).demo).toBe(true)
   await ui.key({ in: OFFICE_KEY, key: 'd' })

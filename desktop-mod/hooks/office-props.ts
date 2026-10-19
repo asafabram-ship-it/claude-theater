@@ -25,7 +25,7 @@ import { UNKNOWN_MODEL_PILL, toolFamily } from './office-svg'
 import { personaName } from './personas'
 import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
 
-/** The family colour token of a model id (i18n.ts): office-layout.ts colours the model word by it (MODEL_FG). */
+/** The family token of a model id (i18n.ts): the props carry it beside the model word (the cards colour only the status mark). */
 export { modelFamily } from './i18n'
 
 /** The Client's key and the `ui.message` matcher. */
@@ -130,7 +130,7 @@ const wholeMinutes = (el: number | null): number | null => el === null ? null : 
  * `Elapsed 3′`, office-chrome.ts drawerLines): a key missing here draws as '' on the real mount — office-controls.test.ts
  * reads the chip through the mounted Client, where the fake-surface tests (handed every string) could not see it.
  */
-export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'helpTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scStill', 'scHelp', 'tbDone', 'tbSound', 'tbHelp', 'hbMotion', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dMinutes', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone'] as const
+export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'settingsTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scStill', 'scSettings', 'tbDone', 'tbSound', 'tbSettings', 'hbMotion', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dMinutes', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone'] as const
 
 /**
  * Throws `undefined at <path>` for the first `undefined` anywhere in `v`

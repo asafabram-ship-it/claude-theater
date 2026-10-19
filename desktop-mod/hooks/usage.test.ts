@@ -402,14 +402,16 @@ test('SessionMode: the plugin adds no label there — the terminal and the deskt
 /** What the header helpers need of a mounted pane (structural: the kit's own type is generic over the surface and component). */
 type Mounted = { find: (q: { type: string; text?: RegExp; in?: string }) => Promise<{ text?: string } | undefined>; findAll: (q: { type: string; in?: string }) => Promise<Array<{ text?: string }>> }
 
-/**
- * The office header line the desktop Client drew: the Text (a Text per run, THE HEBREW RULE) holding the 🎭 — the
- * longest one, the line itself rather than its 🎭 run — with its blank cells trimmed. Hebrew (RTL): the parts run from
- * the right edge, so in cell order the meter comes first and the 🎭 last.
- */
+/** The office header's counts the desktop Client drew: one Text holding the 🎭 (the cards' header, office-client.tsx). */
 async function officeHeader(ui: Mounted): Promise<string> {
-  const lines = (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).map(t => t.text ?? '').filter(t => t.includes('🎭'))
-  return lines.sort((a, b) => b.length - a.length)[0]?.trim() ?? ''
+  return (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).map(t => t.text ?? '').find(t => t.includes('🎭'))?.trim() ?? ''
+}
+
+/** The office header's meter: the one Text of the Client naming the five-hour window ('' when none is drawn). */
+async function officeMeter(ui: Mounted): Promise<string> {
+  const meters = (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).map(t => t.text ?? '').filter(t => /5h/.test(t))
+  expect(meters.length).toBeLessThanOrEqual(1)
+  return meters[0]?.trim() ?? ''
 }
 
 /** The text-card header's counts line (`🟢 0 … · ✅ 0 …`, or `🟢0 ✅0` when narrow). */
@@ -431,30 +433,30 @@ test('desktop header: the Client gets the reading; a wide pane draws the full la
   await clock.advance(POLL_MS)
   const R = local(15, 45)
   const wide = await $.ui.mount(PANE) // bodyColumns 90
-  expect(await officeHeader(wide)).toMatch(/ 0 🟢 🎭$/)
-  expect(await officeHeader(wide)).not.toContain('5h')
+  expect(await officeHeader(wide)).toBe('🎭 עובדים 0 · סיימו 0')   // the counts in words, one Text (the cards' header)
+  expect(await officeMeter(wide)).toBe('')
   await measure($, limits(42, R))
   expect((await usageProp(wide))?.pct).toBe(42)
   const label = usageLabel({ pct: 42, resetsAt: R }, 'he', 0)
   expect(label).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42% · 15:45')
-  expect((await officeHeader(wide)).slice(0, label.length + 3)).toBe(`${label} · `)
+  expect(await officeMeter(wide)).toBe(label)   // the meter a dim Text of its own at the other edge
+  expect(await officeHeader(wide)).toBe('🎭 עובדים 0 · סיימו 0')
   await measure($, limits(85, R))
-  expect(await officeHeader(wide)).toMatch(/^⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 15:45 · /)
-  expect(await officeHeader(wide)).not.toMatch(NO_BIDI)
+  expect(await officeMeter(wide)).toBe('⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 15:45')
+  expect(await officeMeter(wide)).not.toMatch(NO_BIDI)
   await measure($, [])
-  expect(await officeHeader(wide)).not.toContain('5h')
+  expect(await officeMeter(wide)).toBe('')
   await wide.unmount()
   // narrow (under COMPACT_BELOW = 60): the short form, no bar, no clock
   const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 45 } })
-  expect(await officeHeader(narrow)).not.toContain('5h')
+  expect(await officeMeter(narrow)).toBe('')
   await measure($, limits(42, R))
   expect((await usageProp(narrow))?.pct).toBe(42)
-  expect(await officeHeader(narrow)).toMatch(/^⏳ 5h 42% · /)
-  expect(await officeHeader(narrow)).not.toContain('▰')
+  expect(await officeMeter(narrow)).toBe('⏳ 5h 42%')
   await measure($, limits(97, R))
-  expect(await officeHeader(narrow)).toMatch(/^⚠ 5h 97% · /)
+  expect(await officeMeter(narrow)).toBe('⚠ 5h 97%')
   await measure($, [])
-  expect(await officeHeader(narrow)).not.toContain('5h')
+  expect(await officeMeter(narrow)).toBe('')
   await narrow.unmount()
 })
 

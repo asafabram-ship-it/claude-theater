@@ -1,12 +1,21 @@
 # Office pane as framed cards — design (2026-10-19)
 
-Status: approved by Asaf live (cards probe round 4: "עכשיו זה נראה אחלה"). Replaces the cell-grid drawing of the agent rows (Tasks 2.8a/2.8b). Branch `feat/desktop-mod`.
+Status: approved by Asaf live (cards probe round 4: "עכשיו זה נראה אחלה"; rounds 5-7 refined it the same day — the reference file is round 7). Replaces the cell-grid drawing of the agent rows (Tasks 2.8a/2.8b). Branch `feat/desktop-mod`.
 
 ## Why (root cause of "messy" after four rounds)
 The office Client drew every row as cells padded with spaces, assuming every glyph is one cell of a monospace font. The desktop draws Text in a proportional UI font, so the columns never lined up. A probe with fixed cell widths (round 2-3) aligned the columns but CLIPPED the text: the desktop draws its letters wider than the cell metric (`Sonnet` → `nnet`, `חושב` cut vertically). Round 4 — column-major layout, each field a vertical Box sized by its widest value — aligned, unclipped, and approved.
 
 ## Reference
-`docs/research/2026-10-19-cards-probe/register.tsx` is the approved drawing (round 4). Copy its structure and styling; the strings in it (e.g. `${emoji} ${name}`, `🤔 חושב`, toolbar `שסיימו ☐`) were seen correct on the desktop as written — do not re-derive their order with the old LTR-paragraph model (screenshots show the desktop lays a Hebrew-first Text right-to-left).
+`docs/research/2026-10-19-cards-probe/register.tsx` is the approved drawing (round 7). Copy its structure and styling; the strings in it (e.g. `${emoji} ${name}`, `🤔 חושב`, toolbar `שסיימו ☐`) were seen correct on the desktop as written — do not re-derive their order with the old LTR-paragraph model (screenshots show the desktop lays a Hebrew-first Text right-to-left).
+
+## Refinements from rounds 5-7 (Asaf, 19.10) — these override anything below
+1. **No selection background** (the dark band is gone). The open drawer shows which agent is selected; keyboard focus may show a small `›` marker beside the dot, nothing more.
+2. **Every column is rigid and content-sized** (`flexShrink 0`): a shrinking activity column collapsed to nothing on the desktop. If the table cannot fit the pane, drop the activity WORD (keep its emoji) below a width threshold the implementer derives conservatively (the desktop draws letters wider than a cell; round 6 fit at 51 columns with 4 columns), never clip.
+3. **Card title on one line:** a height-1 Box with `overflow hidden`, the title cut on a word with `…` by a conservative estimate (`max(8, floor((columns − 18) × 0.7))` characters in the probe), the counts never wrap (`flexShrink 0`).
+4. **Cell padding on the reading side only** (`paddingLeft 1` in RTL), so the columns sit closer.
+5. **NO time column** in the rows (reverses decision 16 for the desktop office): how long an agent has worked is in the drawer only (`זמן N דק׳` / `משך N דק׳`).
+6. **Badges ride the status column** instead of the dot: ⭐ during the just-finished window, ❌ failed, ⏰ long-running; otherwise ● green running / ● amber stale / ○ grey done.
+7. **Toolbar names:** `הצג שסיימו ☐` (☑ when on; EN `Show finished`), `צליל 🔔` (🔕), and `הגדרות ⚙️` (EN `Settings`) replacing `עזרה ?`. The popover it opens is titled `הגדרות` and holds language, demo, motion and the keyboard shortcuts.
 
 ## Drawing (desktop office Client only; terminal/vscode/mobile text cards unchanged)
 - Header line: `🎭 עובדים N · ממתינים N · סיימו N` (bold) at the reading edge, the 5h meter dim at the other edge.

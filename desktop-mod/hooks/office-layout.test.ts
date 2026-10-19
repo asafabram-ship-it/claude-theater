@@ -99,14 +99,20 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 40, counts)).toBe('בדיקת תיאטרון…')
   expect(cutTitle('תיאטרון הסוכנים', 51, counts)).toBe('תיאטרון הסוכנים')
   expect(cutTitle('abcdefghijklmnopqrstuvwxyz', 24, counts)).toBe('abcdefg…')   // the floor of 8
+  // the sweep: a title one cell longer than the widest room of the sweep (200 columns, unpinned: 181 → 135 cells), so every
+  // cut drops something and carries the …; each (columns, pinned) cut once, its width reused for the pinned-vs-unpinned check
+  const countsWidth = textWidth(counts)
+  const long = 'x'.repeat(fitCells(200 - CARD_FRAME - 2 - countsWidth - TITLE_GAP) + 1)
   for (let columns = 24; columns <= 200; columns++) {
-    for (const pinned of [false, true]) {
-      const t = cutTitle('x'.repeat(300), columns, counts, pinned)
-      expect(textWidth(t), `${columns}: ${t}`).toBeLessThanOrEqual(Math.max(8, fitCells(columns - CARD_FRAME - 2 - (pinned ? EMOJI_CELLS + TITLE_GAP : 0) - textWidth(counts) - TITLE_GAP)))
-      expect(t.endsWith('…'), `${columns}: ${t}`).toBe(true)
-    }
+    const widths = [false, true].map(pinned => {
+      const t = cutTitle(long, columns, counts, pinned)
+      const w = textWidth(t)
+      expect(w, `${columns}${pinned ? ' pinned' : ''}: ${t}`).toBeLessThanOrEqual(Math.max(8, fitCells(columns - CARD_FRAME - 2 - (pinned ? EMOJI_CELLS + TITLE_GAP : 0) - countsWidth - TITLE_GAP)))
+      expect(t.endsWith('…'), `${columns}${pinned ? ' pinned' : ''}: ${t}`).toBe(true)
+      return w
+    })
     // a pinned title is never longer than the unpinned one
-    expect(textWidth(cutTitle('x'.repeat(300), columns, counts, true))).toBeLessThanOrEqual(textWidth(cutTitle('x'.repeat(300), columns, counts)))
+    expect(widths[1], `${columns}`).toBeLessThanOrEqual(widths[0]!)
   }
   // the counts' zone (the room's ✅ toggle), from the far edge: the border and the paddings, then the counts as the desktop draws
   // them — wider than their cells, by FIT (11 cells → 15) — never into the pin zone

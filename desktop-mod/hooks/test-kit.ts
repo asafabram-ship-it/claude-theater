@@ -28,7 +28,10 @@ export type Writes = { payload: number; scanError: number; view: number; tick: n
 
 export function beneath(on: On, current: () => Agent[], store: Record<string, unknown> = {}, files?: MemFiles) {
   const captured = {
-    toasts: [] as string[], plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown>,
+    toasts: [] as string[],
+    /** The `timeoutMs` each toast asked for, in the toasts' order (undefined: the engine's default). */
+    toastTimeouts: [] as Array<number | undefined>,
+    plays: 0, opens: [] as string[], store: { ...store } as Record<string, unknown>,
     /** $.state writes seen beneath the plugin, by key (the flicker guard's budget; one atom per message). */
     writes: { payload: 0, scanError: 0, view: 0, tick: 0, prefs: 0 } as Writes,
     /** $.store writes seen beneath the plugin, by key (the housekeeping's budget: the prefs mirror, roomDone). */
@@ -129,7 +132,7 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
     return { value: f.text }
   })
   on('fs.write', ($, e, next) => { captured.fsWrites += 1; return next(e) })
-  on('ui.toast', ($, e) => { captured.toasts.push(e.text); return { value: undefined } })
+  on('ui.toast', ($, e) => { captured.toasts.push(e.text); captured.toastTimeouts.push(e.timeoutMs); return { value: undefined } })
   on('audio.play', () => { captured.plays += 1; return { value: undefined } })
   on('ui.open', ($, e) => { captured.opens.push(e.title ?? e.id); captured.seq.push('open'); return { value: { isPlaced: true as const } } })
   // the pane is up: the poll scans only while $.ui.panes() lists it shown (PAGE polled only while visible); `paneOpen` false: closed

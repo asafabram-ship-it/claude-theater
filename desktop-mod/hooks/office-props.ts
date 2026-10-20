@@ -26,7 +26,7 @@ import type { Agent, Payload, Prefs, View } from './model'
 import { ACT_MAX, NAME_MAX, cut, cutTask } from './office-layout'
 import { UNKNOWN_MODEL_PILL } from './office-svg'
 import { personaName } from './personas'
-import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
+import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone, roomTitle } from './ui'
 
 /** The Client's key and the `ui.message` matcher. */
 export const OFFICE_KEY = 'office'
@@ -134,7 +134,7 @@ const wholeMinutes = (el: number | null): number | null => el === null ? null : 
  * `Elapsed 3′`, office-chrome.ts drawerLines): a key missing here draws as '' on the real mount — office-controls.test.ts
  * reads the chip through the mounted Client, where the fake-surface tests (handed every string) could not see it.
  */
-export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'settingsTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scStill', 'scSettings', 'tbDone', 'tbSound', 'tbSettings', 'hbMotion', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dMinutes', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone'] as const
+export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'settingsTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scStill', 'scSettings', 'tbDone', 'tbSound', 'tbSettings', 'hbMotion', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dMinutes', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone', 'demoNote', 'demoNoteMid', 'demoNoteShort', 'demoExit'] as const
 
 /**
  * Throws `undefined at <path>` for the first `undefined` anywhere in `v`
@@ -162,7 +162,8 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const L = I18N[lang]
   const rtl = dirOf(lang) === 'rtl'
   const office = effectivePayload(input.payload, view, now)
-  const showDone = view.demo || prefs.showDone
+  // (the demo's cast obeys the pref as the office does: live check 5 — the demo once forced it on, so the toggle did nothing)
+  const showDone = prefs.showDone
   const stars = office.stars
   /** The ⭐ stamp of a finished agent while it is alive (inside the just-finished window), else 0. */
   const starOf = (a: Agent): number => {
@@ -215,7 +216,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
       const shows = roomShowsDone(roomDone, showDone, s)
       const more = moreDone.get(s) ?? 0
       outRooms.push({
-        id: s, title: cut(st?.topic || st?.label || s.slice(0, 8), TITLE_MAX), small: st?.topic ? st.label : (st?.sid ?? s.slice(0, 8)),
+        id: s, title: cut(roomTitle(st, s), TITLE_MAX), small: st?.topic ? st.label : (st?.sid ?? s.slice(0, 8)),
         pinned: prefs.pins.includes(s), showDone: shows,
         run: st?.running ?? 0, stale: st?.stale ?? 0, done: st?.done ?? 0,
         agents, moreDone: more,

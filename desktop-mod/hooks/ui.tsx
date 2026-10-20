@@ -85,8 +85,9 @@
 // never see its own $.state.set, a render may toast and play audio, a render
 // may NOT write state. As in PAGE the beat fires only for an agent the office
 // shows (its room shows finished, it matches the search, its chat is open) —
-// the poll asks officeView exactly as this render does — which is why demo
-// mode forces "show finished" on without persisting it.
+// the poll asks officeView exactly as this render does. The demo's cast obeys
+// "show finished" and the rooms' toggles as the office does (live check 5: the
+// demo once forced it on, and the toggle seemed broken) and is never toasted.
 //
 // Demo mode (PAGE ?demo=1): `view.demo` → the pane draws scanner's
 // demoPayload(now), the ONE port of Python demo_payload (the poll publishes the
@@ -117,7 +118,7 @@ import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
 // count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
-import { rowCount } from './office-layout'
+import { cutWords, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import { personaName } from './personas'
 import { demoPayload } from './scanner'
@@ -401,6 +402,28 @@ export function cardName(a: Agent, lang: Lang): string {
   return a.role || personaName(a.persona_id, lang)
 }
 
+/** A room's title as the office draws it, before any cut: the lead's topic, else the project's folder, else the session id's head. */
+export function roomTitle(st: RoomStat | undefined, session: string): string {
+  return st?.topic || st?.label || session.slice(0, 8)
+}
+
+/** THE FINISH TOAST's stay (live check 5): short — it names who finished and where; the ⭐ stays on the row. */
+export const FINISH_TOAST_MS = 1500
+/** The room's title in the finish toast, in cells: cut on a word (office-layout.ts cutWords). */
+export const TOAST_TITLE_MAX = 30
+
+/**
+ * THE FINISH TOAST (live check 5): `✅ <persona> סיים · <room title>` / `✅ <persona> finished · <title>` — the persona's
+ * name, as the row draws it (never the Agent call's description), then the conversation it finished in, its title (roomTitle)
+ * cut on a word to TOAST_TITLE_MAX cells; without a title the name and the word alone. The poll toasts it for FINISH_TOAST_MS
+ * (register.tsx), only for a finish the office shows and never for the demo's cast.
+ */
+export function finishToast(a: Agent, title: string, lang: Lang): string {
+  const head = `✅ ${personaName(a.persona_id, lang)} ${I18N[lang].finishedToast}`
+  const t = title.trim()
+  return t ? `${head} · ${cutWords(t, TOAST_TITLE_MAX)}` : head
+}
+
 /** The lead's chat marker: on the lead card's FIRST line only (before the avatar), never elsewhere, never alone. */
 export const LEAD_MARK = '💬'
 
@@ -563,7 +586,7 @@ async function setLang($: EngineInterface, lang: Lang): Promise<void> {
   await $.ui.open({ id: PANE_ID, title: paneTitle(lang, workingCount(payload)) }).catch(() => undefined)
 }
 
-/** PAGE setDemo(): toggles the demo; "show finished" is forced on by effect, never persisted. */
+/** PAGE setDemo(): toggles the demo (its cast obeys "show finished" as the office does: live check 5). */
 async function setDemo($: EngineInterface, on: boolean): Promise<void> {
   await update($, viewAtom, v => ({ ...v, demo: on, selected: null, focusIndex: -1 }))
 }
@@ -621,7 +644,7 @@ async function officeOrder($: EngineInterface): Promise<Agent[]> {
   const roomDone = await loadRoomDone($)
   const now = await $.clock.now().catch(() => payload.scanned_ms)
   const office = effectivePayload(payload, view, now)
-  return officeView(office.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins).order
+  return officeView(office.agents, view.search, prefs.lang, prefs.showDone, roomDone, prefs.pins).order
 }
 
 /**
@@ -686,8 +709,7 @@ async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<vo
     case 'roomDone': {
       if (typeof m.room !== 'string') return
       const prefs = await read($, prefsAtom)
-      const view = await read($, viewAtom)
-      await saveRoomDone($, toggledRoomDone(await loadRoomDone($), view.demo || prefs.showDone, m.room))
+      await saveRoomDone($, toggledRoomDone(await loadRoomDone($), prefs.showDone, m.room))
       requestRedraw($)
       return
     }
@@ -764,7 +786,7 @@ export function registerUi(on: On): void {
     const compact = width < COMPACT_BELOW
     const { perRow, cardW } = gridFor(width)
     const innerW = cardW - 2 // the status mark + its space
-    const showDone = view.demo || prefs.showDone
+    const showDone = prefs.showDone
     const q = view.search
     const { rooms, stat, order } = officeView(all, q, lang, showDone, roomDone, prefs.pins)
     // the ⭐ as the poll published them (the finish beat is the poll's; a render only draws)
@@ -957,7 +979,7 @@ export function registerUi(on: On): void {
     // --- rooms (PAGE ensureRoom + the room header): one line each ---
     const roomBoxes = rooms.map(s => {
       const st = stat.get(s)
-      const title = st?.topic || st?.label || s.slice(0, 8)
+      const title = roomTitle(st, s)
       const small = st?.topic ? st.label : (st?.sid ?? s.slice(0, 8))
       const pinOn = prefs.pins.includes(s)
       const showing = roomShowsDone(roomDone, showDone, s)

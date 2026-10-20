@@ -178,8 +178,10 @@ export function cutTask(s: string): string {
 }
 
 /**
- * `s` cut to at most `max` cells on a word boundary when one lies past the middle (the probe's title cut), the ellipsis
- * trailing: `Plan the static-registry move…`. A text that fits is returned as it is.
+ * `s` cut to at most `max` cells on a word boundary (the probe's title cut), the ellipsis trailing: `Plan the static-registry
+ * move…` — while the whole words keep at least two thirds of the `max` cells; when the last space lies earlier than that (a
+ * long word at the cut: `Plan the static…` where `Plan the static-registry…` would fit) the cut falls inside the word
+ * instead, with the ellipsis (live check 5). A text that fits is returned as it is.
  */
 export function cutWords(s: string, max: number): string {
   if (textWidth(s) <= max) return s
@@ -188,18 +190,59 @@ export function cutWords(s: string, max: number): string {
   const next = s.slice(head.length, head.length + 1)
   if (head.endsWith(' ') || next === ' ') return `${head.trimEnd()}${ELLIPSIS}`
   const sp = head.lastIndexOf(' ')
-  return `${(sp > max / 2 ? head.slice(0, sp) : head).trimEnd()}${ELLIPSIS}`
+  const words = sp > 0 ? head.slice(0, sp).trimEnd() : ''
+  return `${(words !== '' && 3 * textWidth(words) >= 2 * max ? words : head).trimEnd()}${ELLIPSIS}`
 }
 
+/** The no-break hyphen (U+2011, line-break class GL): what a hyphen or a dash of a one-line value becomes (nb). Escaped, as NBSP is. */
+export const NBHY = '\u{2011}'
+/** The division slash (U+2215, line-break class AL): what a slash of a one-line value becomes (nb). Escaped, as NBSP is. */
+export const NBSLASH = '\u{2215}'
+/** The no-break spaces (U+00A0, U+2007, U+202F: line-break class GL), which no line is broken at. */
+const NO_BREAK_SPACES: ReadonlySet<string> = new Set([NBSP, '\u{2007}', '\u{202F}'])
+/** The em dash (UAX #14 class B2: a break before and after it, but not beside a no-break space or another em dash). */
+const EM_DASH = '\u{2014}'
+/** The spaces a line may break at or after (UAX #14 SP and the BA spaces): the tab and every space separator but the no-break ones. */
+const BREAK_SPACE_RE = /(?![\u{A0}\u{2007}\u{202F}])[\t\p{Zs}]/gu
+/** The invisible break opportunities: the zero-width space (class ZW) and the soft hyphen (BA) — both Cf, never drawn: removed. */
+const INVISIBLE_BREAK_RE = /[\u{200B}\u{AD}]/gu
 /**
- * THE ONE-LINE VALUE (round 9): `s` with every plain space a no-break space, so a Text drawn from it can never wrap — a
- * value a little too long for its column is clipped at the card's edge instead of breaking onto a second line (the desktop
- * does not enforce `wrap: 'truncate'`; a wrapped line would shift every line of the line map under it). Every one-line
- * value of a card goes through it: the who, the model, the activity word, the task, the title, the counts, the more line —
- * and the settings' shortcut table (office-client.tsx). The width is the same (a no-break space is one cell).
+ * The visible marks a line may break after (UAX #14, as the desktop's line breaker applies it), once the spaces are no-break
+ * spaces: a hyphen-minus (HY) unless a digit follows (`HY × NU`: `3-4`, `-5` hold, and the number keeps its bidi run), the
+ * hyphen U+2010 and the figure and en dashes U+2012 / U+2013 (BA: even before a no-break space) unless they end the value,
+ * the em dash (B2; nb keeps one flanked by no-break spaces, which holds), and a slash (SY) unless a digit, a no-break space or
+ * the end follows (`SY × NU`, `SY × GL`).
+ */
+const BREAK_MARK_RE = /-(?!\p{Nd})|[\u{2010}\u{2012}\u{2013}](?!$)|\u{2014}|\/(?![\p{Nd}\u{A0}\u{2007}\u{202F}]|$)/gu
+/** Anything nb rewrites but a plain space (a breaking space other than U+0020, an invisible break, a hyphen, a dash, a slash): nb's fast path checks for it. */
+const NB_WORK_RE = /[-/\t\u{AD}\u{1680}\u{2000}-\u{200B}\u{2010}-\u{2014}\u{205F}\u{3000}]/u
+
+/**
+ * THE ONE-LINE VALUE (round 9; live check 5): `s` with no line-break opportunity left among its spaces, hyphens, dashes and
+ * slashes, so a Text drawn from it can never wrap — a value a little too long for its column is clipped at the card's edge
+ * instead of breaking onto a second line (the desktop does not enforce `wrap: 'truncate'`; a wrapped line would shift every
+ * line of the line map under it — Asaf's screenshot of 20.10: a title broke at its hyphen, `Plan the static-` over
+ * `registry…`, although its spaces were no-break). So: every space a no-break space (U+00A0); a hyphen-minus or a hyphen, a
+ * figure or en dash, an em dash between letters a no-break hyphen (U+2011: the same bidi class as the dashes, ON — a
+ * hyphen-minus before a digit is kept, as a number range or a sign needs its own class to stay one run in a Hebrew line);
+ * a slash before a letter the division slash (U+2215: ON, as `/` is between letters); the zero-width space and the soft
+ * hyphen removed. No character it writes is a control or a format character (office-chrome.ts REFUSED_RE, cleanAgentText:
+ * office-layout.test.ts checks both). Every one-line value of a card goes through it: the who, the model, the activity
+ * word, the task, the title, the counts, the more line — and the settings' shortcut table and the demo line
+ * (office-client.tsx). The width is the same (each replacement one cell; only the invisible two leave). Idempotent.
  */
 export function nb(s: string): string {
-  return s.replace(/ /g, NBSP)
+  // the fast path: most values hold nothing but plain spaces to rewrite (a room's rows are rebuilt on every width change)
+  if (!NB_WORK_RE.test(s)) return s.replace(/ /g, NBSP)
+  const spaced = s.replace(INVISIBLE_BREAK_RE, '').replace(BREAK_SPACE_RE, NBSP)
+  return spaced.replace(BREAK_MARK_RE, (m: string, at: number, all: string) => {
+    if (m === '/') return NBSLASH
+    if (m === EM_DASH) {
+      const holds = (c: string | undefined) => c === undefined || c === EM_DASH || NO_BREAK_SPACES.has(c)
+      return holds(all[at - 1]) && holds(all[at + 1]) ? m : NBHY
+    }
+    return NBHY
+  })
 }
 
 /**
@@ -300,12 +343,32 @@ export function countsFor(room: Pick<OfficeRoom, 'run' | 'stale' | 'done'>, geo:
   return forms[2]!
 }
 
+/** A Latin letter (latinDominant counts them against the Hebrew ones). */
+const LATIN_RE = /\p{Script=Latin}/u
+
+/** Whether `s` holds more Latin letters than Hebrew ones: a Latin-dominant title (cutTitle cuts it by FIT). */
+export function latinDominant(s: string): boolean {
+  let latin = 0
+  let hebrew = 0
+  for (const ch of s) {
+    if (LATIN_RE.test(ch)) latin++
+    else if (HEBREW_RE.test(ch)) hebrew++
+  }
+  return latin > hebrew
+}
+
 /**
- * The title line's text: the room's title cut on a word with a trailing … (the probe's cut) to what the line leaves it
- * beside the counts — and beside the 📌 and its gap when the room is pinned — by LINE_FIT; never under 8 cells.
+ * The title line's text: the room's title cut on a word with a trailing … (the probe's cut; cutWords) to what the line
+ * leaves it beside the counts — and beside the 📌 and its gap when the room is pinned — by LINE_FIT; a Latin-dominant title
+ * by FIT (live check 5: LINE_FIT was calibrated on the header's bold Hebrew, digits and emoji — round 7 — and BOLD LATIN
+ * draws wider per cell: measured at 14 px, a bold Latin title takes 4-12% more pixels a cell than the header's text in
+ * Segoe UI and 10-18% in Arial (capitals the most), so LINE_FIT's 0.83 is 0.70-0.80 for it there: FIT's 0.75 makes a clip at
+ * the edge the exception, as the title broken over two clipped lines in Asaf's screenshot of 20.10 showed it was not); never
+ * under 8 cells. (A Hebrew title keeps LINE_FIT: round 9 drew it whole on the desktop.)
  */
 export function cutTitle(title: string, geo: Geo, counts: string, pinned = false): string {
-  return cutWords(title, Math.max(8, fitLine(titleRoom(geo, counts, pinned))))
+  const room = titleRoom(geo, counts, pinned)
+  return cutWords(title, Math.max(8, latinDominant(title) ? fitCells(room) : fitLine(room)))
 }
 
 // ---------------------------------------------------------------------------

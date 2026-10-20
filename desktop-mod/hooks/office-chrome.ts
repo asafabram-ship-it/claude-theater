@@ -19,7 +19,8 @@ import type { OfficeDrawer, OfficeProps } from './office-props'
 /**
  * The chrome rows always there, by the width (the probe's rounds 8-9): the header and a blank line, the toolbar and a blank
  * line — 4 rows — and, under ONE_LINE_FROM columns while the search field is drawn, the search line with a blank line above
- * it: 6. From ONE_LINE_FROM the search shares the toolbar's line. (`fixedRows`; the overlay and the footer come on top.)
+ * it: 6. From ONE_LINE_FROM the search shares the toolbar's line. (`fixedRows`; the demo line, the overlay and the footer
+ * come on top.)
  */
 export const CHROME_ROWS_MIN = 4
 export const CHROME_ROWS_SEARCH = 6
@@ -87,9 +88,34 @@ export function searchShown(p: Pick<OfficeProps, 'rooms' | 'search'>, typed = ''
   return shownAgents(p) > SEARCH_FROM || p.search !== '' || typed !== ''
 }
 
-/** The chrome rows always there at this width and office: 4, or 6 with the search on its own line (under ONE_LINE_FROM). */
-export function fixedRows(p: Pick<OfficeProps, 'rooms' | 'search' | 'columns'>, typed = ''): number {
-  return searchShown(p, typed) && !geometry(p.columns).oneLine ? CHROME_ROWS_SEARCH : CHROME_ROWS_MIN
+/**
+ * THE DEMO LINE (live check 5: Asaf watched the demo's agents without knowing they were the demo's): while the demo runs
+ * (`p.demo`) the chrome holds one more line, the first under the header — the note (`🎬 זו הדגמה - הסוכנים לא אמיתיים`) and
+ * its exit Button — the header's blank line moving under it. Counted here, so the hooks' height and the module's line map agree.
+ */
+export const DEMO_ROWS = 1
+/** The cells kept between the demo line's note and its exit Button when the ladder measures them (the line's own gap, with a cell to spare). */
+export const DEMO_GAP = 2
+
+/**
+ * The demo line's texts at `p.columns`: the longest note (i18n demoNote, demoNoteMid, demoNoteShort, the 🎬 leading — the
+ * header's way: a Hebrew-first Text is laid right to left, so the 🎬 is read first) that fits beside the exit Button's word
+ * by LINE_FIT (the chrome's ladder: never a cut word), else beside its ✕ alone, else the 🎬 alone with the ✕.
+ */
+export function demoLine(p: Pick<OfficeProps, 'labels' | 'columns'>): { note: string; exit: string } {
+  const L = geometry(p.columns).L
+  const notes = [p.labels.demoNote, p.labels.demoNoteMid, p.labels.demoNoteShort].filter((n): n is string => !!n).map(n => `🎬 ${n}`)
+  for (const exit of [p.labels.demoExit ?? '', '✕']) {
+    if (!exit) continue
+    const note = notes.find(n => textWidth(n) + DEMO_GAP + textWidth(exit) <= L)
+    if (note !== undefined) return { note, exit }
+  }
+  return { note: '🎬', exit: '✕' }
+}
+
+/** The chrome rows always there at this width and office: 4, or 6 with the search on its own line (under ONE_LINE_FROM) — and DEMO_ROWS more while the demo runs. */
+export function fixedRows(p: Pick<OfficeProps, 'rooms' | 'search' | 'columns' | 'demo'>, typed = ''): number {
+  return (searchShown(p, typed) && !geometry(p.columns).oneLine ? CHROME_ROWS_SEARCH : CHROME_ROWS_MIN) + (p.demo ? DEMO_ROWS : 0)
 }
 
 /** Whether `labels`, `gap` cells apart, fit in `width` cells by LINE_FIT (the desktop draws letters wider than a cell): the toolbar and the settings' Buttons row draw their words only then, else their icons alone. */

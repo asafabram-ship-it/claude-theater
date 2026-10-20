@@ -19,7 +19,7 @@ import { demoPayload } from './scanner'
 import {
   CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, emptyKind, fmt, gridFor,
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
-  minuteClock, renderKey, starsOf,
+  minuteClock, renderKey, starsOf, FINISH_TOAST_MS, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
 import { REFUSED_RE, chromeRows, emptyLines, fixedRows, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
@@ -157,6 +157,22 @@ test('starsOf (the finish beat\'s ⭐ stamps): fires once, never on first sight,
   expect(starsOf(prev2, [done], {}, T0)).toEqual({ a: T0 })
   expect(prev2.gone).toBeUndefined() // pruned to the office's ids
   expect(starsOf(prev2, [done], { a: T0 }, T0 + 1)).toEqual({ a: T0 })
+})
+
+test('THE FINISH TOAST (live check 5): `✅ <persona> סיים · <room title>` / `✅ <persona> finished · <title>` — the persona\'s name (never the Agent call\'s description), the room\'s title as the office draws it (roomTitle: the topic, else the project, else the session\'s head) cut on a word to TOAST_TITLE_MAX cells; no title, no separator; FINISH_TOAST_MS short', () => {
+  expect([FINISH_TOAST_MS, TOAST_TITLE_MAX]).toEqual([1500, 30])
+  const a = agent({ id: 'x', persona_id: 0, role: 'summarize the security review' })
+  expect(finishToast(a, 'Ship the v2 config migration.', 'he')).toBe('✅ הבלש סיים · Ship the v2 config migration.')
+  expect(finishToast(a, 'Ship the v2 config migration.', 'en')).toBe('✅ The Detective finished · Ship the v2 config migration.')
+  expect(finishToast(a, 'Plan the static-registry move and the v2 config rollout', 'en')).toBe('✅ The Detective finished · Plan the static-registry move…')
+  expect(finishToast(a, 'בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 'he')).toBe('✅ הבלש סיים · בדיקת תיאטרון הסוכנים בשיחה…')
+  expect(finishToast(a, '', 'he')).toBe('✅ הבלש סיים')
+  expect(finishToast(a, '   ', 'en')).toBe('✅ The Detective finished')
+  // the title as the card draws it: the lead's topic, else the project's folder, else the session id's head
+  const stat = roomStats(fixture())
+  expect(roomTitle(stat.get(SA), SA)).toBe('Ship the v2 config migration.')
+  expect(roomTitle(stat.get(SB), SB)).toBe('research')
+  expect(roomTitle(undefined, 'sess-zzzz-9999')).toBe('sess-zzz')
 })
 
 test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop, two rooms led by their topics, distinct personas, sorted running/stale/done', () => {
@@ -401,7 +417,9 @@ test('the office draws rooms, cards and counts on every text surface (the footer
   }
 })
 
-test('the pane fits narrow, medium and wide bodies: cards, keys, the compact header/toolbar and the 🧠 model tag', async ($, on) => {
+// (mounts at three widths through the kit: past the 5 s default under a full suite on a loaded machine with no code change — 5.08 s on
+// 20.10 at 90% CPU — the budget is load headroom)
+test('the pane fits narrow, medium and wide bodies: cards, keys, the compact header/toolbar and the 🧠 model tag', { timeoutMs: 30_000 }, async ($, on) => {
   const agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
@@ -552,7 +570,10 @@ test('the finish beat (the poll\'s, over the scanned office): a shown agent that
   await clock.advance(SETTLE_MS)
   const q1 = captured.payload?.agents.find(a => a.id === 'q1')
   expect(q1?.status).toBe('done')
-  expect(captured.toasts).toEqual(['הבלש — סיים']) // q1 has no Agent-call description: the card's name is its persona's (הבלש, persona 0)
+  // THE FINISH TOAST (live check 5): the persona, the word, the room's title; a short stay (the ⭐ stays on the row)
+  expect(captured.toasts).toEqual(['✅ הבלש סיים · Quiet office test.']) // q1's persona (הבלש, persona 0), its room's title
+  expect(captured.toastTimeouts).toEqual([FINISH_TOAST_MS])
+  expect(FINISH_TOAST_MS).toBe(1500)
   expect(captured.plays).toBe(1)
   expect(captured.payload?.stars).toEqual({ q1: clock.now() }) // the ⭐ rides the payload, stamped by the poll's clock
   expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
@@ -574,6 +595,8 @@ test('the finish beat (the poll\'s, over the scanned office): a shown agent that
   finishIn(files, Q2, clock.now(), 'All green.')
   await clock.advance(SETTLE_MS)
   expect(captured.toasts).toHaveLength(2)
+  expect(captured.toasts[1]).toMatch(/^✅ \S+ סיים · Quiet office test\.$/)
+  expect(captured.toastTimeouts).toEqual([FINISH_TOAST_MS, FINISH_TOAST_MS])
   expect(captured.plays).toBe(1)
   const starQ2 = clock.now()
   expect(captured.payload?.stars).toEqual({ q2: starQ2 })
@@ -677,7 +700,9 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
   }
 })
 
-test('THE FLICKER GUARD: polls with no visible change write NO payload / scanError / view and the desktop pane is NOT redrawn; a visible change or a minute\'s turn publishes ONCE; the terminal keeps ticking', async ($, on) => {
+// (polls and redraws through the kit: past the 5 s default under a full suite on a loaded machine with no code change — 5.07 s on
+// 20.10 at 90% CPU — the budget is load headroom)
+test('THE FLICKER GUARD: polls with no visible change write NO payload / scanError / view and the desktop pane is NOT redrawn; a visible change or a minute\'s turn publishes ONCE; the terminal keeps ticking', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, files)
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
@@ -1165,7 +1190,7 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
 })
 
 // (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
-test('demo mode: the empty office offers a demo; it draws the scripted office and plays the finish beat', { timeoutMs: 30_000 }, async ($, on) => {
+test('demo mode: the empty office offers a demo; it draws the scripted office; its cast obeys "show finished" (live check 5: the demo no longer forces it) and its finishes are never toasted — the chime only for a finish the office shows', { timeoutMs: 30_000 }, async ($, on) => {
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'en', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -1177,13 +1202,25 @@ test('demo mode: the empty office offers a demo; it draws the scripted office an
   expect(await ui.find({ type: 'Text', text: /💬 Plan the static-regeneration rollout/ })).toBeDefined()
   expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeDefined()
   expect((await ui.find({ key: 'demo' }))?.text).toMatch(/Exit/)
-  // phase 6 of the loop: the finisher completes on a visible card (demo forces "show finished");
+  // the demo's finished writer is hidden as any finished agent is while "show finished" is off (the demo once forced it on)
+  expect(await ui.find({ key: 'open:demo-writer-ff' })).toBeUndefined()
+  // phase 6 of the loop: the finisher completes — its room hides its finished: no toast, no chime, its card gone;
   // the office redraws on the poll (POLL_MS), so walk one poll past the phase edge
   const toPhase6 = 6000 - (clock.now() % 12000) + 12000
   await clock.advance(toPhase6 + SETTLE_MS)
-  expect(captured.toasts.some(t => t.startsWith('summarize the security review'))).toBe(true)
-  expect(captured.plays).toBeGreaterThanOrEqual(1)
+  expect(captured.payload?.agents.find(a => a.id === 'demo-finisher-gg')?.status).toBe('done')
+  expect(captured.toasts).toEqual([])
+  expect(captured.plays).toBe(0)
+  expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeUndefined()
   expect(await ui.find({ key: 'open:demo-newcomer-hh' })).toBeDefined()
+  // "show finished" on: the demo's finished are drawn, and a later loop's finish is shown — the chime, still no toast (the
+  // finisher finishes every 12 s loop; a finish is celebrated once its last ⭐ left the payload: a poll or a few, a loop or two)
+  await ui.press({ key: 'showDone' })
+  expect(await ui.find({ key: 'open:demo-writer-ff' })).toBeDefined()
+  for (let i = 0; i < 16 && captured.plays === 0; i++) await clock.advance(POLL_MS)
+  expect(captured.toasts).toEqual([])
+  expect(captured.plays).toBeGreaterThanOrEqual(1)
+  expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeDefined()
   // exit restores the real (empty) office AT ONCE, even right after a demo publish: the redraw after the press polls at
   // once (register.tsx's render kick) and that poll publishes the switch whatever SETTLE_MS / CALM_MS say. (The kit keeps
   // a demo publish whole in state, as a live engine does: without the switch publish the demo cast would stay drawn, frozen.)

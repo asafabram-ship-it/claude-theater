@@ -244,7 +244,9 @@ test('ui.message: what is not an office message is ignored — content / pull (d
 /** An engine scroll offset past the tallest Box a surface draws (10,000 rows): the module's spacer for the rows scrolled past fails the surface's validation. */
 const FAULT_OFFSET = 20_000
 
-test('ui.fault on the office: the desktop falls back to the text cards and toasts once; /theater tries the Client again; a second fault toasts again', async ($, on) => {
+// (mounts, faults and redraws through the kit: past the 5 s default under a full suite on a loaded machine with no code change —
+// 5.14 s on 20.10 — the budget is load headroom)
+test('ui.fault on the office: the desktop falls back to the text cards and toasts once; /theater tries the Client again; a second fault toasts again', { timeoutMs: 30_000 }, async ($, on) => {
   const logs: string[] = []
   on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
   const { captured, clock } = beneath(on, () => fixture(), PREFS())
@@ -262,6 +264,7 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   expect(captured.toasts).toHaveLength(1)
   expect(captured.toasts[0]).toMatch(/\/theater/)
   expect(captured.toasts[0]).toMatch(/כרטיסים/) // Hebrew, as the prefs say
+  expect(captured.toastTimeouts).toEqual([undefined]) // its stay the engine's default (live check 5 shortened the finish toast alone)
   expect(logs.filter(l => l.startsWith('office Client failed'))).toHaveLength(1)
   expect(logs.find(l => l.startsWith('office Client failed'))).toMatch(/^office Client failed \(render\): .*height/)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
@@ -286,5 +289,42 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   await ui.redraw({ ...PANE.props })
   await $.command.run(THEATER)
   expect(await ui.find({ type: 'Client' })).toBeDefined()
+  await ui.unmount()
+})
+
+// (mounts and polls through the kit: the budget is load headroom, as the other mounted tests')
+test('THE DEMO\'S EXITS (live check 5): the demo line\'s exit Button posts the demo toggle (one view write); a real subagent starting in this conversation (agent.spawn) while the demo runs turns the demo off — ONE view write, ahead of the spawn\'s own poll, outside the publish path — and the real office is published; a spawn with the demo off writes no view', { timeoutMs: 30_000 }, async ($, on) => {
+  const { captured, clock } = beneath(on, fixture, PREFS())
+  // the engine beneath starts each subagent and names it
+  on('agent.spawn', ($, e) => ({ model: 'haiku', agentId: `live-${e.tool_use_id}` }))
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.resize({ in: OFFICE_KEY, columns: 90, rows: 40 })
+  const spawn = (id: string) => $.agent.spawn({ tool_use_id: id, prompt: 'Read it.', description: `desc ${id}`, subagentType: 'Explore', parentModel: 'opus' } as Parameters<typeof $.agent.spawn>[0])
+  // the demo line: drawn while the demo runs, its Button ends it
+  expect(await ui.find({ in: OFFICE_KEY, key: 'exitDemo' })).toBeUndefined()
+  await ui.key({ in: OFFICE_KEY, key: 'd' })
+  expect((await propsOf(ui)).demo).toBe(true)
+  expect((await ui.find({ in: OFFICE_KEY, key: 'exitDemo' }))?.text).toBe('יציאה')
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^🎬.זו.הדגמה/ })).toBeDefined()
+  expect(await writesOf(captured, () => ui.press({ key: 'exitDemo' }))).toEqual({ view: 1 })
+  expect((await propsOf(ui)).demo).toBe(false)
+  expect(await ui.find({ in: OFFICE_KEY, key: 'exitDemo' })).toBeUndefined()
+  // a subagent starts with the demo off: no view write
+  expect((await writesOf(captured, () => spawn('t1'))).view).toBeUndefined()
+  await clock.advance(POLL_MS)
+  // the demo on again; a real subagent of this conversation starts: the demo goes off at once — one view write
+  await ui.key({ in: OFFICE_KEY, key: 'd' })
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.demo).toBe(true)
+  expect((await writesOf(captured, () => spawn('t2'))).view).toBe(1)
+  expect(captured.view?.demo).toBe(false)
+  expect((await propsOf(ui)).demo).toBe(false)
+  // the switch is published (the render kick's poll): the real office (the kit draws the fixture for it)
+  await clock.advance(POLL_MS)
+  expect(captured.payload?.demo).toBe(false)
+  expect((await propsOf(ui)).rooms.map(r => r.id)).toEqual([SA, SB])
+  expect(captured.toasts).toEqual([])
   await ui.unmount()
 })

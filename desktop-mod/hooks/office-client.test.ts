@@ -10,8 +10,8 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, drawerInner, drawerLimits, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, searchShown, shownAgents, windowOf } from './office-chrome'
-import Office, { FX_BG, FX_DONE_MS, FX_TICK_MS, INPUT_MAX, INPUT_MIN, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, searchShown, shownAgents, windowOf } from './office-chrome'
+import Office, { DEMO_FG, FX_BG, FX_DONE_MS, FX_TICK_MS, INPUT_MAX, INPUT_MIN, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
 import { CARD_BORDER, CENTRE_AT, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PIN, TASK_UNITS, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth } from './office-layout'
 import type { Hit } from './office-layout'
@@ -575,6 +575,84 @@ test('fx: a new ⭐ stamp pulses the finisher\'s row — the four cells tinted, 
   // and back from still, the stamps seen under still start nothing either
   Office(p, f.surface)
   expect(f.timers).toHaveLength(1)
+})
+
+test('THE DEMO LINE (live check 5): while the demo runs, the first line under the header says so — `🎬 זו הדגמה - הסוכנים לא אמיתיים` (amber, one no-break value) at the reading edge, the exit Button (`יציאה` / `Exit demo`, posting the demo toggle) at the other, a blank line under it; the chrome a row taller (DEMO_ROWS), so a click on a row still opens that row; none without the demo', () => {
+  expect(DEMO_ROWS).toBe(1)
+  const f = fake(51, 0)
+  const p = props({ demo: true, columns: 51 })
+  const tree = Office(p, f.surface)
+  // the order: the header (its blank line now under the demo line), the demo line, the toolbar, the card
+  expect(kidsOf(tree).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'demoLine', 'toolbar', 'round'])
+  expect(byKey(tree, 'header')!.props.marginBottom ?? 0).toBe(0)
+  const line = byKey(tree, 'demoLine')!
+  expect(line).toMatchObject({ type: 'Box', props: { flexDirection: 'row-reverse', justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1 } })
+  const [note, exit] = line.children as Node[]
+  expect(note).toMatchObject({ type: 'Text', props: { color: DEMO_FG } })
+  expect(texts(note)).toBe(nb('🎬 זו הדגמה - הסוכנים לא אמיתיים'))
+  expect(texts(note)).not.toMatch(/ |-/)                       // no plain space, no hyphen-minus: the line can never break
+  expect(texts(note)).not.toMatch(REFUSED_RE)
+  expect(hebrewRuleOk(texts(note))).toBe(true)
+  expect(exit).toMatchObject({ type: 'Button', props: { key: 'exitDemo', plain: true, label: 'יציאה' } })
+  expect(exit!.props.hotkey).toBeUndefined()                     // (d is the settings' demo Button's letter)
+  ;(exit!.props.onPress as () => void)()
+  expect(f.posts).toEqual([{ t: 'demo' }])
+  // the chrome: a row taller than without the demo, as the hooks size it (chromeRows) and as drawn
+  expect(chromeOf(tree)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
+  expect(chromeRows(p)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
+  expect(chromeRows({ ...p, demo: false })).toBe(CHROME_ROWS_MIN)
+  expect(fixedRows({ ...p, rooms: [room('A', many())] })).toBe(CHROME_ROWS_SEARCH + DEMO_ROWS)
+  expect(fixedRows({ ...p, rooms: [room('A', many())], columns: ONE_LINE_FROM })).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
+  expect(officeHeight(p, rowCount(p))).toBe(officeHeight({ ...p, demo: false }, rowCount(p)) + DEMO_ROWS)
+  // the hits stay exact: a click on each row's line opens that row (the line map under the taller chrome)
+  const C = chromeRows(p)
+  for (const h of officeModel(p).hits.filter(x => x.kind === 'agent')) {
+    f.pointer({ type: 'down', x: 5, y: C + h.y, button: 'left' })
+    expect(f.posts.at(-1)).toEqual({ t: 'open', id: h.id })
+  }
+  // the demo line and the header are no hit
+  const n = f.posts.length
+  for (const y of [0, 1, 2]) f.pointer({ type: 'down', x: 5, y, button: 'left' })
+  expect(f.posts).toHaveLength(n)
+  // English: `🎬 Demo - these agents are not real` and `Exit demo`, read left to right
+  const en = Office(props({ demo: true, columns: 80, rtl: false, lang: 'en', labels: LABELS_EN }), fake(80).surface)
+  const enLine = byKey(en, 'demoLine')!
+  expect(enLine.props.flexDirection).toBe('row')
+  expect(texts((enLine.children as Node[])[0])).toBe(nb('🎬 Demo - these agents are not real'))
+  expect((enLine.children as Node[])[1]!.props.label).toBe('Exit demo')
+  // no demo: no line, the header keeps its blank line
+  const plain = Office(props({ columns: 51 }), fake(51).surface)
+  expect(byKey(plain, 'demoLine')).toBeUndefined()
+  expect(byKey(plain, 'header')!.props.marginBottom).toBe(1)
+  // the empty office of a search with no match in the demo: the line stays (the chrome counts it either way)
+  const nomatch = props({ demo: true, columns: 80, rooms: [], search: 'zzz', empty: { kind: 'nomatch', msg: LABELS.emptyNoMatch ?? '', sub: '' } })
+  expect(kidsOf(Office(nomatch, fake(80).surface)).map(k => k.props.key)).toEqual(['header', 'demoLine', 'toolbar', 'empty'])
+  expect(chromeRows(nomatch)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
+})
+
+test('THE DEMO LINE\'s ladder (demoLine): the longest note that fits beside the exit Button by LINE_FIT — the whole sentence, then `הדגמה - לא אמיתיים`, then `זו הדגמה` (EN: `Demo - not real`, `Demo`) — the 🎬 leading, the Button\'s word whenever a note fits beside it, else its ✕; never a cut word; a wider pane never shows a shorter note', () => {
+  expect(demoLine(props({ columns: 51 }))).toEqual({ note: '🎬 זו הדגמה - הסוכנים לא אמיתיים', exit: 'יציאה' })
+  // Asaf's pane of ~40 columns: the sentence (32 cells + the gap + the Button's 5) is past LINE_FIT's 33 — the middle note
+  expect(demoLine(props({ columns: 40 }))).toEqual({ note: '🎬 הדגמה - לא אמיתיים', exit: 'יציאה' })
+  expect(demoLine(props({ columns: 24 }))).toEqual({ note: '🎬 זו הדגמה', exit: 'יציאה' })
+  expect(demoLine(props({ columns: 80, lang: 'en', rtl: false, labels: LABELS_EN }))).toEqual({ note: '🎬 Demo - these agents are not real', exit: 'Exit demo' })
+  expect(demoLine(props({ columns: 40, lang: 'en', rtl: false, labels: LABELS_EN }))).toEqual({ note: '🎬 Demo - not real', exit: 'Exit demo' })
+  expect(demoLine(props({ columns: 24, lang: 'en', rtl: false, labels: LABELS_EN }))).toEqual({ note: '🎬 Demo', exit: 'Exit demo' })
+  // under the floor the ✕ alone
+  expect(demoLine(props({ columns: 12 }))).toEqual({ note: '🎬', exit: '✕' })
+  for (const [lang, labels] of [['he', LABELS], ['en', LABELS_EN]] as const) {
+    const forms = [labels.demoNote, labels.demoNoteMid, labels.demoNoteShort].map(s => `🎬 ${s}`)
+    let last = 0
+    for (let columns = 24; columns <= 200; columns++) {
+      const d = demoLine(props({ columns, lang, labels }))
+      expect(forms, `${lang} ${columns}`).toContain(d.note)
+      expect(d.exit, `${lang} ${columns}`).toBe(labels.demoExit)
+      expect(textWidth(d.note) + DEMO_GAP + textWidth(d.exit), `${lang} ${columns}`).toBeLessThanOrEqual(geometry(columns).L)
+      expect(textWidth(d.note), `${lang} ${columns}`).toBeGreaterThanOrEqual(last)
+      last = textWidth(d.note)
+      if (lang === 'he') { expect(hebrewRuleOk(d.note)).toBe(true); expect(hebrewRuleOk(d.exit)).toBe(true) }
+    }
+  }
 })
 
 test('pointer: down → hit → one post (open on a row, pin at the reading edge of the title, roomDone on the counts, the more line too); move over a title → the dim 📌 without a post; the chrome and the frame lines are dead', () => {
@@ -1287,12 +1365,13 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
     ;(b.props.onPress as () => void)()
     expect(f.posts[f.posts.length - 1]).toEqual({ t: t2 })
   }
-  // the show-finished box: ☑ while the finished are shown — the pref, or the demo (which shows them without touching the
-  // pref: the text cards' rule); its press still flips the pref alone. (The icon trails the Hebrew word: the probe's label.)
+  // the show-finished box: ☑ while the finished are shown — the pref alone, in the demo too (live check 5: the demo's cast obeys
+  // it, where it once forced it on and the box seemed dead); its press flips the pref. (The icon trails the Hebrew word.)
   const doneBox = (q: OfficeProps) => nodes(Office(q, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!
   expect(doneBox(props()).props.label).toBe('הצג שסיימו ☐')
   expect(doneBox(props({ prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('הצג שסיימו ☑')
-  expect(doneBox(props({ demo: true })).props.label).toBe('הצג שסיימו ☑')
+  expect(doneBox(props({ demo: true })).props.label).toBe('הצג שסיימו ☐')
+  expect(doneBox(props({ demo: true, prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('הצג שסיימו ☑')
   const g = fake()
   ;(nodes(Office(props({ demo: true }), g.surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!.props.onPress as () => void)()
   expect(g.posts).toEqual([{ t: 'showDone' }])
@@ -1322,7 +1401,7 @@ test('toolbar: three plain Buttons in words — הצג שסיימו ☐ / צלי
   // (props() is muted; the chime on → 🔔)
   expect(labelsOf(props())).toEqual(['הצג שסיימו ☐', 'צליל 🔕', 'הגדרות ⚙️'])
   expect(labelsOf(props({ prefs: { showDone: true, muted: false, still: false } }))).toEqual(['הצג שסיימו ☑', 'צליל 🔔', 'הגדרות ⚙️'])
-  expect(labelsOf(props({ demo: true }))).toEqual(['הצג שסיימו ☑', 'צליל 🔕', 'הגדרות ⚙️'])
+  expect(labelsOf(props({ demo: true }))).toEqual(['הצג שסיימו ☐', 'צליל 🔕', 'הגדרות ⚙️'])   // (the demo obeys the pref: live check 5)
   expect(labelsOf(en({ columns: 51 }))).toEqual(['☐ Show finished', '🔕 Sound', '⚙️ Settings'])
   expect(labelsOf(en({ columns: 51, prefs: { showDone: true, muted: false, still: false } }))).toEqual(['☑ Show finished', '🔔 Sound', '⚙️ Settings'])
   // the words are the labels of i18n (LABEL_KEYS: tbDone, tbSound, tbSettings), each passing THE HEBREW RULE on its own

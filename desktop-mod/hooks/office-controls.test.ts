@@ -51,7 +51,7 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import { I18N } from './i18n'
 import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
 import type { Agent, Prefs } from './model'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, OVERLAY_GAP, REFUSED_RE, SEARCH_FROM, WINDOW_ROWS, chromeRows, drawerInner, drawerStatus, fixedRows, helpRows, overlayInWindow, overlayRows, windowOf } from './office-chrome'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, DEMO_ROWS, OVERLAY_GAP, REFUSED_RE, SEARCH_FROM, WINDOW_ROWS, chromeRows, demoLine, drawerInner, drawerStatus, fixedRows, helpRows, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { CARD_BORDER, FOCUS_MARK, NO_DECOR, PIN, countsFor, geometry, nb, officeModel, pinZone, trimWindow } from './office-layout'
 import type { Hit, ModelCol, RoomView, TableMode } from './office-layout'
@@ -106,6 +106,8 @@ type Width = {
   column: number; margin: number
   toolbar: Labels; toolbarEn: Labels
   settings: Labels; settingsEn: Labels; exitDemo: string; frozen: string
+  /** The demo line's note at this width (office-chrome.ts demoLine: the longest that fits beside the exit Button by LINE_FIT). */
+  demoNote: string
   hotkeys: boolean; searchRows: number; helpRows: number
   model: ModelCol; word: boolean; task: boolean
   countsA: string; tallA: string; tallB: string; drawerType: boolean
@@ -115,10 +117,16 @@ const WORDS_EN: Labels = ['☐ Show finished', '🔔 Sound', '⚙️ Settings']
 const ICONS: Labels = ['☐', '🔔', '⚙️']
 const SETTINGS_HE: Labels = ['דמו 🎬', 'תנועה 🎞', '🌐 English']
 const SETTINGS_EN: Labels = ['🎬 Demo', '🎞 Motion', '🌐 עברית']
+/** The demo line's notes (live check 5): the whole sentence, and the middle form a narrow pane draws. */
+const DEMO_NOTE = '🎬 זו הדגמה - הסוכנים לא אמיתיים'
+const DEMO_NOTE_MID = '🎬 הדגמה - לא אמיתיים'
+/** The demo cast's two rooms (scanner.ts demoPayload); the research room always holds a finished agent. */
+const DEMO_S2 = 'demo-session-research-2222'
+const DEMO_ROOMS = ['demo-session-frontend-1111', DEMO_S2]
 const WIDTHS: Record<34 | 51 | 120, Width> = {
-  34: { column: 34, margin: 0, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
-  51: { column: 51, margin: 0, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
-  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+  34: { column: 34, margin: 0, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
+  51: { column: 51, margin: 0, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
 }
 type Columns = keyof typeof WIDTHS
 
@@ -486,39 +494,80 @@ function suite(COLUMNS: Columns): void {
   // the settings popover's Buttons (and their letters with the popover closed)
   // ---------------------------------------------------------------------------
 
-  t('🎬 demo: the settings\' Button starts the demo (view.demo): the demo cast\'s two rooms fill the office with their finished shown (☑ by effect, prefs.showDone untouched), the Button reads יציאה; pressed again the fixture is back; closed, d does the same', async ($, on) => {
-    const { ui, captured } = await mountOffice($, on)
+  t('🎬 demo: the settings\' Button starts the demo (view.demo): the demo cast\'s two rooms fill the office and THE DEMO LINE under the header says so (live check 5: the chrome a row taller, every click still on its row); the cast obeys show finished as the office does — ☐ and the finished held back while the pref is off, ☑ and all of them with it on, a room\'s ✅ toggling that room — prefs.showDone never touched by the demo itself; the line\'s exit Button and the settings\' Button end it, the fixture back; closed, d does the same', async ($, on) => {
+    const { ui, captured, clock } = await mountOffice($, on)
     const p0 = await officeProps(ui)
     expect(p0.demo).toBe(false)
     expect(p0.rooms.map(r => r.id)).toEqual([SA, SB])
+    expect(await ui.find({ in: OFFICE_KEY, key: 'exitDemo' })).toBeUndefined()
     await ui.press({ key: 'help' })
     expect(await label(ui, 'demo')).toBe(W.settings[0])
     await ui.press({ key: 'demo' })
     const p1 = await officeProps(ui)
     expect(p1.demo).toBe(true)
     expect(p1.helpOpen).toBe(true)   // the demo leaves the settings as they were
-    expect(p1.rooms.map(r => r.id).sort()).toEqual(['demo-session-frontend-1111', 'demo-session-research-2222'])
-    expect(p1.rooms.flatMap(r => r.agents).length).toBeGreaterThanOrEqual(9)
-    expect(p1.rooms.every(r => r.showDone)).toBe(true)
-    expect(p1.rooms.flatMap(r => r.agents).some(a => a.status === 'done')).toBe(true)
+    expect(p1.rooms.map(r => r.id).sort()).toEqual(DEMO_ROOMS)
+    expect(p1.rooms.flatMap(r => r.agents).length).toBeGreaterThanOrEqual(8)
+    // the demo line: its note (the longest that fits this width) and its exit Button; the chrome a row taller
+    expect(await label(ui, 'exitDemo')).toBe(I18N.he.demoExit)
+    expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: new RegExp(`^${nb(demoLine(p1).note)}$`) })).toBeDefined()
+    expect(demoLine(p1).note).toBe(W.demoNote)
+    expect(fixedRows(p1)).toBe(fixedRows({ ...p1, demo: false }) + DEMO_ROWS)
+    // the cast obeys the pref (off): no room shows every finished, the box reads ☐, the store untouched
     expect(p1.prefs.showDone).toBe(false)
+    expect(p1.rooms.every(r => !r.showDone)).toBe(true)
     expect((captured.store.prefs as Prefs).showDone).toBe(false)
-    expect(await label(ui, 'showDone')).toBe(W.toolbar[0].replace('☐', '☑'))
+    expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
     expect(await label(ui, 'demo')).toBe(W.exitDemo)
     await rowsOk(ui, p1)
-    await ui.press({ key: 'demo' })
+    await ui.press({ key: 'closeHelp' })
+    // a click on a demo row opens that row (the line map under the taller chrome)
+    await click(ui, 'agent', 'demo-mcp-dd')
+    expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
+    await ui.press({ key: 'close' })
+    // a room's ✅ counts: that room shows its finished (the override in the store), as a real room's do
+    await click(ui, 'roomDone', DEMO_S2)
+    expect(captured.store.roomDone).toEqual({ [DEMO_S2]: true })
+    await clock.advance(REDRAW_LATCH_MS)
+    expect(roomOf(await officeProps(ui), DEMO_S2).showDone).toBe(true)
+    await click(ui, 'roomDone', DEMO_S2)
+    await clock.advance(REDRAW_LATCH_MS)
+    expect(captured.store.roomDone).toEqual({})
+    // ☐ → ☑: every demo room shows its finished; and back
+    await ui.press({ key: 'showDone' })
     const p2 = await officeProps(ui)
-    expect(p2.demo).toBe(false)
-    expect(p2.rooms.map(r => r.id)).toEqual([SA, SB])
-    expect(ids(p2, SA)).toEqual(DRAWN_A)
-    expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
+    expect(p2.prefs.showDone).toBe(true)
+    expect(p2.rooms.every(r => r.showDone)).toBe(true)
+    expect(p2.rooms.flatMap(r => r.agents).some(a => a.id === 'demo-writer-ff')).toBe(true)
+    expect(await label(ui, 'showDone')).toBe(W.toolbar[0].replace('☐', '☑'))
+    await rowsOk(ui, p2)
+    await ui.press({ key: 'showDone' })
+    expect((await officeProps(ui)).rooms.every(r => !r.showDone)).toBe(true)
+    // the demo line's exit Button ends the demo: the fixture is back, the line gone (the switch's publish: the render kick's
+    // poll, which a tick's poll in flight defers — settled here, as ui.test.ts's demo test does)
+    await ui.press({ key: 'exitDemo' })
+    await clock.settle()
+    const p3 = await officeProps(ui)
+    expect(p3.demo).toBe(false)
+    expect(p3.rooms.map(r => r.id)).toEqual([SA, SB])
+    expect(ids(p3, SA)).toEqual(DRAWN_A)
+    expect(await ui.find({ in: OFFICE_KEY, key: 'exitDemo' })).toBeUndefined()
+    expect(fixedRows(p3)).toBe(fixedRows(p0))
+    // the settings' Button too, and closed, the letter
+    await ui.press({ key: 'help' })
+    await ui.press({ key: 'demo' })
+    expect((await officeProps(ui)).demo).toBe(true)
+    await ui.press({ key: 'demo' })
+    await clock.settle()
+    expect((await officeProps(ui)).demo).toBe(false)
     expect(await label(ui, 'demo')).toBe(W.settings[0])
     await ui.press({ key: 'closeHelp' })
     expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'demo' })).toBeUndefined()
     await ui.key({ in: OFFICE_KEY, key: 'd' })
     expect((await officeProps(ui)).demo).toBe(true)
-    expect((await officeProps(ui)).rooms.map(r => r.id).sort()).toEqual(['demo-session-frontend-1111', 'demo-session-research-2222'])
+    expect((await officeProps(ui)).rooms.map(r => r.id).sort()).toEqual(DEMO_ROOMS)
     await ui.key({ in: OFFICE_KEY, key: 'd' })
+    await clock.settle()
     expect((await officeProps(ui)).demo).toBe(false)
     expect((await officeProps(ui)).rooms.map(r => r.id)).toEqual([SA, SB])
     await ui.unmount()
@@ -951,6 +1000,7 @@ function suite(COLUMNS: Columns): void {
     expect(p1.empty).toBeNull()
     expect(p1.rooms.map(r => r.id).sort()).toEqual(['demo-session-frontend-1111', 'demo-session-research-2222'])
     expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'watchDemo' })).toBeUndefined()
+    expect(await label(ui, 'exitDemo')).toBe(I18N.he.demoExit)   // THE DEMO LINE says it is the demo (live check 5)
     await rowsOk(ui, p1)
     await ui.press({ key: 'help' })
     expect(await label(ui, 'demo')).toBe(W.exitDemo)

@@ -21,6 +21,13 @@ The reference file `docs/research/2026-10-19-cards-probe/register.tsx` is now ro
 - Search field only when more than 12 agents are shown (spec 2026-10-10 §2 item 22); an active search stays visible.
 - The drawer: one dim status line (`● עובד · זמן 12 דק׳ · general-purpose`) and a blank line between identity and content.
 
+### Live check 5 (Asaf, 20.10, a Hebrew pane of ~40 columns) — overrides the bullets above where they differ
+- **The demo is obvious:** while it runs, the first line under the header reads `🎬 זו הדגמה - הסוכנים לא אמיתיים` (EN `🎬 Demo - these agents are not real`; amber), with an exit Button (`יציאה` / `Exit demo`) at the other edge; shorter notes when the pane is narrow (`🎬 הדגמה - לא אמיתיים`, `🎬 זו הדגמה`). The chrome is a row taller while it runs. A real subagent starting in the current conversation turns the demo off.
+- **The demo obeys "show finished"** and the rooms' toggles like the real office (it no longer forces them on).
+- **The finish toast** lasts 1.5 s, names the conversation (`✅ <persona> סיים · <room title>`, the title cut to ~30 cells on a word) and never fires for the demo's agents; which finishes toast is unchanged.
+- **Title cut:** on a word only while the whole words keep two thirds of the room; else inside the word, with `…`. A Latin-dominant title is cut by FIT (bold Latin draws wider per cell than the text LINE_FIT was calibrated on); a Hebrew one by LINE_FIT.
+- **No line break inside a one-line value:** besides the spaces, a hyphen or a dash becomes U+2011 (no-break hyphen), a slash before a letter U+2215 (division slash), a zero-width space and a soft hyphen are removed; a hyphen or slash before a digit is kept (no break there, and the number keeps its bidi run). Asaf's screenshot: `Plan the static-registry …` had broken at its hyphen onto two clipped lines.
+
 ## Refinements from rounds 5-7 (Asaf, 19.10) — these override anything below
 1. **No selection background** (the dark band is gone). The open drawer shows which agent is selected; keyboard focus may show a small `›` marker beside the dot, nothing more.
 2. **Every column is rigid and content-sized** (`flexShrink 0`): a shrinking activity column collapsed to nothing on the desktop. If the table cannot fit the pane, drop the activity WORD (keep its emoji) below a width threshold the implementer derives conservatively (the desktop draws letters wider than a cell; round 6 fit at 51 columns with 4 columns), never clip.

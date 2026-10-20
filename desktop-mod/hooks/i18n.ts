@@ -59,6 +59,12 @@ export type Strings = {
   settingsTitle: string; scSettings: string
   /** The settings popover's motion toggle word (🎞 motion on, 🖼 frozen); the demo and language Buttons use demoLabel / exitDemo and switchTo. */
   hbMotion: string
+  /**
+   * THE DEMO LINE (live check 5: Asaf looked at the demo without knowing it): the line under the office's header while the
+   * demo runs — the note (the whole sentence, a middle form, a short one: office-chrome.ts demoLine picks the longest that
+   * fits; the Client lays 🎬 before it) and its exit Button's word.
+   */
+  demoNote: string; demoNoteMid: string; demoNoteShort: string; demoExit: string
   resultTruncated: string; searchPlaceholder: string; emptyNoMatch: string
   mute: string; unmute: string; finishedToast: string; officeFailed: string
   /** The five-hour usage toast (80% / 95%): the rounded percent and the reset's local HH:MM ('' when unknown). One line. */
@@ -95,6 +101,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scStill: 'Freeze / release the motion', scHelp: 'This help',
     scPrev: 'Previous agent', scNext: 'Next agent',
     tbDone: 'Show finished', tbSound: 'Sound', tbSettings: 'Settings', settingsTitle: 'Settings', scSettings: 'Settings', hbMotion: 'Motion',
+    demoNote: 'Demo - these agents are not real', demoNoteMid: 'Demo - not real', demoNoteShort: 'Demo', demoExit: 'Exit demo',
     resultTruncated: 'Result shortened — open the terminal for the full output',
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
     mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished',
@@ -128,6 +135,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scStill: 'תנועה: הקפאה / שחרור', scHelp: 'העזרה הזו',
     scPrev: 'הסוכן הקודם', scNext: 'הסוכן הבא',
     tbDone: 'הצג שסיימו', tbSound: 'צליל', tbSettings: 'הגדרות', settingsTitle: 'הגדרות', scSettings: 'הגדרות', hbMotion: 'תנועה',
+    demoNote: 'זו הדגמה - הסוכנים לא אמיתיים', demoNoteMid: 'הדגמה - לא אמיתיים', demoNoteShort: 'זו הדגמה', demoExit: 'יציאה',
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש',
     mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',

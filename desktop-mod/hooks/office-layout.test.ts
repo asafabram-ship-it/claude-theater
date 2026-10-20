@@ -7,7 +7,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { REFUSED_RE, cleanAgentText } from './office-chrome'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -97,6 +98,30 @@ test('cutWords (the probe\'s title cut): a title that fits is whole; a longer on
   expect(cutWords('תקרא את המסמך הארוך מאוד', 12).startsWith('…')).toBe(false)
 })
 
+test('cutWords (live check 5): the word cut only while the whole words keep two thirds of the allowed cells — an earlier last space (a long word at the cut) cuts inside the word, the ellipsis trailing', () => {
+  const t = 'Plan the static registrymigration rollout'
+  // at 26 cells the last space before the cut leaves `Plan the static` (15 cells, under 2/3 of 26): the cut falls inside the word
+  expect(cutWords(t, 26)).toBe('Plan the static registrym…')
+  expect(cutWords(t, 23)).toBe('Plan the static regist…')    // 15 < 15.3
+  // two thirds kept (15 ≥ 14.7): the word cut
+  expect(cutWords(t, 22)).toBe('Plan the static…')
+  // the cut on a boundary is whole words whatever their share
+  expect(cutWords('Plan the static-registry move and the v2 config rollout', 26)).toBe('Plan the static-registry…')
+  // a hyphen is no word boundary of the cut (only a space is): the hyphenated word is kept whole or cut inside
+  expect(cutWords('Plan the static-registrymigration', 26)).toBe('Plan the static-registrym…')
+  // Hebrew alike: `בדיקת תיאטרון` (13 cells) is not two thirds of 21 — inside the word; of 19 it is
+  const he = 'בדיקת תיאטרון הסוכניםבשיחהחדשה'
+  expect(cutWords(he, 21)).toBe('בדיקת תיאטרון הסוכני…')
+  expect(cutWords(he, 19)).toBe('בדיקת תיאטרון…')
+  for (let max = 8; max <= 40; max++) {
+    const c = cutWords(t, max)
+    expect(textWidth(c), `${max}`).toBeLessThanOrEqual(max)
+    expect(c.endsWith('…'), `${max}`).toBe(true)
+    // whatever the cut, it keeps at least two thirds of the cells (a whole-word cut that would keep fewer is refused)
+    expect(3 * textWidth(c.slice(0, -1)), `${max}: ${c}`).toBeGreaterThanOrEqual(2 * max - 3)
+  }
+})
+
 test('cutTask / capUnits / TASK_UNITS: the row\'s task cut to TASK_MAX cells AND to TASK_UNITS code units, whole glyphs, one ellipsis — a ZWJ family emoji task (eleven units a glyph) is bounded by the units, a Hebrew one by the cells', () => {
   expect(TASK_UNITS).toBe(2 * TASK_MAX)
   const family = '👨‍👩‍👧‍👦'
@@ -164,6 +189,88 @@ test('nb / NBSP (round 9): every plain space of a one-line value a no-break spac
   expect(restWord('✏️ עורך')).toBe('עורך')
   expect(restWord('🔎')).toBe('')
   expect(restWord('')).toBe('')
+})
+
+/** The line-break classes of UAX #14 that nb() handles (SP the space; GL the no-break forms; BA the breaking hyphens, dashes and spaces; B2 the em dash; HY the hyphen-minus; SY the slash; ZW the zero-width space; NU a digit), XX anything else. */
+function lbClass(c: string): 'SP' | 'GL' | 'BA' | 'B2' | 'HY' | 'SY' | 'ZW' | 'NU' | 'XX' {
+  if (c === ' ') return 'SP'
+  if ([NBSP, '\u{2007}', '\u{202F}', '\u{2011}'].includes(c)) return 'GL'
+  if (c === '\t' || ['\u{2010}', '\u{2012}', '\u{2013}', '\u{AD}'].includes(c) || /\p{Zs}/u.test(c)) return 'BA'
+  if (c === '\u{2014}') return 'B2'
+  if (c === '-') return 'HY'
+  if (c === '/') return 'SY'
+  if (c === '\u{200B}') return 'ZW'
+  if (/\p{Nd}/u.test(c)) return 'NU'
+  return 'XX'
+}
+/**
+ * UAX #14's pair rules over those classes (LB7, LB8, LB12, LB12a, LB13, LB17, LB18, LB21, LB25 and the defaults after HY, BA,
+ * B2 and SY): is there a line-break opportunity between `a` and `b`? (A pair of other classes answers no: not nb's business.)
+ */
+function breaksBetween(a: string, b: string): boolean {
+  const ca = lbClass(a)
+  const cb = lbClass(b)
+  if (ca === 'ZW') return true                                       // LB8   ZW ÷
+  if (cb === 'SP' || cb === 'ZW') return false                       // LB7   × SP, × ZW
+  if (ca === 'SP') return true                                       // LB18  SP ÷
+  if (ca === 'GL') return false                                      // LB12  GL ×
+  if (cb === 'GL') return ca === 'BA' || ca === 'HY'                 // LB12a [^SP BA HY] × GL
+  if (cb === 'SY') return false                                      // LB13  × SY
+  if (ca === 'B2' && cb === 'B2') return false                       // LB17  B2 × B2
+  if (cb === 'BA' || cb === 'HY') return false                       // LB21  × BA, × HY
+  if (ca === 'HY' || ca === 'SY') return cb !== 'NU'                 // LB25  HY × NU, SY × NU; else a break after
+  if (ca === 'BA' || ca === 'B2' || cb === 'B2') return true         // a break after BA and B2, before B2
+  return false
+}
+/** The places in `s` (between its code points) where a line may break among nb's classes. */
+function breakOpportunities(s: string): number[] {
+  const cps = [...s]
+  const out: number[] = []
+  for (let i = 0; i + 1 < cps.length; i++) if (breaksBetween(cps[i]!, cps[i + 1]!)) out.push(i)
+  return out
+}
+
+test('nb (live check 5): no line-break opportunity left among the spaces, hyphens, dashes and slashes of a one-line value (UAX #14) — the no-break hyphen U+2011, the division slash U+2215, the zero-width space and the soft hyphen gone; a hyphen or a slash before a digit kept (no break there, and a number keeps its bidi run); nothing it writes is a control or a format character, nothing a surface refuses; the width unchanged; idempotent', () => {
+  expect(NBHY.codePointAt(0)).toBe(0x2011)
+  expect(NBSLASH.codePointAt(0)).toBe(0x2215)
+  // the classifier itself: the opportunities a plain value holds
+  expect(breakOpportunities('Plan the static-registry')).toEqual([4, 8, 15])
+  expect(breakOpportunities('a/b 3-4 20/10 -5')).toEqual([1, 3, 7, 13])
+  expect(breakOpportunities(`a${NBSP}-${NBSP}b`)).toEqual([2])          // HY ÷ GL: a spaced hyphen breaks after itself
+  expect(breakOpportunities(`a${NBSP}\u{2014}${NBSP}b`)).toEqual([])   // the em dash between no-break spaces holds
+  expect(breakOpportunities('a\u{2014}b')).toEqual([0, 1])
+  // Asaf's screenshot of 20.10: the title broke at its hyphen although its spaces were no-break
+  expect(nb('Plan the static-registry move')).toBe(`Plan${NBSP}the${NBSP}static${NBHY}registry${NBSP}move`)
+  expect(nb('claude-in-chrome')).toBe(`claude${NBHY}in${NBHY}chrome`)
+  expect(nb('src/hooks/ui.tsx')).toBe(`src${NBSLASH}hooks${NBSLASH}ui.tsx`)
+  // before a digit a hyphen or a slash is kept: no break there (HY × NU, SY × NU), and `3-4` / `20/10` stay one number run
+  expect(nb('20/10 3-4 -5 v-2')).toBe(`20/10${NBSP}3-4${NBSP}-5${NBSP}v-2`)
+  // the hyphen U+2010 and the en / figure dashes: a no-break hyphen (between letters, digits or spaces alike), kept at the end
+  expect(nb('a\u{2010}b a\u{2013}b 10\u{2012}20 x \u{2013} y z\u{2013}')).toBe(`a${NBHY}b${NBSP}a${NBHY}b${NBSP}10${NBHY}20${NBSP}x${NBSP}${NBHY}${NBSP}y${NBSP}z\u{2013}`)
+  // the em dash between letters a no-break hyphen; between no-break spaces it holds and is kept
+  expect(nb('a\u{2014}b a \u{2014} b')).toBe(`a${NBHY}b${NBSP}a${NBSP}\u{2014}${NBSP}b`)
+  // a slash before a no-break space or at the end holds (SY × GL)
+  expect(nb('and / or x/')).toBe(`and${NBSP}/${NBSP}or${NBSP}x/`)
+  // every breaking space a no-break one; the zero-width space and the soft hyphen (both Cf, never drawn) removed
+  expect(nb('a\tb\u{2003}c\u{3000}d\u{202F}e\u{2007}f')).toBe(`a${NBSP}b${NBSP}c${NBSP}d\u{202F}e\u{2007}f`)
+  expect(nb('re\u{AD}use x\u{200B}y')).toBe(`reuse${NBSP}xy`)
+  // a Hebrew value: the spaced hyphen of a sentence a no-break hyphen, the Hebrew rule as before
+  expect(nb('זו הדגמה - הסוכנים לא אמיתיים')).toBe(`זו${NBSP}הדגמה${NBSP}${NBHY}${NBSP}הסוכנים${NBSP}לא${NBSP}אמיתיים`)
+  expect(hebrewRuleOk(nb('זו הדגמה - הסוכנים לא אמיתיים'))).toBe(true)
+  const nasty = [
+    'Plan the static-registry move and the v2 config rollout', 'src/hooks/office-layout.ts — the cut', 'a \u{2013} b\u{2014}c / d-e',
+    'x\u{200B}y\u{AD}z\u{2003}w\t1-2 3/4 -5', 'בדיקת תיאטרון-הסוכנים / שיחה \u{2013} חדשה', '🔌 claude-in-chrome', '👨‍💻 a-b', '--a//b--', '',
+  ]
+  for (const s of nasty) {
+    const v = nb(s)
+    expect(breakOpportunities(v), `${s} → ${v}`).toEqual([])
+    expect(nb(v), s).toBe(v)                                            // idempotent
+    expect(v, s).not.toMatch(REFUSED_RE)
+    expect(cleanAgentText(v), s).toBe(v)                                // the poll's text gate leaves it as it is
+    // the characters nb writes are no control and no format character (a ZWJ of an emoji sequence is the input's own)
+    for (const c of new Set([...v].filter(c => !s.includes(c)))) expect(c, `${s}: U+${c.codePointAt(0)!.toString(16)}`).not.toMatch(/\p{Cc}|\p{Cf}/u)
+    expect(textWidth(v), s).toBe(textWidth(s.replace(/[\u{200B}\u{AD}]/gu, '')))
+  }
 })
 
 test('geometry (probe rounds 8-9): ONE reading column — the pane up to 99 cells, frozen at CENTRE_AT and centred by a left margin from 100; the card\'s padding 2 from WIDE_FROM (the inner width dips by a cell there); the structure flags at their thresholds; the table\'s budget by FIT, the chrome line by LINE_FIT', () => {
@@ -238,6 +345,25 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(36), counts)).toBe('בדיקת תיאטרון…')
   expect(cutTitle('תיאטרון הסוכנים', geometry(51), counts)).toBe('תיאטרון הסוכנים')
   expect(cutTitle('abcdefghijklmnopqrstuvwxyz', geometry(24), counts)).toBe('abcdefg…')   // the floor of 8
+  // BOLD LATIN (live check 5): a Latin-dominant title is cut by FIT, a Hebrew one by LINE_FIT — at 44 columns beside `🟢1 ✅1` the
+  // line leaves 40 - 2 - 7 - 2 = 29 cells: the Hebrew title takes up to 24 (LINE_FIT), the Latin one up to 21 (FIT)
+  expect(latinDominant('Plan the static-registry move')).toBe(true)
+  expect(latinDominant('בדיקת תיאטרון הסוכנים')).toBe(false)
+  expect(latinDominant('בדיקת Claude Code')).toBe(true)        // ten Latin letters, five Hebrew
+  expect(latinDominant('תריץ 4 סוכני משנה ב-CI')).toBe(false)
+  expect(latinDominant('42 🎭 ·')).toBe(false)
+  expect(cutTitle('Plan the static-registry move and the v2 config rollout', geometry(44), '🟢1 ✅1')).toBe('Plan the static-regi…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(44), '🟢1 ✅1')).toBe('בדיקת תיאטרון הסוכנים…')
+  for (let columns = 24; columns <= 200; columns++) {
+    const g = geometry(columns)
+    for (const pinned of [false, true]) {
+      const room = g.inner - 2 - (pinned ? EMOJI_CELLS + TITLE_GAP : 0) - textWidth('🟢1 ✅1') - TITLE_GAP
+      const latin = cutTitle('Plan the static-registry move and the v2 config rollout for the whole office of the agents', g, '🟢1 ✅1', pinned)
+      const hebrew = cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל ועוד כמה מילים בסוף', g, '🟢1 ✅1', pinned)
+      expect(textWidth(latin), `${columns} ${latin}`).toBeLessThanOrEqual(Math.max(8, fitCells(room)))
+      expect(textWidth(hebrew), `${columns} ${hebrew}`).toBeLessThanOrEqual(Math.max(8, fitLine(room)))
+    }
+  }
   // the sweep: a title one cell longer than the widest room of the sweep (the frozen column, unpinned: 94 - 15 = 79 → 65 cells), so
   // every cut drops something and carries the …; each (columns, pinned) cut once, its width reused for the pinned-vs-unpinned check
   const countsWidth = textWidth(counts)
@@ -585,7 +711,8 @@ test('officeModel: the weights (round 8) — working = a bold name; waiting = a 
   expect(rows.map(x => [x.status, x.bold, x.dim, x.failed])).toEqual([['●', true, false, false], ['●', false, false, false], ['○', false, true, false], ['❌', false, true, true], ['⏰', true, false, false]])
 })
 
-test('officeModel: at every width 24..200, both directions, the office of the probe and a crowd — every one-line value holds no plain space (nb: it can never wrap) and no lone surrogate; the rows of every room follow the ONE office-wide mode (the model column everywhere or nowhere, the word everywhere or nowhere, every name within the cap); a narrow pane cuts the names whole-glyph with an ellipsis; the mode is the fresh choice (no hysteresis handed in)', { timeoutMs: 30_000 }, () => {
+// (some 40,000 assertions: 14-18 s alone, 47 s under a full suite at 90% CPU on 20.10 with no code change — the budget is load headroom)
+test('officeModel: at every width 24..200, both directions, the office of the probe and a crowd — every one-line value holds no plain space (nb: it can never wrap) and no lone surrogate; the rows of every room follow the ONE office-wide mode (the model column everywhere or nowhere, the word everywhere or nowhere, every name within the cap); a narrow pane cuts the names whole-glyph with an ellipsis; the mode is the fresh choice (no hysteresis handed in)', { timeoutMs: 90_000 }, () => {
   const r = room({ id: 'x', agents: [ag('lead', 0, { name: 'הינשוף', act: '🤔 חושב', failed: true, status: 'done' }), ag('a1', 1, { name: 'א'.repeat(24), act: '🔎 מחפש קוד', longRunning: true })] })
   const narrow = officeModel(props({ rooms: [r], columns: 30 })).rooms[0]!
   expect(narrow.rows.map(x => x.actEmoji)).toEqual(['🤔', '🔎'])
@@ -619,6 +746,31 @@ test('officeModel: at every width 24..200, both directions, the office of the pr
       }
     }
   }
+})
+
+test('officeModel (live check 5): at every width 24..200, both directions, NO value drawn on one line holds a line-break opportunity among its spaces, hyphens, dashes and slashes (UAX #14: the title, the counts, the more line, the who, the model, the activity word, the task) — a title, a name, an activity, a model or a task with hyphens, slashes and dashes never breaks onto a second line', { timeoutMs: 30_000 }, () => {
+  const rooms = [
+    room({ id: 'plan', title: 'Plan the static-registry move and the v2 config rollout', run: 2, done: 1, moreLabel: 'עוד 2 שסיימו', agents: [
+      ag('p1', 1, { name: 'Mary-Jane O/Neil', act: '🔌 claude-in-chrome', model: 'Sonnet 4.5-beta', task: 'fix the static-registry/config\u{2014}now' }),
+      ag('p2', 2, { name: 'הסופר', act: '🔎 מחפש קוד', model: 'Fable 5.1', task: 'src/hooks/office-layout.ts \u{2013} cut' }),
+      ag('p3', 3, { status: 'done', act: '✅ סיים', task: 'א-ב / ג\u{2010}ד 3-4 20/10' }),
+    ] }),
+    room({ id: 'he', title: 'בדיקת תיאטרון-הסוכנים / שיחה \u{2013} חדשה עם כמה סוכני-משנה', run: 1, agents: [ag('h1', 4, { name: 'זאב-ים', act: '✏️ עורך', task: 'תכנון-המעבר לרישום/הסטטי' })] }),
+  ]
+  for (let columns = 24; columns <= 200; columns += columns < 70 ? 1 : 5) {
+    for (const rtl of [true, false]) {
+      const m = officeModel(props({ rooms, columns, rtl }))
+      for (const rm of m.rooms) {
+        for (const v of [rm.title, rm.counts, rm.more]) expect(breakOpportunities(v), `${columns} ${rtl} ${v}`).toEqual([])
+        for (const x of rm.rows) for (const v of [x.who, x.model, x.actWord, x.task]) expect(breakOpportunities(v), `${columns} ${rtl} ${x.id} ${v}`).toEqual([])
+      }
+    }
+  }
+  // what they read as: the hyphen a no-break hyphen, the slash the division slash, a digit's hyphen and slash kept
+  const wide = officeModel(props({ rooms, columns: 120 }))
+  expect(wide.rooms[0]!.rows[0]!.actWord).toBe(`claude${NBHY}in${NBHY}chrome`)
+  expect(wide.rooms[0]!.rows[2]!.task).toBe(nb(cutTask('א-ב / ג\u{2010}ד 3-4 20/10')))
+  expect(wide.rooms[0]!.rows[2]!.task).toContain('3-4')
 })
 
 test('trimWindow: the window keeps at most `maxRows` agent rows — the lines past the last row within the budget are dropped; a window inside the budget is returned as it is; count 0 and an empty office tolerated', () => {

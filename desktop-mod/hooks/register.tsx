@@ -43,7 +43,9 @@
 //                   "finish beat" (PAGE updateWS) runs HERE, in the poll —
 //                   starsOf (ui.tsx) stamps the ids just finished into the
 //                   payload it publishes (`stars`) and the toast + chime fire
-//                   for the ones the office shows — and the "🟢 N · " working
+//                   for the ones the office shows (the toast short and naming
+//                   the room — ui.tsx finishToast — and never for the demo's
+//                   cast: live check 5) — and the "🟢 N · " working
 //                   count in the pane title (PAGE's document.title, only when N
 //                   changes) goes out in the same tick BEFORE the write, so a
 //                   finish is the one $.state write of the publish (no deferred
@@ -88,8 +90,9 @@
 // session is trusted as open. pidAlive reads ONE process listing (tasklist /
 // ps) cached PID_TTL_MS at module level, so a scan every 5 s (POLL_MS) spawns
 // one process per 30 s however many chats are open.
-//   agent.spawn     after next: liveSpawned; first subagent of the session →
-//                   $.ui.open once (auto-open).
+//   agent.spawn     after next: liveSpawned; the demo running → off (one view
+//                   write: a real subagent ends it, live check 5); first
+//                   subagent of the session → $.ui.open once (auto-open).
 //   tool.call       in a live agent's loop: liveToolStarted / liveToolReturned;
 //                   the main loop's Agent (or Task, the older alias) call:
 //                   liveAgentReturned (its result).
@@ -111,7 +114,7 @@ import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolSta
 import { COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, STORE_USAGE_TOAST_KEY, USAGE, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
 import { cleanAgentText } from './office-chrome'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
-import { RECENT_DONE, STORE_ROOM_DONE_KEY, cardName, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, starsOf, textSurfaceActive, workingCount } from './ui'
+import { FINISH_TOAST_MS, RECENT_DONE, STORE_ROOM_DONE_KEY, finishToast, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, roomTitle, starsOf, textSurfaceActive, workingCount } from './ui'
 import { parseToastMark, pickFiveHour, resetClock, sameFiveHour, toastDue, usageLabel, usageThreshold, type FiveHour, type ToastMark } from './usage'
 
 // $.state atoms (validate: declared as consts in the file that reads them).
@@ -412,9 +415,13 @@ export async function poll($: EngineInterface): Promise<void> {
       // the ⭐ for every finish the office draws (THE RECENT FINISHED: a hiding room's three most recent among them); the
       // toast and the chime only for a finish the room shows by its toggle or prefs.showDone, as before (controller's ruling,
       // fix round 1 of Task 2.8a: no chime on every subagent finish for a default user)
-      const drawn = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins, RECENT_DONE).visible.map(a => a.id))
-      const shown = new Set(officeView(merged.agents, view.search, prefs.lang, view.demo || prefs.showDone, roomDone, prefs.pins).visible.map(a => a.id))
-      const L = I18N[prefs.lang]
+      const drawn = new Set(officeView(merged.agents, view.search, prefs.lang, prefs.showDone, roomDone, prefs.pins, RECENT_DONE).visible.map(a => a.id))
+      const shownView = officeView(merged.agents, view.search, prefs.lang, prefs.showDone, roomDone, prefs.pins)
+      const shown = new Set(shownView.visible.map(a => a.id))
+      // THE FINISH TOAST (live check 5): short (FINISH_TOAST_MS), naming the persona and the conversation (ui.tsx
+      // finishToast) — and never for the demo's cast (the ids of the demo payload scanned: a live agent of this session merged
+      // into it is real), whose agents finish on a loop
+      const demoIds = view.demo ? new Set(payload.agents.map(a => a.id)) : null
       let celebrated = false
       for (const id of fresh) {
         const a = merged.agents.find(x => x.id === id)
@@ -423,7 +430,7 @@ export async function poll($: EngineInterface): Promise<void> {
           continue
         }
         if (!shown.has(id)) continue
-        $.ui.toast(`${cardName(a, prefs.lang)} — ${L.finishedToast}`)
+        if (!demoIds?.has(id)) $.ui.toast(finishToast(a, roomTitle(shownView.stat.get(a.session_full), a.session_full), prefs.lang), { timeoutMs: FINISH_TOAST_MS })
         celebrated = true
       }
       if (celebrated) void ding($, prefs.muted, now)
@@ -771,6 +778,11 @@ export const register: Register = on => {
           model: ran.model ?? e.model ?? '',
         }
         LIVE = liveSpawned(LIVE, spawn, now)
+        // THE DEMO'S AUTO-EXIT (live check 5: Asaf watched the demo without knowing it): a real subagent of this conversation
+        // starts while the demo runs → the demo goes off, as its exit Button does (ui.tsx setDemo: the selection with it) — ONE
+        // view write, here and not in the poll's publish path, ahead of the poll below (which then scans the real office);
+        // the render kick publishes the switch at once (THE DEMO SWITCH). Read first: a spawn with the demo off writes nothing.
+        if ((await read($, viewAtom)).demo) await update($, viewAtom, v => ({ ...v, demo: false, selected: null, focusIndex: -1 }))
         const opened = await read($, paneOpenedAtom)
         if (!opened) void openPane($)
       }

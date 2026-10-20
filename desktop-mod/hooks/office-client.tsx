@@ -49,6 +49,10 @@
 // and a blank line before its content; the settings popover (titled הגדרות)
 // holds the demo, motion and language Buttons and the shortcuts as a
 // column-major label | key table, two pairs side by side from WIDE_FROM.
+// While the demo runs, THE DEMO LINE (live check 5) is the first line under
+// the header — `🎬 זו הדגמה - הסוכנים לא אמיתיים` and its exit Button — so the
+// demo's cast is never taken for the office (the chrome a row taller:
+// office-chrome.ts DEMO_ROWS).
 //
 // Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
 // Client as tall as the content (`officeHeight`); `props.offset` is the
@@ -103,7 +107,7 @@
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, drawerInner, drawerLimits, drawerLines, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
+import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
 import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
@@ -122,6 +126,8 @@ export const INPUT_MIN = 12
 export const INPUT_MAX = 30
 /** The gap between the two settings pairs (from WIDE_FROM). */
 export const PAIRS_GAP = 4
+/** The demo line's note colour: amber, so the demo is never taken for the office (the status column's waiting amber, DOT_FG.stale). */
+export const DEMO_FG = '#d29922'
 
 /** The letter keys (spec §6.4): the toolbar's f / m / h, the settings' d / s / l (its Buttons' letters, live with the popover closed too) and the drawer's x. */
 const KEY_MESSAGES: Record<string, OfficeMessage> = {
@@ -453,16 +459,30 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       else if (fits(wordsHdr, tiny)) { counts = wordsHdr; meterHeader = tiny }
       else if (fits(iconsHdr, tiny)) { counts = iconsHdr; meterHeader = tiny }
     }
-    kids.push(Box({ key: 'header', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
+    // (while the demo runs the header's blank line moves under the demo line: the demo line is the first under the header)
+    kids.push(Box({ key: 'header', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: props.demo ? 0 : 1, children: [
       Text({ bold: true, children: [counts] }),
       ...(meterHeader ? [Text({ dimColor: true, children: [meterHeader] })] : []),
     ] }))
 
+    // --- THE DEMO LINE (live check 5: Asaf watched the demo without knowing it): while the demo runs, the first line under the
+    //     header says so — the note (`🎬 זו הדגמה - הסוכנים לא אמיתיים`, amber, one no-break value) at the reading edge, the exit
+    //     Button (`יציאה`, the demo toggle's post) at the other, a blank line under them; the longest note that fits beside the
+    //     Button by LINE_FIT (office-chrome.ts demoLine). The chrome counts it (fixedRows: DEMO_ROWS), so the line map's hits
+    //     stay exact. No hotkey: `d` is the settings' demo Button's, live with the popover closed too (KEY_MESSAGES) ---
+    if (props.demo) {
+      const d = demoLine(props)
+      kids.push(Box({ key: 'demoLine', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
+        Text({ color: DEMO_FG, children: [nb(d.note)] }),
+        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => send(surface, { t: 'demo' }) }),
+      ] }))
+    }
+
     // --- toolbar: three plain Buttons in words (the probe's: `הצג שסיימו ☐` · `צליל 🔔` · `הגדרות ⚙️`, gap 2) — the state in the
     //     icon, the word from i18n (tbDone, tbSound, tbSettings); the words whenever the three fit the line by LINE_FIT, else
     //     the icons alone (never a cut word) ---
-    // (☑ while the finished are shown: the pref, or the demo, which shows them without touching it — the text cards' rule)
-    const icons = [props.prefs.showDone || props.demo ? '☑' : '☐', props.prefs.muted ? '🔕' : '🔔', '⚙️']
+    // (☑ while the finished are shown: the pref — the demo's cast obeys it as the office does, live check 5)
+    const icons = [props.prefs.showDone ? '☑' : '☐', props.prefs.muted ? '🔕' : '🔔', '⚙️']
     const worded = icons.map((icon, i) => iconLabel(icon, lbl(['tbDone', 'tbSound', 'tbSettings'][i]!), rtl))
     const tb = labelsFit(worded, geo.W, TOOLBAR_GAP) ? worded : icons
     const buttons = [

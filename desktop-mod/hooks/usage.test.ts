@@ -289,6 +289,8 @@ test('toasts: once per window when the rounded percent reaches 80, once more at 
   expect(captured.toasts).toHaveLength(4)
   await measure($, limits(98, R3))
   expect(captured.toasts).toHaveLength(4)
+  // their stay the engine's default (live check 5 shortened the finish toast alone)
+  expect(captured.toastTimeouts).toEqual([undefined, undefined, undefined, undefined])
   await measure($, [])
 })
 

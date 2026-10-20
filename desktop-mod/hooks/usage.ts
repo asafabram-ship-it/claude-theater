@@ -46,12 +46,18 @@ function usageHead(roundedPct: number): string {
 }
 
 /**
- * `⏳ 5h 42%` — the label without its bar and clock, for a narrow header (the office's under COMPACT_BELOW
+ * `⏳ 5h 42%` — the label without its bar and clock, for a narrow header (the office's under WIDE_FROM
  * columns, the text cards' counts line). It keeps `5h` so it is never taken for the idle count (`⏳ 2 idle`).
  */
 export function usageShort(u: FiveHour): string {
   const pct = Math.round(u.pct)
   return `${usageHead(pct)} 5h ${pct}%`
+}
+
+/** `⏳ 42%` — the narrowest form (the office header's last step before the meter would be cut: the probe's `⏳ 6%`, round 8). */
+export function usageTiny(u: FiveHour): string {
+  const pct = Math.round(u.pct)
+  return `${usageHead(pct)} ${pct}%`
 }
 
 /**

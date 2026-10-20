@@ -20,6 +20,10 @@ function agent(over: Partial<Agent> & { id: string }): Agent {
 function input(agents: Agent[], over: Partial<OfficePropsInput> = {}): OfficePropsInput {
   return { payload: { ...EMPTY_PAYLOAD, agents, stars: {} }, prefs: DEFAULT_PREFS, view: DEFAULT_VIEW, roomDone: {}, offset: 0, columns: 45, rows: 30, now: T0, usage: null, ...over }
 }
+/** A finished agent that ended `secondsAgo` seconds before T0. */
+function finishedAgent(id: string, secondsAgo = 1, over: Partial<Agent> = {}): Agent {
+  return agent({ id, status: 'done', end_ms: T0 - secondsAgo * 1000, ...over })
+}
 
 test('modelFamily (i18n.ts: the text cards\' colour token; the Client props carry the model word alone)', () => {
   expect(modelFamily('claude-opus-5-5')).toBe('opus')
@@ -66,8 +70,12 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(p.rooms[0]?.agents.map(a => a.id)).toEqual(['a1', 'a2'])
   // the row's name is the persona's (persona 3), never the role — that is the drawer's subtitle (Asaf's cleanup, 2026-10-17); the row
   // is slim: what the cards draw and nothing else (no clock, no tool or model family, no lead flag, no first-seen stamp)
-  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', act: '📖 קורא', model: 'Opus 5.5', failed: false, longRunning: false, star: 0 })
+  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', act: '📖 קורא', model: 'Opus 5.5', task: 'x', failed: false, longRunning: false, star: 0 })
   expect(JSON.stringify(p)).not.toContain('xxxxxxxxxx')
+  // the row's task (the dim task column from CENTRE_AT columns): the short task cut to TASK_MAX cells, whole glyphs
+  expect(buildOfficeProps(input([agent({ id: 'a1', task_short: 'Read the spec and the plan, then report' })])).rooms[0]?.agents[0]?.task).toBe('Read the spec and the p…')
+  expect(buildOfficeProps(input([agent({ id: 'a1', task_short: '🦉'.repeat(20) })])).rooms[0]?.agents[0]?.task).toBe('🦉'.repeat(11) + '…')
+  expect(buildOfficeProps(input([agent({ id: 'a1', task_short: '' })])).rooms[0]?.agents[0]?.task).toBe('')
   expect(p.drawer).toBeNull()
   const withDrawer = buildOfficeProps(input([agent({ id: 'a1', task_short: 'Read the spec' })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
   expect(withDrawer.drawer?.task.length).toBe(4000)
@@ -80,18 +88,52 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(roled.drawer?.sub).toBe('Reviewer')
   const finished = buildOfficeProps(input(two, { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'a2' } }))
   expect(finished.drawer?.elapsedMin).toBe(1) // done: the duration start → end_ms (119 s)
-  // the drawer says whether its clock is a duration (status done — a failed agent's too, whose chip reads ❌) or the elapsed time
-  expect(finished.drawer?.done).toBe(true)
-  expect(withDrawer.drawer?.done).toBe(false)
+  // THE STATUS LINE's data (office-chrome.ts drawerStatus words it): the status (done: the clock is a duration — a failed agent's
+  // too), the badges (office-layout.ts markOf), the agent type ('' for a lead or unknown)
+  expect(finished.drawer).toMatchObject({ status: 'done', failed: false, longRunning: false, star: 0, type: '' })
+  expect(withDrawer.drawer).toMatchObject({ status: 'running', failed: false, longRunning: false, star: 0, type: '' })
+  expect(buildOfficeProps(input([agent({ id: 'a1', subagent_type: 'Explore' })], { view: { ...DEFAULT_VIEW, selected: 'a1' } })).drawer?.type).toBe('Explore')
+  expect(buildOfficeProps(input([agent({ id: 'a1', start_ms: T0 - 60 * 60_000 })], { view: { ...DEFAULT_VIEW, selected: 'a1' } })).drawer?.longRunning).toBe(true)
   const failedOne = agent({ id: 'f1', status: 'done', failed: true, end_ms: T0 - 1000 })
   const failed = buildOfficeProps(input([failedOne], { prefs: shown, view: { ...DEFAULT_VIEW, selected: 'f1' } }))
-  expect(failed.drawer?.chips[0]).toBe(`${I18N.he.dFailed} ❌`)   // (the chip is read ❌ THEN the word: the mark trails the Hebrew word — office-layout.ts iconLabel)
-  expect(buildOfficeProps(input([failedOne], { prefs: { ...shown, lang: 'en' }, view: { ...DEFAULT_VIEW, selected: 'f1' } })).drawer?.chips[0]).toBe('❌ Failed')
-  expect(failed.drawer?.done).toBe(true)
+  expect(failed.drawer).toMatchObject({ status: 'done', failed: true })
+  expect(Object.keys(failed.drawer!).sort()).toEqual(['act', 'elapsedMin', 'failed', 'id', 'longRunning', 'model', 'name', 'result', 'star', 'status', 'sub', 'task', 'truncated', 'type'])
+  const starred = buildOfficeProps(input([finishedAgent('s1')], { payload: { ...EMPTY_PAYLOAD, agents: [finishedAgent('s1')], stars: { s1: T0 - 3000 } }, prefs: shown, view: { ...DEFAULT_VIEW, selected: 's1' } }))
+  expect(starred.drawer?.star).toBe(T0 - 3000)
   const wide = buildOfficeProps(input([agent({ id: 'a1', emoji: '🦉'.repeat(30) })], { view: { ...DEFAULT_VIEW, selected: 'a1' } }))
   expect(wide.drawer?.name).toBe('🦉'.repeat(23) + '…') // the 48-cell cap: whole glyphs, an ellipsis for the rest
   // a selection the office no longer holds draws no drawer
   expect(buildOfficeProps(input([agent({ id: 'a1' })], { view: { ...DEFAULT_VIEW, selected: 'gone' } })).drawer).toBeNull()
+})
+
+test('THE BADGED FIRST (the probe\'s round 8): among a room\'s finished, a ⭐ one (its stamp alive) and a ❌ one rank first — kept among the RECENT_DONE the room draws however old their finish, and drawn ahead of the other finished; the working and waiting stay first, in the office\'s order; with every finished shown the same order holds', () => {
+  // r1 working; five finished, d0 the oldest (50 s ago) with a live ⭐, d4 failed (40 s ago), d1..d3 fresher
+  const star = finishedAgent('d0', 50)
+  const bad = finishedAgent('d4', 40, { failed: true })
+  const five = [agent({ id: 'r1' }), star, finishedAgent('d1', 3), finishedAgent('d2', 2), finishedAgent('d3', 1), bad]
+  const payload = { ...EMPTY_PAYLOAD, agents: five, stars: { d0: T0 - 3000 } }
+  const held = buildOfficeProps(input(five, { payload }))
+  expect(held.rooms[0]?.agents.map(a => a.id)).toEqual(['r1', 'd0', 'd4', 'd3'])   // the badged two, then the freshest of the rest
+  expect(held.rooms[0]?.agents.map(a => a.star !== 0)).toEqual([false, true, false, false])
+  expect(held.rooms[0]?.agents.map(a => a.failed)).toEqual([false, false, true, false])
+  expect(held.rooms[0]).toMatchObject({ moreDone: 2, moreLabel: I18N.he.moreDoneN(2), done: 5 })
+  // the ⭐ expired: d0 ranks by its finish again — the oldest, held back
+  const expired = buildOfficeProps(input(five, { payload: { ...payload, stars: { d0: T0 - JUST_FINISHED_MS } } }))
+  expect(expired.rooms[0]?.agents.map(a => a.id)).toEqual(['r1', 'd4', 'd2', 'd3'])   // (the rest in the office's order)
+  // every finished shown: the live first, then the badged, then the rest in the office's order
+  const all = buildOfficeProps(input(five, { payload, prefs: { ...DEFAULT_PREFS, showDone: true } }))
+  expect(all.rooms[0]?.agents.map(a => a.id)).toEqual(['r1', 'd0', 'd4', 'd1', 'd2', 'd3'])
+  // the walk of the text cards (officeView's order without a recent-done pick) is untouched: the payload's order
+  expect(officeView(five, '', 'he', true, {}, []).order.map(a => a.id)).toEqual(['r1', 'd0', 'd1', 'd2', 'd3', 'd4'])
+})
+
+test('buildOfficeProps: 200 agents with the task column (show finished on, long short tasks) stay far under the Client props bound', () => {
+  const many = Array.from({ length: 200 }, (_, i) => agent({ id: `agent-${String(i).padStart(16, '0')}`, session_full: `s${i % 10}`, session: `s${i % 10}`, task_short: `${'משימה ארוכה למדי מספר '.repeat(3)}${i}`, ...(i % 3 === 0 ? { status: 'done' as const, end_ms: T0 - 1000 } : {}) }))
+  const p = buildOfficeProps(input(many, { prefs: { ...DEFAULT_PREFS, showDone: true } }))
+  expect(p.rooms.flatMap(r => r.agents)).toHaveLength(200)
+  expect(p.rooms.flatMap(r => r.agents).every(a => a.task.length <= 25)).toBe(true)
+  expect(JSON.stringify(p).length).toBeLessThan(60_000)   // measured 2026-10-20: see the responsive report
+  expect(JSON.stringify(p).length).toBeLessThan(PROPS_BUDGET)
 })
 
 test('buildOfficeProps: the empty office names its kind with the i18n message', () => {

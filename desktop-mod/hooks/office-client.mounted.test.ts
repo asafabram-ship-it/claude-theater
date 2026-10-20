@@ -13,9 +13,9 @@ import { expect, test } from 'claude-code/testing'
 
 import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
-import { CHROME_ROWS, chromeRows, windowOf } from './office-chrome'
+import { CHROME_ROWS_SEARCH, chromeRows, fixedRows, windowOf } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
-import { CARD_BORDER, FOCUS_MARK, officeModel, rowCount } from './office-layout'
+import { CARD_BORDER, FOCUS_MARK, nb, officeModel, rowCount } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaName } from './personas'
@@ -119,16 +119,17 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'mute' }), 'mute').toBeDefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'help' }), 'settings').toBeDefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' }), 'still: in the settings popover, not the toolbar').toBeUndefined()
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), 'search').toBeDefined()
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), 'search: only above SEARCH_FROM shown agents (spec 2026-10-10 §2 item 22)').toBeUndefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^Opus$/ }), 'the model word').toBeDefined()   // the model's family word (the version from 60 columns)
   // one card, its rows the two agents: the status mark, `${emoji} ${name}`, the model word, the activity whole
   const cards = await cardsOf(ui)
   expect(cards).toHaveLength(1)
-  expect(rowsOf(cards[0]!)).toEqual([['●', whoOf(p0, 'lead'), 'Opus', '🤔 חושב'], ['●', whoOf(p0, 'a1'), 'Opus', '📖 קורא']])
+  expect(rowsOf(cards[0]!)).toEqual([['●', whoOf(p0, 'lead'), 'Opus', '🤔', 'חושב'], ['●', whoOf(p0, 'a1'), 'Opus', '📖', 'קורא']])
   expect(await focused(ui, p0)).toEqual([])
-  // the lead is the first row of the card (layout line 4), the whole row its hit
+  // the lead is the first row of the card (layout line 4), the whole row its hit; two agents shown: the chrome four rows (no search field)
   const x = 5
-  const y = CHROME_ROWS + lineOf(p0, 'lead')
+  expect(fixedRows(p0)).toBe(4)
+  const y = fixedRows(p0) + lineOf(p0, 'lead')
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x, y, button: 'left' })
   // the click gave the row the keyboard focus (its marker) and posted `open`: the hook opened its drawer
   const pOpen = await officeProps(ui)
@@ -149,7 +150,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   const p1 = await officeProps(ui)
   expect(p1.rooms[0]?.agents.map(a => a.id)).toEqual(['lead', 'a1', 'n1'])
   expect(await drawnWho(ui)).toEqual([whoOf(p1, 'lead'), whoOf(p1, 'a1'), whoOf(p1, 'n1')])
-  expect(whoOf(p1, 'n1')).toBe(`${PERSONA_EMOJI[3]} ${personaName(5, 'he')}`)   // (the payload's emoji, the persona's name)
+  expect(whoOf(p1, 'n1')).toBe(nb(`${PERSONA_EMOJI[3]} ${personaName(5, 'he')}`))   // (the payload's emoji, the persona's name, a no-break space between: nb)
   expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   expect(await focused(ui, p1)).toEqual([whoOf(p1, 'lead')])      // the focus survived the publish
   // a finisher: its row turns ○ and `✅ סיים`, dim; nothing is tinted and no clock runs — the ⭐ stamp and the pulse it starts are
@@ -159,7 +160,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   const p2 = await officeProps(ui)
   expect(p2.rooms[0]?.agents.find(a => a.id === 'a1')).toMatchObject({ status: 'done', star: 0 })
   const doneRow = rowsOf((await cardsOf(ui))[0]!).find(r => r[1] === whoOf(p2, 'a1'))
-  expect(doneRow).toEqual(['○', whoOf(p2, 'a1'), 'Opus', '✅ סיים'])
+  expect(doneRow).toEqual(['○', whoOf(p2, 'a1'), 'Opus', '✅', 'סיים'])
   expect(await withBg(ui, FX_BG.done) || await withBg(ui, FX_BG.doneAlt)).toBe(false)
   await ui.advance(FX_DONE_MS + FX_TICK_MS * 8)   // no clock: nothing happens
   expect(await withBg(ui, FX_BG.done) || await withBg(ui, FX_BG.doneAlt)).toBe(false)
@@ -188,18 +189,21 @@ test('DESKTOP (2.4): the engine scrolls natively — the Client is full height (
   await ui.unmount()
 })
 
-test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input keeps its text across a publish and the debounce; a newcomer\'s row appears without a fault', { timeoutMs: 30_000 }, async ($, on) => {
-  // four agents at 45 columns: lead, a1, a2, a3 on layout lines 4..7
-  let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 }), agent({ id: 'a2', persona_id: 8 }), agent({ id: 'a3', persona_id: 9 })]
+test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input (drawn: thirteen agents shown) keeps its text across a publish and the debounce; a newcomer\'s row appears without a fault', { timeoutMs: 30_000 }, async ($, on) => {
+  // thirteen agents at 45 columns (more than SEARCH_FROM: the search field is drawn, on its own line): lead, a1, a2, a3 on layout
+  // lines 4..7, z1..z9 on 8..16
+  const Z = Array.from({ length: 9 }, (_, i) => `z${i + 1}`)
+  let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 }), agent({ id: 'a2', persona_id: 8 }), agent({ id: 'a3', persona_id: 9 }), ...Z.map((id, i) => agent({ id, persona_id: 20 + i }))]
   const { clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.resize({ in: OFFICE_KEY, columns: 45, rows: 30 })
+  // (a 60-row body: the window holds every row under the open drawer — the walk keeps to the rows drawn)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, scroll: { offset: 0, bodyRows: 60 } } })
+  await ui.resize({ in: OFFICE_KEY, columns: 45, rows: 60 })
   const p0 = await officeProps(ui)
   expect(['lead', 'a1', 'a2', 'a3'].map(id => lineOf(p0, id))).toEqual([4, 5, 6, 7])
   // a click gives the Client the focus (on the lead); `j` walks it row by row
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 5, y: CHROME_ROWS + 4, button: 'left' })
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: 5, y: fixedRows(p0) + 4, button: 'left' })
   const pSel = await officeProps(ui)                        // the click's `open` opened the lead's drawer (the chrome grew)
   expect(pSel.selected).toBe('lead')
   expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'lead')])
@@ -208,9 +212,11 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input kee
   expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'a2')])
   await ui.key({ in: OFFICE_KEY, key: 'j' })
   expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'a3')])
+  for (let i = 0; i < Z.length; i++) await ui.key({ in: OFFICE_KEY, key: 'j' })
+  expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'z9')])
   await ui.key({ in: OFFICE_KEY, key: 'j' })
-  expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'a3')])   // clamped at the last row
-  await ui.key({ in: OFFICE_KEY, key: 'k' })
+  expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'z9')])   // clamped at the last row
+  for (let i = 0; i < Z.length + 1; i++) await ui.key({ in: OFFICE_KEY, key: 'k' })
   expect(await focused(ui, pSel)).toEqual([whoOf(pSel, 'a2')])
   expect((await officeProps(ui)).selected).toBe('lead')     // j / k post nothing (the focus is the module's own): the drawer stays
   await ui.key({ in: OFFICE_KEY, key: 'f' })                // the toolbar's showDone: a post, the pref flips
@@ -240,14 +246,14 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input kee
   await clock.advance(POLL_MS * 2)
   expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.act).toBe('🔎 מחפש קוד')
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('')
-  // a newcomer: n1 is the fifth row (layout line 8); no fault, no loop, no tint
+  // a newcomer: n1 is the fourteenth row (layout line 17); no fault, no loop, no tint
   agents = [...agents, agent({ id: 'n1', persona_id: 5 })]
   await clock.advance(POLL_MS * 4)
   const p1 = await officeProps(ui)
-  expect(lineOf(p1, 'n1')).toBe(8)
-  expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', 'n1'].map(id => whoOf(p1, id)))
+  expect(lineOf(p1, 'n1')).toBe(17)
+  expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', ...Z, 'n1'].map(id => whoOf(p1, id)))
   await ui.advance(FX_TICK_MS * 8)
-  expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', 'n1'].map(id => whoOf(p1, id)))
+  expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', ...Z, 'n1'].map(id => whoOf(p1, id)))
   expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   await ui.unmount()
 })
@@ -263,7 +269,7 @@ test('DESKTOP (2.4): the window — the card drawn whole with its rows windowed 
   expect(p.offset).toBe(12)
   expect(p.rows).toBe(10)
   const chrome = chromeRows(p)
-  expect(chrome).toBe(CHROME_ROWS)
+  expect(chrome).toBe(CHROME_ROWS_SEARCH)   // (forty agents: the search field on its own line)
   const { from, count } = windowOf(chrome, 12, 10, rowCount(p))
   expect(from).toBe(12 - chrome)
   expect(count).toBe(10)
@@ -317,14 +323,14 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   const p1 = await officeProps(ui)
   expect(p1.drawer?.id).toBe('a36')
   expect(p1.offset).toBe(40)                                         // nothing scrolled: the engine's window stays
-  const H = chromeRows(p1) - CHROME_ROWS
+  const H = chromeRows(p1) - CHROME_ROWS_SEARCH
   // the module's tree: the fixed chrome, a spacer of the 34 lines above the window, the DRAWER at Client row 6 + 34 = 40 — the
   // engine's offset, so it opens in the viewport's first rows — then the card's FRAGMENT from line 34: no frame, no rows above
   // the window, its rows from a30 (the same layout line 34), the clicked row drawn and focused
   const kids = await kidsOf(ui)
   expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
   expect(propsOf(kids[3]).height).toBe(34)
-  expect(CHROME_ROWS + 34).toBe(p1.offset)
+  expect(CHROME_ROWS_SEARCH + 34).toBe(p1.offset)
   expect(kids[4]).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER, height: H - 1, marginBottom: 1 } })
   expect(textOf(kids[4]!)).toMatch(/משימה/)        // the drawer's task heading
   expect(propsOf(kids[5]).borderStyle).toBeUndefined()
@@ -351,9 +357,9 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   const help = await kidsOf(ui)
   expect(help.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
   expect(propsOf(help[3]).height).toBe(34)
-  expect(textOf(help[4]!)).toMatch(/k \/ j/)
+  expect(textOf(help[4]!)).toContain(nb('k / j'))
   expect(textOf(help[4]!)).toMatch(/הגדרות/)
-  expect(rowsOf((await cardsOf(ui))[0]!)).toHaveLength(25 - (chromeRows(p2) - CHROME_ROWS))
+  expect(rowsOf((await cardsOf(ui))[0]!)).toHaveLength(25 - (chromeRows(p2) - CHROME_ROWS_SEARCH))
   await ui.key({ in: OFFICE_KEY, key: 'h' })
   await ui.key({ in: OFFICE_KEY, key: 'x' })
   const p3 = await officeProps(ui)

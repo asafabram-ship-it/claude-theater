@@ -9,19 +9,21 @@
 //
 // Guarantees the Client contract needs (spec §6.2, §10): plain JSON (assertJson
 // throws on the first `undefined`, naming its path); `task`/`result` only in
-// the drawer (one selected agent), never per agent; every text capped (name
-// 24, act 16, room title and the drawer's name / subtitle 48, task/result
-// 4000 — whole glyphs, through the layout's `cut`); ~100 agents ≈ 16 KB (the
-// slim rows of the fix wave, 2026-10-19: 23 KB before), far
-// under the 100,000-character props bound — and never past it: at most
-// MAX_PROPS_AGENTS agents ride the props (the rest counted in the footer,
+// the drawer (one selected agent), never per agent — the row's `task` is the
+// SHORT task cut to TASK_MAX cells (the dim task column from 100 columns);
+// every text capped (name 24, act 18, the row's task 24, room title and the
+// drawer's name / subtitle 48, task/result 4000 — whole glyphs, through the
+// layout's `cut`); 200 agents with long short tasks ≈ 44 KB (measured
+// 2026-10-20; ~100 agents ≈ 16 KB before the task column, 23 KB with the old
+// fields), under the 100,000-character props bound — and never past it: at
+// most MAX_PROPS_AGENTS agents ride the props (the rest counted in the footer,
 // `+N`), and props measured over PROPS_BUDGET shed the drawer's long text,
 // then more agents.
 
 import { I18N, activityLabel, dirOf, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
-import type { Payload, Prefs, View } from './model'
-import { ACT_MAX, NAME_MAX, cut, iconLabel } from './office-layout'
+import type { Agent, Payload, Prefs, View } from './model'
+import { ACT_MAX, NAME_MAX, TASK_MAX, cut } from './office-layout'
 import { UNKNOWN_MODEL_PILL } from './office-svg'
 import { personaName } from './personas'
 import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
@@ -31,14 +33,16 @@ export const OFFICE_KEY = 'office'
 
 /**
  * One agent row as the cards draw it (office-layout.ts): the status mark from `status`, `failed`, `longRunning` and `star`,
- * `${emoji} ${name}`, the model word, the activity. Nothing else rides the props: the rows carry no clock (the drawer's chip
- * has the minutes), and no tool family, model family, lead flag or first-seen stamp — the cards read none of them.
+ * `${emoji} ${name}`, the model word, the activity, and the short task (`task_short` cut to TASK_MAX: the dim task column
+ * from CENTRE_AT columns). Nothing else rides the props: the rows carry no clock (the drawer's status line has the
+ * minutes), and no tool family, model family, lead flag or first-seen stamp — the cards read none of them.
  */
 export type OfficeAgent = {
   id: string; emoji: string; name: string
   status: 'running' | 'stale' | 'done'
   act: string                                               // activityLabel(a, lang)
   model: string                                             // modelLabel(a.model) or '?'
+  task: string                                              // cut(task_short, TASK_MAX)
   failed: boolean; longRunning: boolean
   star: number                                              // detection stamp (the poll's clock) of a just-finished agent inside the ⭐ window, else 0
 }
@@ -54,11 +58,14 @@ export type OfficeRoom = {
   moreLabel: string
 }
 
+/** The drawer's data: the status, its badges (the status line's mark: office-layout.ts markOf) and the agent type ride it; the Client words the status line (office-chrome.ts drawerStatus). */
 export type OfficeDrawer = {
-  id: string; name: string; chips: string[]; model: string; act: string; task: string; result: string; truncated: boolean
+  id: string; name: string; model: string; act: string; task: string; result: string; truncated: boolean
+  status: 'running' | 'stale' | 'done'                      // a failed or killed agent is done: its mark ❌, its clock a duration
+  failed: boolean; longRunning: boolean; star: number
+  type: string                                              // the Agent call's subagent_type ('' for a lead, or unknown)
   elapsedMin: number | null                                 // whole minutes of agentElapsed(sel, nowMin, true): the duration when done, else the elapsed; null = unknown
   sub: string                                               // the dim subtitle under the name, as today: role || task_short (≤ 48)
-  done: boolean                                             // status 'done' (a failed or killed agent too): the clock is labelled Duration, else Elapsed
 }
 
 export type OfficeProps = {
@@ -156,26 +163,36 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const rtl = dirOf(lang) === 'rtl'
   const office = effectivePayload(input.payload, view, now)
   const showDone = view.demo || prefs.showDone
-  const { rooms, stat, order, moreDone } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins, RECENT_DONE)
-  const nowMin = minuteClock(now)
   const stars = office.stars
+  /** The ⭐ stamp of a finished agent while it is alive (inside the just-finished window), else 0. */
+  const starOf = (a: Agent): number => {
+    const at = stars[a.id]
+    return a.status === 'done' && at !== undefined && now - at < JUST_FINISHED_MS ? at : 0
+  }
+  // THE BADGED FIRST (the probe's round 8): among a room's finished the ⭐ and ❌ ones rank first — kept ahead of the others when
+  // the room draws its RECENT_DONE most recent (never hidden behind the more line), and drawn ahead of them
+  const starred = new Set(office.agents.filter(a => starOf(a) !== 0).map(a => a.id))
+  const { rooms, stat, order, moreDone } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins, RECENT_DONE, starred)
+  const nowMin = minuteClock(now)
   const cards = new Map<number, OfficeAgent>()
   /** The card of `order[i]` (memoised: a rebuild under the budget maps no agent twice). */
   const toAgent = (i: number): OfficeAgent => {
     const known = cards.get(i)
     if (known) return known
     const a = order[i]!
-    const starAt = stars[a.id]
     const card: OfficeAgent = {
       // the row's name is the persona's, always (the role / task stays in the drawer: Asaf's cleanup, 2026-10-17)
       id: a.id, emoji: a.emoji, name: cut(personaName(a.persona_id, lang), NAME_MAX), status: a.status,
       act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL,
+      task: cut(a.task_short, TASK_MAX),
       failed: a.failed === true, longRunning: isLongRunning(a, now),
-      star: a.status === 'done' && starAt !== undefined && now - starAt < JUST_FINISHED_MS ? starAt : 0,
+      star: starOf(a),
     }
     cards.set(i, card)
     return card
   }
+  /** Whether `a` ranks first among the finished: badged ⭐ (alive) or ❌. */
+  const badged = (a: Agent): boolean => a.failed === true || starred.has(a.id)
   // THE PROPS CAP's ranking: the cards still working or waiting first, then the finished — each in the office's order
   const ranked = order.map((_, i) => i).sort((x, y) => (order[x]!.status === 'done' ? 1 : 0) - (order[y]!.status === 'done' ? 1 : 0) || x - y)
   const sel = view.selected !== null ? office.agents.find(a => a.id === view.selected) : undefined
@@ -188,8 +205,11 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     const dropped = order.length - kept.size
     const outRooms: OfficeRoom[] = []
     for (const s of rooms) {
-      const agents: OfficeAgent[] = []
-      order.forEach((a, i) => { if (a.session_full === s && kept.has(i)) agents.push(toAgent(i)) })
+      // the room's rows: the working and waiting in the office's order, then the finished — the badged (⭐, ❌) first (the probe's)
+      const inRoom = order.map((a, i) => i).filter(i => order[i]!.session_full === s && kept.has(i))
+      const live = inRoom.filter(i => order[i]!.status !== 'done')
+      const fin = inRoom.filter(i => order[i]!.status === 'done')
+      const agents: OfficeAgent[] = [...live, ...fin.filter(i => badged(order[i]!)), ...fin.filter(i => !badged(order[i]!))].map(toAgent)
       if (agents.length === 0) continue // every agent of the room went over the cap: the footer counts them
       const st = stat.get(s)
       const shows = roomShowsDone(roomDone, showDone, s)
@@ -206,12 +226,11 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     const drawer: OfficeDrawer | null = sel ? {
       // as today's drawer (ui.tsx fillDrawer): the persona on the name line, role || task_short underneath — never the role twice
       id: sel.id, name: cut(`${sel.emoji} ${personaName(sel.persona_id, lang)}`, TITLE_MAX), sub: cut(sel.role || sel.task_short, TITLE_MAX),
-      // (the chip is a Text of its own, read ❌ THEN the word: the mark trails the Hebrew word in the string — office-layout.ts iconLabel)
-      chips: [sel.failed ? iconLabel('❌', L.dFailed, rtl) : sel.status === 'running' ? L.dWorking : sel.status === 'done' ? L.dDone : L.dStale, sel.subagent_type].filter(Boolean),
+      // the status line's data (office-chrome.ts drawerStatus words it; the mark is office-layout.ts markOf's)
+      status: sel.status, failed: sel.failed === true, longRunning: isLongRunning(sel, now), star: starOf(sel), type: sel.subagent_type,
       model: modelLabel(sel.model) || UNKNOWN_MODEL_PILL, act: activityLabel(sel, lang),
       elapsedMin: wholeMinutes(agentElapsed(sel, nowMin, true)),
       task: cut(sel.task || L.taskUnavailable, textMax), result: cut(sel.result ?? '', textMax), truncated: sel.truncated,
-      done: sel.status === 'done',
     } : null
     // the count of the agents over the cap leads the footer (short, so a narrow pane still shows it), then the scan notes
     const footer = [dropped > 0 ? L.moreAgentsN(dropped) : '', input.footer ?? ''].filter(Boolean).join(' · ')

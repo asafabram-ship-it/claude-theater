@@ -21,7 +21,7 @@ import {
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   minuteClock, renderKey, starsOf,
 } from './ui'
-import { CHROME_ROWS, REFUSED_RE, chromeRows, emptyLines, officeHeight } from './office-chrome'
+import { REFUSED_RE, chromeRows, emptyLines, fixedRows, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
 import { officeModel, rowCount, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
@@ -115,6 +115,19 @@ test('officeView: closed chats leave, finished hide per room, pinned rooms first
   expect(emptyKind('', 5, false)).toBe('noactive')
   expect(emptyKind('', 5, true)).toBe('nonewindow')
   expect(headerCounts(all)).toEqual({ run: 3, idle: 0, done: 1 })
+  // THE BADGED FIRST (the desktop's recent-done pick, the cards design round 8): among a room's hidden finished, a ❌ one — and a
+  // ⭐ one whose id the caller stamps in `starred` — ranks ahead of fresher finishes, so it is never held behind the more line
+  const fin = (id: string, secondsAgo: number, over: Partial<Agent> = {}) => agent({ id, status: 'done', end_ms: T0 - secondsAgo * 1000, ...over })
+  const crowd = [agent({ id: 'r' }), fin('old', 50), fin('bad', 40, { failed: true }), fin('n1', 3), fin('n2', 2), fin('n3', 1)]
+  const plain = officeView(crowd, '', 'he', false, {}, [], 3)
+  expect(plain.visible.map(a => a.id)).toEqual(['r', 'bad', 'n2', 'n3'])
+  expect(plain.moreDone.get(SA)).toBe(2)
+  const starred = officeView(crowd, '', 'he', false, {}, [], 3, new Set(['old']))
+  expect(starred.visible.map(a => a.id)).toEqual(['r', 'old', 'bad', 'n3'])
+  expect(starred.moreDone.get(SA)).toBe(2)
+  // without a recent-done pick (the text cards, the poll) the stamps change nothing
+  expect(officeView(crowd, '', 'he', false, {}, [], 0, new Set(['old'])).visible.map(a => a.id)).toEqual(['r'])
+  expect(officeView(crowd, '', 'he', true, {}, [], 0, new Set(['old'])).visible.map(a => a.id)).toEqual(['r', 'old', 'bad', 'n1', 'n2', 'n3'])
 })
 
 test('room "show finished" is tri-state: an override equal to the global toggle is dropped', () => {
@@ -633,7 +646,7 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(await cardOf(ui, 'b1')).toMatchObject({ act: '🔌 github', model: '?' })
     expect((await cardOf(ui, 'lead-a'))?.status).toBe('running')
     // the slim row: what the cards draw and nothing else (no clock, no tool or model family, no lead flag, no first-seen stamp)
-    expect(Object.keys((await cardOf(ui, 'a1'))!).sort()).toEqual(['act', 'emoji', 'failed', 'id', 'longRunning', 'model', 'name', 'star', 'status'])
+    expect(Object.keys((await cardOf(ui, 'a1'))!).sort()).toEqual(['act', 'emoji', 'failed', 'id', 'longRunning', 'model', 'name', 'star', 'status', 'task'])   // (`task`: the short task, the dim task column from 100 columns)
     expect(p.counts).toEqual({ run: 3, idle: 0, done: 1 })
     expect(p.rooms[0]?.done).toBe(1)
     expect(p.drawer).toBeNull()
@@ -976,7 +989,7 @@ test('THE FOOTER: an oversized transcript\'s count and the scan error reach the 
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
   let p = (await officePropsOf(desk))!
   expect(p.footer).toBe('1 transcript over 4 MiB skipped')
-  expect(chromeRows(p)).toBe(CHROME_ROWS + 1)
+  expect(chromeRows(p)).toBe(fixedRows(p) + 1)
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^1 transcript over 4 MiB skipped$/ })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /^1 transcript over 4 MiB skipped$/ })).toBeDefined()
   // the scan fails: its error joins the footer (the last good office stays drawn, its oversized count with it) — still one line
@@ -985,7 +998,7 @@ test('THE FOOTER: an oversized transcript\'s count and the scan error reach the 
   p = (await officePropsOf(desk))!
   // (the kit's env.get refuses: what the engine says then is the scan error)
   expect(p.footer).toMatch(/^1 transcript over 4 MiB skipped · .*env\.get/)
-  expect(chromeRows(p)).toBe(CHROME_ROWS + 1)
+  expect(chromeRows(p)).toBe(fixedRows(p) + 1)
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /env\.get/ })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /^1 transcript over 4 MiB skipped · .*env\.get/ })).toBeDefined()
   // the scan works again: the error leaves the footer
@@ -1203,7 +1216,7 @@ test('DESKTOP RTL: the empty office is the office Client\'s (the direction a fla
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^הפעילו סוכן בקלוד קוד$/ })).toBeDefined()
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^או הציצו איך נראה משרד עמוס$/ })).toBeDefined()
   expect(await desk.find({ in: OFFICE_KEY, key: 'watchDemo' })).toBeDefined()
-  expect((await desk.find({ in: OFFICE_KEY, key: 'search' }))?.props?.placeholder).toBe('חיפוש סוכנים 🔍')   // (the glass read first: it trails the Hebrew word — office-layout.ts iconLabel)
+  expect(await desk.find({ in: OFFICE_KEY, key: 'search' })).toBeUndefined()   // no search field in an empty office (only above SEARCH_FROM shown agents: spec 2026-10-10 §2 item 22; its placeholder `חיפוש סוכנים 🔍` is office-client.test.ts's)
   await desk.unmount()
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
   expect(await term.find({ type: 'Svg' })).toBeUndefined()

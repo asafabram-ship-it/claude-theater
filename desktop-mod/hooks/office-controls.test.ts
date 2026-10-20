@@ -37,9 +37,9 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import { I18N } from './i18n'
 import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
 import type { Agent, Prefs } from './model'
-import { CHROME_ROWS, HELP_ROWS, OVERLAY_GAP, REFUSED_RE, WINDOW_ROWS, chromeRows, overlayInWindow, overlayRows, windowOf } from './office-chrome'
+import { CHROME_ROWS_SEARCH, OVERLAY_GAP, REFUSED_RE, SEARCH_FROM, WINDOW_ROWS, chromeRows, fixedRows, helpRows, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
-import { CARD_BORDER, FOCUS_MARK, PIN, PIN_ZONE, officeModel, trimWindow } from './office-layout'
+import { CARD_BORDER, FOCUS_MARK, PIN, geometry, nb, officeModel, pinZone, trimWindow } from './office-layout'
 import type { Hit, RoomView } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
@@ -61,8 +61,15 @@ const DONE = Array.from({ length: RECENT_DONE + 1 }, (_, i) => `d${i + 1}`)
 /** Room A's rows while its finished are hidden, and with them all. */
 const DRAWN_A = ['lead-a', 'a1', ...DONE.slice(0, RECENT_DONE)]
 const ALL_A = ['lead-a', 'a1', ...DONE]
+/** Seven more working agents for room B: with them the office shows SEARCH_FROM + 1 agents (the fixture shows six: one finished writer is held back) and draws the search field (the 🔍 test). */
+const EXTRA = Array.from({ length: SEARCH_FROM + 1 - 6 }, (_, i) => `x${i + 1}`)
 const MORE_LABEL = I18N.he.moreDoneN(1)
 const HIDE_LABEL = I18N.he.hideDone
+/** The more / hide line as drawn: with no plain space (office-layout.ts nb: a one-line value never wraps). */
+const MORE_LINE = nb(`▸ ${MORE_LABEL}`)
+const HIDE_LINE = nb(`▸ ${HIDE_LABEL}`)
+/** The pin zone's cells at the probe's width. */
+const PIN_ZONE = pinZone(geometry(COLUMNS))
 
 function agent(over: Partial<Agent> & { id: string }): Agent {
   return {
@@ -213,7 +220,8 @@ async function rowsOk(ui: Ui, p: OfficeProps): Promise<void> {
       expect(textOf(counts)).toMatch(/^🟢\d+/)
     }
     for (const row of rowsOf(card)) {
-      expect([3, 4]).toContain(row.length)
+      expect(row.length).toBeGreaterThanOrEqual(3)   // status, who, the emoji; the model, the word and the task when the mode and the width have them
+      expect(row.length).toBeLessThanOrEqual(6)
       for (const v of row) { expect(v).not.toMatch(REFUSED_RE); expect(v).not.toMatch(/\n|⏱|′/) }
     }
     // a column holds its rows' Texts alone (no Box per value), each a one-line Text
@@ -253,7 +261,7 @@ test('☐ showDone: the Button flips prefs.showDone (mirrored to $.store), the b
   expect(await label(ui, 'showDone')).toBe('הצג שסיימו ☐')
   expect(ids(p0, SA)).toEqual(DRAWN_A)
   expect(roomOf(p0, SA)).toMatchObject({ showDone: false, moreDone: 1, moreLabel: MORE_LABEL })
-  expect((await headOf(ui, p0, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  expect((await headOf(ui, p0, SA)).more).toBe(MORE_LINE)
   expect(rowsOf(await cardOf(ui, p0, SA)).map(r => r[1])).toEqual(DRAWN_A.map(id => whoOf(p0, id)))
   await ui.press({ key: 'showDone' })
   const p1 = await officeProps(ui)
@@ -262,7 +270,7 @@ test('☐ showDone: the Button flips prefs.showDone (mirrored to $.store), the b
   expect(await label(ui, 'showDone')).toBe('הצג שסיימו ☑')
   expect(ids(p1, SA)).toEqual(ALL_A)
   expect(roomOf(p1, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
-  expect((await headOf(ui, p1, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
   expect(rowsOf(await cardOf(ui, p1, SA)).map(r => r[1])).toEqual(ALL_A.map(id => whoOf(p1, id)))
   expect(p1.counts).toEqual(p0.counts)   // the header counts the whole office either way
   await rowsOk(ui, p1)
@@ -302,12 +310,12 @@ test('⚙️ settings: the Button opens the settings popover (view.helpOpen: the
   await ui.press({ key: 'help' })
   const p1 = await officeProps(ui)
   expect(p1.helpOpen).toBe(true)
-  expect(chromeRows(p1)).toBe(CHROME_ROWS + HELP_ROWS + OVERLAY_GAP)
+  expect(chromeRows(p1)).toBe(fixedRows(p1) + helpRows(COLUMNS) + OVERLAY_GAP)
   const help = await overlay(ui)
-  expect(help).toMatchObject({ type: 'Box', props: { key: 'help', borderStyle: 'round', borderColor: CARD_BORDER, height: HELP_ROWS, marginBottom: OVERLAY_GAP } })
+  expect(help).toMatchObject({ type: 'Box', props: { key: 'help', borderStyle: 'round', borderColor: CARD_BORDER, height: helpRows(COLUMNS), marginBottom: OVERLAY_GAP } })
   expect(textOf(help!)).toMatch(/הגדרות/)
+  expect(textOf(help!)).toContain(nb('k / j'))   // (the shortcuts' column-major table: no plain space in a row)
   expect(textOf(help!)).not.toMatch(/עזרה|קיצורי מקלדת|Esc/)
-  expect(textOf(help!)).toMatch(/k \/ j/)
   for (const k of ['demo', 'still', 'lang', 'closeHelp']) expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: k }), k).toBeDefined()
   expect(rowsOf(await cardOf(ui, p1, SA))).toEqual(rowsA)
   await ui.press({ key: 'closeHelp' })
@@ -409,10 +417,12 @@ test('🌐 language: the settings\' Button switches to English (prefs.lang mirro
   expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'en'))
   expect(hitOf(p1, 'pin', SA).x).toBe(0)
   const a1 = rowsOf(await cardOf(ui, p1, SA)).find(r => r[1] === whoOf(p1, 'a1'))
-  const a1Row = officeModel(p1).rooms[0]!.rows.find(r => r.id === 'a1')!
-  expect(a1).toEqual(['●', whoOf(p1, 'a1'), 'Opus', a1Row.act])   // (the mark alone, at the left edge in LTR; the version from 60 columns)
-  expect(['📖 Reading', '📖']).toContain(a1Row.act)                  // (the English names are wider: the word fits the pane or its emoji stays)
-  expect((await headOf(ui, p1, SA)).more).toBe('▸ 1 more finished')
+  const m1 = officeModel(p1)
+  const a1Row = m1.rooms[0]!.rows.find(r => r.id === 'a1')!
+  expect(a1).toEqual(['●', whoOf(p1, 'a1'), 'Opus', '📖', ...(m1.mode.word ? ['Reading'] : [])])   // (the mark alone, at the left edge in LTR; the version from 60 columns; the English names are wider: the word fits the pane or its emoji stays alone)
+  expect(a1Row.actEmoji).toBe('📖')
+  expect(['Reading', '']).toContain(a1Row.actWord)
+  expect((await headOf(ui, p1, SA)).more).toBe(nb('▸ 1 more finished'))
   await rowsOk(ui, p1)
   await ui.press({ key: 'lang' })
   const p2 = await officeProps(ui)
@@ -444,7 +454,7 @@ test('📌 pin: the pointer over an unpinned card\'s title line draws a dim 📌
   expect(headB.x).toBe(COLUMNS - PIN_ZONE)   // RTL: the pin zone at the right edge
   expect(await pinOf(ui, p0, SB)).toBe('none')
   expect((await headOf(ui, p0, SB)).title).not.toContain('○')
-  expect((await headOf(ui, p0, SA)).title).toBe(TITLE_A)
+  expect((await headOf(ui, p0, SA)).title).toBe(nb(TITLE_A))
   // the hover: a dim 📌 on B's card alone, the props untouched, nothing written
   const writes = { ...captured.writes }
   const stores = { ...captured.storeWrites }
@@ -487,7 +497,7 @@ test('room counts ✅: a click on a card\'s counts toggles that room\'s finished
   const p0 = await officeProps(ui)
   const counts = hitOf(p0, 'roomDone', SA)
   expect(counts.x).toBe(0)   // RTL: the counts zone at the left edge
-  expect((await headOf(ui, p0, SA)).counts).toBe(`🟢2 ✅${DONE.length}`)
+  expect((await headOf(ui, p0, SA)).counts).toBe(nb(`🟢2 ✅${DONE.length}`))
   expect(officeModel(p0).hits.some(h => h.kind === 'roomDone' && h.id === SB)).toBe(false)   // room B has no finished: no ✅ count, nothing to click
   await click(ui, 'roomDone', SA)
   expect(captured.store.roomDone).toEqual({ [SA]: true })
@@ -500,7 +510,7 @@ test('room counts ✅: a click on a card\'s counts toggles that room\'s finished
   expect(roomOf(p1, SB).showDone).toBe(false)
   expect(p1.prefs.showDone).toBe(false)
   expect(await label(ui, 'showDone')).toBe('הצג שסיימו ☐')
-  expect((await headOf(ui, p1, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
   await rowsOk(ui, p1)
   await click(ui, 'roomDone', SA)
   await clock.advance(REDRAW_LATCH_MS)
@@ -516,7 +526,7 @@ test('the ▸ עוד N שסיימו line: a click on it shows the room\'s finish
   const p0 = await officeProps(ui)
   const more = hitOf(p0, 'moreDone', SA)
   expect(more.w).toBe(COLUMNS)   // the whole line is the hit
-  expect((await headOf(ui, p0, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  expect((await headOf(ui, p0, SA)).more).toBe(MORE_LINE)
   expect(officeModel(p0).hits.some(h => h.kind === 'moreDone' && h.id === SB)).toBe(false)   // room B holds no finished: no such line
   await click(ui, 'moreDone', SA)
   expect(captured.store.roomDone).toEqual({ [SA]: true })
@@ -526,13 +536,13 @@ test('the ▸ עוד N שסיימו line: a click on it shows the room\'s finish
   expect(roomOf(p1, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
   const hide = hitOf(p1, 'moreDone', SA)
   expect(hide.y).toBe(more.y + 1)   // one line lower: the held-back writer is drawn above it
-  expect((await headOf(ui, p1, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
   await click(ui, 'moreDone', SA)
   await clock.advance(REDRAW_LATCH_MS)
   const p2 = await officeProps(ui)
   expect(captured.store.roomDone).toEqual({})
   expect(ids(p2, SA)).toEqual(DRAWN_A)
-  expect((await headOf(ui, p2, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  expect((await headOf(ui, p2, SA)).more).toBe(MORE_LINE)
   await ui.unmount()
 })
 
@@ -548,15 +558,15 @@ test('row click: a click on an agent row selects it and opens its drawer (view.s
   await click(ui, 'agent', 'a1')
   const p1 = await officeProps(ui)
   expect(p1.selected).toBe('a1')
-  expect(p1.drawer).toMatchObject({ id: 'a1', sub: 'map session-token validation', done: false, task: 'Task of a1.' })
+  expect(p1.drawer).toMatchObject({ id: 'a1', sub: 'map session-token validation', status: 'running', type: 'Explore', task: 'Task of a1.' })
   expect(p1.drawer?.name).toContain(personaName(7, 'he'))
   expect(captured.view).toMatchObject({ selected: 'a1', helpOpen: false, focusIndex: 1 })
   const drawer = await overlay(ui)
   expect(drawer).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER, paddingY: 1, height: overlayRows(p1) - OVERLAY_GAP, marginBottom: OVERLAY_GAP } })
   expect(textOf(drawer!)).toMatch(/משימה/)
   expect(textOf(drawer!)).toContain('Task of a1.')
-  expect(textOf(drawer!)).toMatch(/עובד/)
-  expect(chromeRows(p1)).toBe(CHROME_ROWS + overlayRows(p1))
+  expect(textOf(drawer!)).toMatch(/עובד · זמן \d+ דק׳ · Explore/)   // THE STATUS LINE (round 8)
+  expect(chromeRows(p1)).toBe(fixedRows(p1) + overlayRows(p1))
   expect(await focused(ui, p1)).toEqual([whoOf(p1, 'a1')])   // the click's keyboard focus: the marker on its row
   expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)   // no selection band
   expect(rowsOf(await cardOf(ui, p1, SA)).map(r => r[1])).toContain(whoOf(p1, 'a1'))
@@ -565,14 +575,14 @@ test('row click: a click on an agent row selects it and opens its drawer (view.s
   await click(ui, 'agent', 'd1')
   const p2 = await officeProps(ui)
   expect(p2.selected).toBe('d1')
-  expect(p2.drawer).toMatchObject({ id: 'd1', done: true, sub: 'write part 1', result: 'Done.' })
+  expect(p2.drawer).toMatchObject({ id: 'd1', status: 'done', sub: 'write part 1', result: 'Done.' })
   expect(textOf((await overlay(ui))!)).toMatch(/סיים/)
   expect(textOf((await overlay(ui))!)).toMatch(/משך \d+ דק׳/)
   expect(await focused(ui, p2)).toEqual([whoOf(p2, 'd1')])
   await ui.unmount()
 })
 
-test('drawer ✕: the Button closes the drawer (view.selected null, the chrome back to its six rows); the keyboard focus stays on the row', { timeoutMs: 30_000 }, async ($, on) => {
+test('drawer ✕: the Button closes the drawer (view.selected null, the chrome back to its fixed rows); the keyboard focus stays on the row', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui } = await mountOffice($, on)
   await click(ui, 'agent', 'a1')
   expect((await officeProps(ui)).drawer?.id).toBe('a1')
@@ -583,7 +593,7 @@ test('drawer ✕: the Button closes the drawer (view.selected null, the chrome b
   expect(p1.selected).toBeNull()
   expect(await overlay(ui)).toBeUndefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'close' })).toBeUndefined()
-  expect(chromeRows(p1)).toBe(CHROME_ROWS)
+  expect(chromeRows(p1)).toBe(fixedRows(p1))
   expect(await focused(ui, p1)).toEqual([whoOf(p1, 'a1')])
   await ui.unmount()
 })
@@ -592,10 +602,22 @@ test('drawer ✕: the Button closes the drawer (view.selected null, the chrome b
 // the search
 // ---------------------------------------------------------------------------
 
-test('🔍 search: the typed text reaches view.search after the debounce and narrows the office to the matching agents (the header counts unchanged); a text nobody matches shows the no-match office; Enter on an empty field clears it and every room is back', { timeoutMs: 30_000 }, async ($, on) => {
+test('🔍 search field (spec 2026-10-10 §2 item 22): the fixture\'s six shown agents (seven, one finished held back) draw no search field — the chrome is four rows', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui } = await mountOffice($, on)
-  const p0 = await officeProps(ui)
+  const pf = await officeProps(ui)
+  expect(pf.rooms.flatMap(r => r.agents)).toHaveLength(6)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' })).toBeUndefined()
+  expect(chromeRows(pf)).toBe(4)
+  await rowsOk(ui, pf)
+  await ui.unmount()
+})
+
+test('🔍 search (spec 2026-10-10 §2 item 22): with seven more agents in room B the office shows more than SEARCH_FROM and draws the field (on its own line at the probe\'s width); the typed text reaches view.search after the debounce and narrows the office to the matching agents (the header counts unchanged; the field stays while the search is active); a text nobody matches shows the no-match office; Enter on an empty field clears it and every room is back', { timeoutMs: 30_000 }, async ($, on) => {
   const input = async () => (await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))
+  const { ui } = await mountOffice($, on, () => [...fixture(), ...EXTRA.map(id => agent({ id, role: 'extra work', session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research', persona_id: 15 }))])
+  const p0 = await officeProps(ui)
+  expect(p0.rooms.flatMap(r => r.agents)).toHaveLength(SEARCH_FROM + 1)
+  expect(chromeRows(p0)).toBe(CHROME_ROWS_SEARCH)
   expect((await input())?.props.placeholder).toBe('חיפוש סוכנים 🔍')
   expect((await input())?.props.value).toBe('')
   await ui.input({ key: 'search', text: 'triage', kind: 'change' })
@@ -608,6 +630,7 @@ test('🔍 search: the typed text reaches view.search after the debounce and nar
   expect(p1.rooms.map(r => r.agents.map(a => a.id))).toEqual([['b1']])
   expect(p1.empty).toBeNull()
   expect(p1.counts).toEqual(p0.counts)
+  expect(chromeRows(p1)).toBe(CHROME_ROWS_SEARCH)   // one agent shown, but the search is active: the field stays
   expect((await input())?.props.value).toBe('triage')   // the redraw the post caused draws the typed text
   expect((await headOf(ui, p1, SB)).title).toContain('research')
   expect(await cardsOf(ui)).toHaveLength(1)
@@ -625,7 +648,7 @@ test('🔍 search: the typed text reaches view.search after the debounce and nar
   const p3 = await officeProps(ui)
   expect(p3.search).toBe('')
   expect(p3.empty).toBeNull()
-  expect(p3.rooms.map(r => r.agents.map(a => a.id))).toEqual([DRAWN_A, ['b1']])
+  expect(p3.rooms.map(r => r.agents.map(a => a.id))).toEqual([DRAWN_A, ['b1', ...EXTRA]])
   expect((await input())?.props.value).toBe('')
   expect(await cardsOf(ui)).toHaveLength(2)
   await ui.unmount()
@@ -792,11 +815,12 @@ test('SCROLLED (the line map): the pane scrolled into room A, every line of the 
   expect(p0.rooms.map(r => r.id)).toEqual([SA, SB])
   expect(ids(p0, SA)).toEqual(['lead-a', ...Array.from({ length: READERS }, (_, i) => `r${i + 1}`), ...DONE.slice(0, RECENT_DONE)])
   const lines = officeModel(p0).lines
-  expect(lines.length).toBeGreaterThan(CHROME_ROWS + BODY)   // taller than the window: the pane scrolls
-  expect(windowNow(p0)).toEqual({ from: 0, count: BODY - CHROME_ROWS })
+  expect(fixedRows(p0)).toBe(CHROME_ROWS_SEARCH)   // (the tall office shows more than SEARCH_FROM agents: the search field on its own line)
+  expect(lines.length).toBeGreaterThan(CHROME_ROWS_SEARCH + BODY)   // taller than the window: the pane scrolls
+  expect(windowNow(p0)).toEqual({ from: 0, count: BODY - CHROME_ROWS_SEARCH })
   // scrolled 15 lines into A's rows (the engine's offset: the chrome and 15 layout lines)
   const FROM = 15
-  await scrollTo(ui, CHROME_ROWS + FROM, BODY)
+  await scrollTo(ui, CHROME_ROWS_SEARCH + FROM, BODY)
   const p1 = await officeProps(ui)
   expect(p1.rows).toBe(BODY)
   expect(windowNow(p1)).toEqual({ from: FROM, count: BODY })
@@ -851,12 +875,12 @@ test('SCROLLED (the line map): the pane scrolled into room A, every line of the 
   const kids = await kidsOf(ui)
   expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
   expect(propsOf(kids[3]).height).toBe(FROM)
-  expect(CHROME_ROWS + FROM).toBe(pd.offset)
+  expect(CHROME_ROWS_SEARCH + FROM).toBe(pd.offset)
   expect(chromeRows(pd) + FROM).toBe(pd.offset + H)   // the first row under the drawer: the viewport's row H
   // the drawer's own rows (the viewport's first H), its old place under the chrome (the spacer's rows now) and the chrome: dead
   for (let yy = pd.offset; yy < pd.offset + H; yy++) await deadRow(ui, yy, `the drawer's row ${yy - pd.offset}`)
-  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + H; yy++) await deadRow(ui, yy, `the spacer's row ${yy}`)
-  for (let yy = 0; yy < CHROME_ROWS; yy++) await deadRow(ui, yy, `the chrome's row ${yy}`)
+  for (let yy = CHROME_ROWS_SEARCH; yy < CHROME_ROWS_SEARCH + H; yy++) await deadRow(ui, yy, `the spacer's row ${yy}`)
+  for (let yy = 0; yy < CHROME_ROWS_SEARCH; yy++) await deadRow(ui, yy, `the chrome's row ${yy}`)
   // the first row under the drawer opens line FROM's agent; the viewport's last row the window's last
   await clickRow(ui, pd.offset + H)
   expect((await officeProps(ui)).drawer?.id).toBe(lines[FROM]!.agent)
@@ -872,7 +896,7 @@ test('SCROLLED (the line map): the pane scrolled into room A, every line of the 
   const ph = await officeProps(ui)
   expect(ph.helpOpen).toBe(true)
   const Hh = overlayRows(ph)
-  expect(Hh).toBe(HELP_ROWS + OVERLAY_GAP)
+  expect(Hh).toBe(helpRows(COLUMNS) + OVERLAY_GAP)
   expect(windowNow(ph)).toEqual({ from: FROM, count: BODY - Hh })
   expect((await kidsOf(ui)).map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
   await rowsOk(ui, ph)
@@ -896,7 +920,7 @@ test('SCROLLED (the card controls lower down): with the window on A\'s end and B
   const roomB = m0.rooms[1]!
   // the window from A's last rows: A's more line, its frame, and B whole
   const FROM = roomA.moreAt - 9
-  await scrollTo(ui, CHROME_ROWS + FROM, BODY)
+  await scrollTo(ui, fixedRows(p0) + FROM, BODY)
   const p1 = await officeProps(ui)
   const w1 = windowNow(p1)
   expect(w1.from).toBe(FROM)
@@ -917,7 +941,7 @@ test('SCROLLED (the card controls lower down): with the window on A\'s end and B
   await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
   expect(captured.writes).toEqual(writes)
   // A's more line at its scrolled Client row: A's override; after the latch the held-back writer is drawn and the hide line is one lower
-  expect((await headOf(ui, p1, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  expect((await headOf(ui, p1, SA)).more).toBe(MORE_LINE)
   await click(ui, 'moreDone', SA)
   expect(captured.store.roomDone).toEqual({ [SA]: true })
   await clock.advance(REDRAW_LATCH_MS)
@@ -926,17 +950,17 @@ test('SCROLLED (the card controls lower down): with the window on A\'s end and B
   expect(ids(p2, SA)).toEqual([...ids(p1, SA), DONE[RECENT_DONE]])
   expect(hitOf(p2, 'moreDone', SA).y).toBe(roomA.moreAt + 1)
   expect(p2.offset).toBe(p1.offset)
-  expect((await headOf(ui, p2, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p2, SA)).more).toBe(HIDE_LINE)
   await rowsOk(ui, p2)
   await click(ui, 'moreDone', SA)
   await clock.advance(REDRAW_LATCH_MS)
   const p3 = await officeProps(ui)
   expect(captured.store.roomDone).toEqual({})
   expect(ids(p3, SA)).toEqual(ids(p1, SA))
-  expect((await headOf(ui, p3, SA)).more).toBe(`▸ ${MORE_LABEL}`)
+  expect((await headOf(ui, p3, SA)).more).toBe(MORE_LINE)
   // B's ✅ counts at its scrolled title line: B's override; B drew its one finished already (among the recent), so the change
   // is its hide line; clicked again, gone
-  expect((await headOf(ui, p3, SB)).counts).toBe('🟢1 ✅1')
+  expect((await headOf(ui, p3, SB)).counts).toBe(nb('🟢1 ✅1'))
   expect((await headOf(ui, p3, SB)).more).toBe('')
   expect(roomOf(p3, SB).moreLabel).toBe('')
   await click(ui, 'roomDone', SB)
@@ -947,7 +971,7 @@ test('SCROLLED (the card controls lower down): with the window on A\'s end and B
   expect(ids(p4, SB)).toEqual(['b1', 'bd'])
   expect(roomOf(p4, SA).showDone).toBe(false)
   expect(p4.prefs.showDone).toBe(false)
-  expect((await headOf(ui, p4, SB)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p4, SB)).more).toBe(HIDE_LINE)
   expect(officeModel(p4).rooms[1]!.height).toBe(roomB.height + 2)
   await rowsOk(ui, p4)
   await click(ui, 'roomDone', SB)
@@ -987,10 +1011,10 @@ test('OVERLAID at the top: under the open settings a row click opens its drawer 
   await ui.key({ in: OFFICE_KEY, key: 'h' })
   const p1 = await officeProps(ui)
   expect(p1.helpOpen).toBe(true)
-  expect(chromeRows(p1)).toBe(CHROME_ROWS + HELP_ROWS + OVERLAY_GAP)
+  expect(chromeRows(p1)).toBe(fixedRows(p1) + helpRows(COLUMNS) + OVERLAY_GAP)
   expect(hitOf(p1, 'agent', 'a1').y).toBe(hitOf(p0, 'agent', 'a1').y)   // the layout is the same: only the chrome grew
-  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + HELP_ROWS; yy++) await deadRow(ui, yy, `settings row ${yy}`)
-  await deadRow(ui, CHROME_ROWS + hitOf(p1, 'agent', 'a1').y, 'a1\'s old Client row, under the popover now')
+  for (let yy = fixedRows(p1); yy < fixedRows(p1) + helpRows(COLUMNS); yy++) await deadRow(ui, yy, `settings row ${yy}`)
+  await deadRow(ui, fixedRows(p1) + hitOf(p1, 'agent', 'a1').y, 'a1\'s old Client row, under the popover now')
   expect((await officeProps(ui)).helpOpen).toBe(true)
   await click(ui, 'agent', 'a1')
   const p2 = await officeProps(ui)
@@ -1017,7 +1041,7 @@ test('OVERLAID at the top: under the open settings a row click opens its drawer 
   const p5 = await officeProps(ui)
   expect(p5.helpOpen).toBe(true)
   expect(ids(p5, SA)).toEqual(ALL_A)
-  expect((await headOf(ui, p5, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p5, SA)).more).toBe(HIDE_LINE)
   await rowsOk(ui, p5)
   await click(ui, 'roomDone', SA)
   await clock.advance(REDRAW_LATCH_MS)
@@ -1029,8 +1053,8 @@ test('OVERLAID at the top: under the open settings a row click opens its drawer 
   const p6 = await officeProps(ui)
   expect(p6.drawer?.id).toBe('a1')
   const H = overlayRows(p6)
-  expect(chromeRows(p6)).toBe(CHROME_ROWS + H)
-  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + H; yy++) await deadRow(ui, yy, `drawer row ${yy}`)
+  expect(chromeRows(p6)).toBe(fixedRows(p6) + H)
+  for (let yy = fixedRows(p6); yy < fixedRows(p6) + H; yy++) await deadRow(ui, yy, `drawer row ${yy}`)
   await click(ui, 'pin', SB)
   const p7 = await officeProps(ui)
   expect((captured.store.prefs as Prefs).pins).toEqual([SB])
@@ -1045,7 +1069,7 @@ test('OVERLAID at the top: under the open settings a row click opens its drawer 
   const p8 = await officeProps(ui)
   expect(p8.drawer?.id).toBe('a1')
   expect(ids(p8, SA)).toEqual(ALL_A)
-  expect((await headOf(ui, p8, SA)).more).toBe(`▸ ${HIDE_LABEL}`)
+  expect((await headOf(ui, p8, SA)).more).toBe(HIDE_LINE)
   expect(await focused(ui, p8)).toEqual([whoOf(p8, 'a1')])
   await click(ui, 'moreDone', SA)
   await clock.advance(REDRAW_LATCH_MS)

@@ -10,19 +10,19 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS, COMPACT_BELOW, DRAWER_FRAME_ROWS, HELP, HELP_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, ROW_CHARS, SEARCH_MAX, TASK_LINES, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, drawerInner, drawerLines, officeHeight, overlayInWindow, overlayRows, windowOf } from './office-chrome'
-import Office, { FX_BG, FX_DONE_MS, FX_TICK_MS, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP } from './office-client'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DRAWER_FRAME_ROWS, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, drawerInner, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, officeHeight, overlayInWindow, overlayRows, searchShown, shownAgents, windowOf } from './office-chrome'
+import Office, { FX_BG, FX_DONE_MS, FX_TICK_MS, INPUT_MAX, INPUT_MIN, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
-import { CARD_BORDER, DOT_FG, FOCUS_MARK, PIN, TITLE_GAP, cut, fitLine, officeModel, rowCount, textWidth } from './office-layout'
+import { CARD_BORDER, CENTRE_AT, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PIN, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth } from './office-layout'
 import type { Hit } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
-import { usageLabel, usageShort } from './usage'
+import { usageLabel, usageShort, usageTiny } from './usage'
 
 const LABELS: Record<string, string> = Object.fromEntries(Object.entries(I18N.he).filter((kv): kv is [string, string] => typeof kv[1] === 'string'))
 const LABELS_EN: Record<string, string> = Object.fromEntries(Object.entries(I18N.en).filter((kv): kv is [string, string] => typeof kv[1] === 'string'))
 
 function ag(id: string, over: Partial<OfficeAgent> = {}): OfficeAgent {
-  return { id, emoji: '🦉', name: id, status: 'running', act: '📖 קורא', model: 'Opus 5.5', failed: false, longRunning: false, star: 0, ...over }
+  return { id, emoji: '🦉', name: id, status: 'running', act: '📖 קורא', model: 'Opus 5.5', task: `task of ${id}`, failed: false, longRunning: false, star: 0, ...over }
 }
 function room(id: string, agents: OfficeAgent[], over: Partial<OfficeRoom> = {}): OfficeRoom {
   const n = (s: OfficeAgent['status']) => agents.filter(a => a.status === s).length
@@ -38,11 +38,13 @@ function props(over: Partial<OfficeProps> = {}): OfficeProps {
   }
 }
 function drawer(over: Partial<OfficeDrawer> = {}): OfficeDrawer {
-  return { id: 'lead', name: '💼 המנהל', chips: ['עובד', 'Explore'], model: 'Opus 5.5', act: '🧠 חושב', task: 'map the docs', result: '', truncated: false, elapsedMin: 3, sub: 'map the docs', done: false, ...over }
+  return { id: 'lead', name: '💼 המנהל', model: 'Opus 5.5', act: '🧠 חושב', task: 'map the docs', result: '', truncated: false, elapsedMin: 3, sub: 'map the docs', status: 'running', failed: false, longRunning: false, star: 0, type: 'Explore', ...over }
 }
 function withAgents(p: OfficeProps, agents: OfficeAgent[]): OfficeProps {
   return { ...p, rooms: [room('A', agents)] }
 }
+/** More agents than SEARCH_FROM in one room: the office that draws the search field. */
+const many = (n = SEARCH_FROM + 1) => Array.from({ length: n }, (_, i) => ag(`m${i}`))
 
 // --- a fake surface: the module's second argument, with every call recorded ---
 type Fake = {
@@ -113,12 +115,30 @@ const byKey = (tree: unknown, key: string, type = 'Box') => nodes(tree).find(n =
 /** The room cards of the tree: the framed Boxes in the cards' style that are neither the drawer nor the settings popover, and the frameless FRAGMENT of the window's first card under an overlay (THE OVERLAY IN VIEW). */
 const cards = (tree: unknown) => nodes(tree).filter(n => n.type === 'Box' && ((n.props.borderStyle === 'round' && n.props.borderColor === CARD_BORDER && n.props.key === undefined) || n.props.key === 'fragment'))
 /**
- * The parts of a WHOLE card: its title line, its rule, its table block (the Box of column Boxes; a column Box around it and the
- * spacers for the rows above / below the window when there are any; a spacer alone when no row is in the window), its more line.
+ * The parts of a WHOLE card: its title line, the blank line under it (round 9: no rule), its table block (the Box of column
+ * Boxes; a column Box around it and the spacers for the rows above / below the window when there are any; a spacer alone when
+ * no row is in the window), its more line.
  */
-function partsOf(card: Node): { title: Node; rule: Node; table: Node; more: Node | undefined } {
-  const [title, rule, table, more] = card.children as Node[]
-  return { title: title!, rule: rule!, table: table!, more }
+function partsOf(card: Node): { title: Node; blank: Node; table: Node; more: Node | undefined } {
+  const [title, blank, table, more] = card.children as Node[]
+  return { title: title!, blank: blank!, table: table!, more }
+}
+/** The texts of a row as the model lays them in the mode's columns: status · who · [model] · emoji · [word] · [task from CENTRE_AT]. */
+function modelRow(p: OfficeProps, roomIndex: number, rowIndex: number): string[] {
+  const m = officeModel(p)
+  const r = m.rooms[roomIndex]!.rows[rowIndex]!
+  return [r.status, r.who, ...(m.mode.model !== 'none' ? [r.model] : []), r.actEmoji, ...(m.mode.word ? [r.actWord] : []), ...(m.geo.centred ? [r.task] : [])]
+}
+/** The Client row the root's children before the first card add up to (each a Box of explicit height plus its margins). */
+function chromeOf(tree: unknown): number {
+  let row = 0
+  for (const n of kidsOf(tree)) {
+    if (cards(tree).includes(n)) return row
+    const h = n.props.height
+    if (typeof h !== 'number') throw new Error(`no height on ${String(n.props.key ?? n.props.borderStyle)}`)
+    row += h + ((n.props.marginTop as number | undefined) ?? 0) + ((n.props.marginBottom as number | undefined) ?? 0)
+  }
+  return row
 }
 /** The title's pin Text of a card's title line: drawn only when the room is pinned or its head hovered (undefined otherwise: the title is then the line's first child). */
 const pinOf = (card: Node): Node | undefined => (partsOf(card).title.children as Node[]).find(n => n.type === 'Text')
@@ -155,8 +175,7 @@ function rowsOf(card: Node): string[][] {
 // pure parts
 // ---------------------------------------------------------------------------
 
-test('windowOf: the lines the engine shows, in layout coordinates, never shifted by a clamp; the chrome is six rows', () => {
-  expect(CHROME_ROWS).toBe(6)
+test('windowOf: the lines the engine shows, in layout coordinates, never shifted by a clamp (a six-row chrome here)', () => {
   // offset inside the chrome: the first (rows - (chrome - offset)) layout lines
   expect(windowOf(6, 0, 30, 100)).toEqual({ from: 0, count: 24 })
   expect(windowOf(6, 2, 30, 100)).toEqual({ from: 0, count: 26 })
@@ -247,54 +266,94 @@ test('cleanAgentText: agent text as every surface takes it — an escape sequenc
   expect('a\nb\tc 👨‍💻 ✏️').not.toMatch(REFUSED_RE)
 })
 
-test('chromeRows / officeHeight: the six chrome rows; then the settings popover | the drawer card (its frame, its lines, the gap under it), the footer line, the empty block', () => {
+test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe round 8): the chrome is four rows — the header and the toolbar with their blank lines — and six with the search on a line of its own, drawn only while the office shows more than SEARCH_FROM agents or a search is active; from ONE_LINE_FROM the search shares the toolbar\'s line (four rows); then the settings popover | the drawer card (its frame, its lines, the gap under it), the footer line, the empty block', () => {
+  expect([CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, SEARCH_FROM]).toEqual([4, 6, 12])
   const p = props()
-  expect(chromeRows(p)).toBe(CHROME_ROWS)
-  expect(chromeRows({ ...p, footer: 'scan: 2 skipped' })).toBe(CHROME_ROWS + 1)
-  expect(chromeRows({ ...p, helpOpen: true })).toBe(CHROME_ROWS + HELP_ROWS + OVERLAY_GAP)
-  // the drawer: the card's frame (border, padding) + name, sub, chips, model · action, task heading, one task line + the gap
+  expect(shownAgents(p)).toBe(2)
+  expect(searchShown(p)).toBe(false)
+  expect(fixedRows(p)).toBe(CHROME_ROWS_MIN)
+  expect(chromeRows(p)).toBe(CHROME_ROWS_MIN)
+  // twelve shown: no field; thirteen: the field (under ONE_LINE_FROM on its own line with a blank over it; from it on the toolbar's)
+  const twelve = withAgents(p, many(SEARCH_FROM))
+  const thirteen = withAgents(p, many())
+  expect(shownAgents(twelve)).toBe(SEARCH_FROM)
+  expect(searchShown(twelve)).toBe(false)
+  expect(searchShown(thirteen)).toBe(true)
+  expect(fixedRows(thirteen)).toBe(CHROME_ROWS_SEARCH)
+  expect(fixedRows({ ...thirteen, columns: ONE_LINE_FROM - 1 })).toBe(CHROME_ROWS_SEARCH)
+  expect(fixedRows({ ...thirteen, columns: ONE_LINE_FROM })).toBe(CHROME_ROWS_MIN)
+  expect(fixedRows({ ...thirteen, columns: 200 })).toBe(CHROME_ROWS_MIN)
+  // the agents counted are the ones drawn, across the rooms (the held-back finished and the ones over the props cap are not among them)
+  expect(shownAgents({ ...p, rooms: [room('A', many(7)), room('B', many(6))] })).toBe(13)
+  expect(searchShown({ ...p, rooms: [room('A', many(7)), room('B', many(6))] })).toBe(true)
+  expect(searchShown({ ...p, rooms: [room('A', many(7), { moreDone: 30, moreLabel: 'עוד 30 שסיימו' })] })).toBe(false)
+  // an active search keeps the field whatever the count (its text would otherwise be lost with the field)
+  expect(searchShown({ ...p, search: 'x' })).toBe(true)
+  expect(fixedRows({ ...p, search: 'x' })).toBe(CHROME_ROWS_SEARCH)
+  expect(searchShown({ ...p, rooms: [], search: 'zzz' })).toBe(true)
+  expect(chromeRows({ ...p, footer: 'scan: 2 skipped' })).toBe(CHROME_ROWS_MIN + 1)
+  expect(chromeRows({ ...thirteen, footer: 'scan: 2 skipped' })).toBe(CHROME_ROWS_SEARCH + 1)
+  expect(chromeRows({ ...p, helpOpen: true })).toBe(CHROME_ROWS_MIN + helpRows(p.columns) + OVERLAY_GAP)
+  // the drawer: the card's frame (border, padding) + name, sub, the status line, a blank line, the model line, the task heading, one task line + the gap
   const inner = drawerInner(p.columns)
   expect(inner).toBe(Math.floor((p.columns - 4) * 0.75))
-  expect(drawerLines(drawer(), LABELS, inner).length).toBe(6)
-  expect(chromeRows({ ...p, drawer: drawer() })).toBe(CHROME_ROWS + DRAWER_FRAME_ROWS + 6 + OVERLAY_GAP)
+  expect(drawerLines(drawer(), LABELS, inner).length).toBe(7)
+  expect(drawerLines(drawer(), LABELS, inner).map(l => l.kind)).toEqual(['name', 'dim', 'status', 'blank', 'body', 'head', 'body'])
+  expect(chromeRows({ ...p, drawer: drawer() })).toBe(CHROME_ROWS_MIN + DRAWER_FRAME_ROWS + 7 + OVERLAY_GAP)
   expect(DRAWER_FRAME_ROWS).toBe(4)
   expect(OVERLAY_GAP).toBe(1)
   // the settings win over the drawer when both are open (as today: a popover)
-  expect(chromeRows({ ...p, helpOpen: true, drawer: drawer() })).toBe(CHROME_ROWS + HELP_ROWS + OVERLAY_GAP)
+  expect(chromeRows({ ...p, helpOpen: true, drawer: drawer() })).toBe(CHROME_ROWS_MIN + helpRows(p.columns) + OVERLAY_GAP)
+  // the settings' shortcuts in two column pairs from WIDE_FROM: the popover is the first pair's rows tall
+  expect(helpRows(45)).toBe(2 + 2 + 1 + 1 + HELP.length)
+  expect(helpRows(WIDE_FROM - 1)).toBe(15)
+  expect(helpRows(WIDE_FROM)).toBe(2 + 2 + 1 + 1 + HELP_PAIR_ROWS)
+  expect(helpRows(200)).toBe(11)
+  expect(helpPairs(false)).toEqual([HELP])
+  expect(helpPairs(true).map(pair => pair.length)).toEqual([HELP_PAIR_ROWS, HELP_PAIR_ROWS])
+  expect(helpPairs(true).flat().filter(([k]) => k.trim() !== '')).toEqual([...HELP])
   // a long task wraps to at most TASK_LINES lines, the result to RESULT_LINES (+ heading + the ✂ note), every line within the inner width
   const long = drawer({ task: 'word '.repeat(400), result: 'done '.repeat(400), truncated: true, sub: '' })
-  expect(drawerLines(long, LABELS, inner).length).toBe(4 + TASK_LINES + 1 + RESULT_LINES + 1)
+  expect(drawerLines(long, LABELS, inner).length).toBe(5 + TASK_LINES + 1 + RESULT_LINES + 1)
   for (const line of drawerLines(long, LABELS, inner)) expect(textWidth(line.text)).toBeLessThanOrEqual(inner)
-  // the elapsed minutes ride on the chips line (whole minutes: the ruling of Task 2.2)
-  expect(drawerLines(drawer({ elapsedMin: 7 }), LABELS, inner)[2]?.text).toMatch(/זמן 7/)
-  expect(drawerLines(drawer({ elapsedMin: null }), LABELS, inner)[2]?.text).not.toMatch(/זמן/)
-  // the label follows the status, as the text cards' does: done → the duration, a failed (or killed) agent too — its chip reads ❌
-  // (three chips need 32 cells: the probe's 51 columns leave the drawer 35; a 45-column pane's 30 drop the clock chip whole)
-  const wide = drawerInner(51)
-  expect(wide).toBe(35)
-  expect(drawerLines(drawer({ chips: ['סיים'], done: true, elapsedMin: 3 }), LABELS, inner)[2]?.text).toMatch(/משך 3/)
-  const failed = drawerLines(drawer({ chips: ['❌ נכשל', 'Explore'], done: true, elapsedMin: 3 }), LABELS, wide)[2]?.text
-  expect(failed).toMatch(/משך 3/)
-  expect(failed).not.toMatch(/זמן/)
-  expect(drawerLines(drawer({ chips: ['❌ נכשל', 'Explore'], done: true, elapsedMin: 3 }), LABELS, inner)[2]?.text).toBe(' ❌ נכשל   Explore ')
-  expect(drawerLines(drawer({ chips: ['❌ Failed'], done: true, elapsedMin: 3 }), LABELS_EN, inner)[2]?.text).toMatch(/Duration 3/)
+  // THE STATUS LINE (round 8: `● עובד · זמן 12 דק׳ · general-purpose`): the mark (markOf, in the status's colour) then the status
+  // word, the clock (the duration once done — a failed or killed agent is done — else the elapsed; none when unknown) and the
+  // agent type, a ` · ` apart, the empty parts left out; cut to the inner width less the mark's cells
+  expect(drawerLines(drawer({ elapsedMin: 7 }), LABELS, inner)[2]).toEqual({ kind: 'status', text: 'עובד · זמן 7 דק׳ · Explore', mark: '●', color: DOT_FG.running })
+  expect(drawerLines(drawer({ elapsedMin: null }), LABELS, inner)[2]?.text).toBe('עובד · Explore')
+  expect(drawerLines(drawer({ elapsedMin: null, type: '' }), LABELS, inner)[2]?.text).toBe('עובד')
+  expect(drawerLines(drawer({ status: 'stale', elapsedMin: 2 }), LABELS, inner)[2]).toMatchObject({ text: 'ממתין · זמן 2 דק׳ · Explore', mark: '●', color: DOT_FG.stale })
+  expect(drawerLines(drawer({ status: 'done', elapsedMin: 3 }), LABELS, inner)[2]).toMatchObject({ text: 'סיים · משך 3 דק׳ · Explore', mark: '○', color: DOT_FG.done })
+  expect(drawerLines(drawer({ status: 'done', star: 7, elapsedMin: 3 }), LABELS, inner)[2]?.mark).toBe('⭐')
+  expect(drawerLines(drawer({ status: 'done', failed: true, elapsedMin: 3 }), LABELS, inner)[2]).toMatchObject({ text: 'נכשל · משך 3 דק׳ · Explore', mark: '❌', color: DOT_FG.done })
+  expect(drawerLines(drawer({ longRunning: true, elapsedMin: 48 }), LABELS, inner)[2]).toMatchObject({ text: 'עובד · זמן 48 דק׳ · Explore', mark: '⏰' })
+  expect(drawerLines(drawer({ status: 'done', failed: true, elapsedMin: 3 }), LABELS_EN, drawerInner(70))[2]?.text).toBe('Failed · Duration 3′ · Explore')   // (30 cells: past a 45-column drawer's 27, whole at 70)
+  expect(drawerLines(drawer({ status: 'done', failed: true, elapsedMin: 3 }), LABELS_EN, inner)[2]?.text).toBe('Failed · Duration 3′ · Exp…')
+  expect(drawerStatus(drawer({ type: 'general-purpose', elapsedMin: 12 }), LABELS, 100)).toBe('עובד · זמן 12 דק׳ · general-purpose')
+  expect(drawerStatus(drawer({ type: 'general-purpose', elapsedMin: 12 }), LABELS, 13)).toBe('עובד · זמן 1…')
+  expect(drawerLines(drawer(), LABELS, inner)[3]).toEqual({ kind: 'blank', text: '' })
   // the full height = chrome + the cards' lines; the empty office = chrome + its block
-  expect(officeHeight(p, rowCount(p))).toBe(CHROME_ROWS + 9)
+  expect(officeHeight(p, rowCount(p))).toBe(CHROME_ROWS_MIN + 9)
+  expect(officeHeight(thirteen, rowCount(thirteen))).toBe(CHROME_ROWS_SEARCH + 7 + 13)
   const empty = { ...p, rooms: [], empty: { kind: 'office' as const, msg: LABELS.emptyOffice ?? '', sub: LABELS.emptySub ?? '' } }
-  expect(officeHeight(empty, 0)).toBeGreaterThan(CHROME_ROWS + 2)
+  expect(officeHeight(empty, 0)).toBeGreaterThan(CHROME_ROWS_MIN + 2)
+  // THE NO-BREAK SPACE passes the fault guard: no surface refuses it, and the text gate keeps it
+  expect(`a${NBSP}b`).not.toMatch(REFUSED_RE)
+  expect(cleanAgentText(`a${NBSP}b`)).toBe(`a${NBSP}b`)
+  expect(cleanSearch(`a${NBSP}b`)).toBe(`a${NBSP}b`)
 })
 
 // ---------------------------------------------------------------------------
 // the drawing
 // ---------------------------------------------------------------------------
 
-test('render: the chrome (header with the words and a blank line, the toolbar, the search with a blank line above and below) then a framed card per room with the title line, the rule and the column-major table; nothing below the window', () => {
+test('render: the chrome (header with the words and a blank line, the toolbar with a blank line under it — no search field for an office of two) then a framed card per room with the title line, a BLANK line and the column-major table of the mode\'s columns; nothing below the window', () => {
   const f = fake(45, 0)
   const p = props()
   const tree = Office(p, f.surface)
   const all = nodes(tree)
   expect(all[0]?.type).toBe('Box')
-  // the chrome: the header (one bold Text of the counts, a blank line under it), the toolbar Buttons with today's keys, the search Input
+  // the chrome: the header (one bold Text of the counts, a blank line under it), the toolbar Buttons with today's keys, no search Input (two agents shown)
   const header = byKey(tree, 'header')!
   expect(header).toMatchObject({ type: 'Box', props: { flexDirection: 'row-reverse', justifyContent: 'space-between', height: 1, overflow: 'hidden', marginBottom: 1 } })
   expect(header.children).toHaveLength(1)
@@ -302,21 +361,23 @@ test('render: the chrome (header with the words and a blank line, the toolbar, t
   expect(texts(header)).toBe('🎭 עובדים 2 · סיימו 0')
   const keys = all.filter(n => n.type === 'Button').map(n => n.props.key)
   expect(keys).toEqual(['showDone', 'mute', 'help'])   // (demo, still and the language live in the settings popover)
-  expect(byKey(tree, 'toolbar')).toMatchObject({ props: { flexDirection: 'row-reverse', gap: TOOLBAR_GAP, height: 1, overflow: 'hidden' } })
-  expect(byKey(tree, 'searchLine')).toMatchObject({ props: { marginTop: 1, marginBottom: 1, height: 1 } })
-  expect(all.find(n => n.type === 'Input')?.props.key).toBe('search')
+  expect(byKey(tree, 'toolbar')).toMatchObject({ props: { flexDirection: 'row-reverse', gap: TOOLBAR_GAP, height: 1, overflow: 'hidden', marginBottom: 1 } })
+  expect(byKey(tree, 'searchLine')).toBeUndefined()
+  expect(all.find(n => n.type === 'Input')).toBeUndefined()
   // hotkeys only from COMPACT_BELOW columns, today's rule (the desktop draws a key chip per hotkey, which would wrap the toolbar)
   expect(all.filter(n => n.type === 'Button').every(n => n.props.hotkey === undefined)).toBe(true)
   const wide = nodes(Office({ ...p, columns: COMPACT_BELOW }, fake(COMPACT_BELOW).surface))
   expect(wide.filter(n => n.type === 'Button').map(n => n.props.hotkey)).toEqual(['f', 'm', 'h'])
-  // the root's children: header, toolbar, search, then the one card — no spacer at the top, nothing after the card
-  expect(kidsOf(tree).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  // the root's children: header, toolbar, then the one card — no spacer at the top, nothing after the card; the chrome four rows
+  expect(kidsOf(tree).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'round'])
+  expect(chromeOf(tree)).toBe(CHROME_ROWS_MIN)
+  expect(chromeOf(tree)).toBe(chromeRows(p))
   const [card] = cards(tree)
   expect(cards(tree)).toHaveLength(1)
   expect(card).toMatchObject({ props: { flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden' } })
   // the title line: NO pin cell (unpinned, not hovered: the title sits flush at the reading edge, as the probe's), the title
-  // (bold, one line), the counts (dim, never shrunk), the probe's gap of two between them
-  const { title, rule, table, more } = partsOf(card!)
+  // (bold, one line), the counts (dim), the probe's gap of two between them
+  const { title, blank, table, more } = partsOf(card!)
   expect(title).toMatchObject({ props: { flexDirection: 'row-reverse', justifyContent: 'space-between', height: 1, paddingX: 1, gap: TITLE_GAP, overflow: 'hidden' } })
   expect(TITLE_GAP).toBe(2)
   expect(title.children).toHaveLength(2)
@@ -325,11 +386,12 @@ test('render: the chrome (header with the words and a blank line, the toolbar, t
   expect(ttl).toMatchObject({ type: 'Box', props: { flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: 'flex-end' } })
   expect(ttl!.children).toHaveLength(1)
   expect((ttl!.children[0] as Node).props.bold).toBe(true)
-  expect(texts(ttl)).toBe('room A')
+  expect(texts(ttl)).toBe(nb('room A'))
   expect(counts).toMatchObject({ props: { flexShrink: 0, height: 1 } })
   expect(texts(counts)).toBe('🟢2')
-  expect(rule).toMatchObject({ props: { height: 1, overflow: 'hidden' } })
-  expect(texts(rule)).toBe('─'.repeat(45))
+  // round 9: NO rule under the title (it never stretched with the card) — a blank line keeps the height
+  expect(blank).toEqual({ type: 'Box', props: { height: 1 }, children: [] })
+  expect(texts(blank)).toBe('')
   expect(more).toBeUndefined()
   // a pinned room: its bright 📌 is the title line's first child (a Text), the title after it — the line shifts by the pin and its gap
   const pinned = cards(Office(props({ rooms: [room('A', [ag('lead')], { pinned: true })] }), fake().surface))[0]!
@@ -337,14 +399,15 @@ test('render: the chrome (header with the words and a blank line, the toolbar, t
   expect(pinOf(pinned)).toMatchObject({ type: 'Text', props: {} })
   expect(texts(pinOf(pinned))).toBe(PIN)
   expect(pinOf(pinned)!.props.dimColor).toBeUndefined()
-  // the table: four rigid column Boxes (the activity column grows), the padding cell on the column's reading side, ONE Text per
-  // row in each — no Box per value: the Text never wraps (`wrap: 'truncate'`), so the row stays one line tall
+  // the table: the mode's rigid column Boxes — at 45 columns the status, the who, the model, the activity's emoji and its word (the
+  // last grows) — the padding cell on the column's reading side, ONE Text per row in each — no Box per value, and no plain space
+  // in a value (nb: the Text can never wrap), so the row stays one line tall
   expect(table).toMatchObject({ props: { flexDirection: 'row-reverse', width: '100%' } })
   expect(table).toBe(tableOf(card!))   // no spacer: every row is in the window, so the table is the card's third child itself
   const cols = columnsOf(card!)
-  expect(cols).toHaveLength(4)
-  expect(cols.map(c => c.props.flexGrow)).toEqual([0, 0, 0, 1])
-  expect(cols.every(c => c.props.flexShrink === 0 && c.props.flexDirection === 'column' && c.props.alignItems === 'flex-end' && c.props.paddingLeft === 1 && c.props.paddingRight === undefined)).toBe(true)
+  expect(cols).toHaveLength(5)
+  expect(cols.map(c => c.props.flexGrow)).toEqual([0, 0, 0, 0, 1])
+  expect(cols.every(c => c.props.flexShrink === 0 && c.props.flexDirection === 'column' && c.props.alignItems === 'flex-end' && c.props.paddingLeft === 1 && c.props.paddingRight === undefined && c.props.minWidth === undefined)).toBe(true)
   for (const col of cols) {
     const cells = cellsOf(col)
     expect(cells).toHaveLength(2)
@@ -353,21 +416,25 @@ test('render: the chrome (header with the words and a blank line, the toolbar, t
       expect(cell).toMatchObject({ type: 'Text', props: { wrap: 'truncate' } })
       expect(cell.children).toHaveLength(1)
       expect(typeof cell.children[0]).toBe('string')
+      expect(cell.children[0] as string).not.toContain(' ')
     }
   }
-  expect(rowsOf(card!)).toEqual([['●', '💼 lead', 'Opus', '🧠 חושב'], ['●', '🦉 a1', 'Opus', '📖 קורא']])
-  // colour only on the status column; the who bold, the model dim, the activity plain; no background anywhere
-  const [status, who, model, act] = cols
+  expect(rowsOf(card!)).toEqual([['●', `💼${NBSP}lead`, 'Opus', '🧠', 'חושב'], ['●', `🦉${NBSP}a1`, 'Opus', '📖', 'קורא']])
+  expect(rowsOf(card!)).toEqual([modelRow(p, 0, 0), modelRow(p, 0, 1)])
+  // colour only on the status column; the who bold (working), the model dim, the activity plain; no background anywhere
+  const [status, who, model, emoji, word] = cols
   expect(cellsOf(status!).map(c => c.props)).toEqual([{ wrap: 'truncate', color: DOT_FG.running }, { wrap: 'truncate', color: DOT_FG.running }])
   expect(cellsOf(who!).map(c => c.props)).toEqual([{ wrap: 'truncate', bold: true, dimColor: false }, { wrap: 'truncate', bold: true, dimColor: false }])
   expect(cellsOf(model!).every(c => c.props.dimColor === true && c.props.color === undefined)).toBe(true)
-  expect(cellsOf(act!).every(c => c.props.color === undefined)).toBe(true)
+  expect(cellsOf(emoji!).every(c => c.props.color === undefined && c.props.dimColor === false)).toBe(true)
+  expect(cellsOf(word!).every(c => c.props.color === undefined && c.props.dimColor === false)).toBe(true)
   expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   // the footer rides in the chrome (the engine scrolls natively: a line at the content's end would hide until the end), one dim
   // line, cut to the line by LINE_FIT with an ellipsis (its 44 cells to 37 at 45 columns; whole at 70)
   const note = 'scan: 1 skipped · דולגו 4 תמלילים גדולים מדי'
   const t3 = Office({ ...p, footer: note }, fake(45, 0).surface)
-  expect(kidsOf(t3).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'footer', 'round'])
+  expect(kidsOf(t3).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'footer', 'round'])
+  expect(chromeOf(t3)).toBe(chromeRows({ ...p, footer: note }))
   expect(textWidth(note)).toBe(44)
   expect(texts(byKey(t3, 'footer'))).toBe(cut(note, fitLine(45)))
   expect(texts(byKey(t3, 'footer'))).toMatch(/…$/)
@@ -378,7 +445,7 @@ test('render: the chrome (header with the words and a blank line, the toolbar, t
   expect(byKey(en, 'toolbar')).toMatchObject({ props: { flexDirection: 'row' } })
   const enCols = columnsOf(cards(en)[0]!)
   expect(enCols.every(c => c.props.alignItems === 'flex-start' && c.props.paddingRight === 1 && c.props.paddingLeft === undefined)).toBe(true)
-  expect(rowsOf(cards(en)[0]!)).toEqual([['●', '💼 lead', 'Opus', '🧠 חושב'], ['●', '🦉 a1', 'Opus', '📖 קורא']])
+  expect(rowsOf(cards(en)[0]!)).toEqual([['●', `💼${NBSP}lead`, 'Opus', '🧠', 'חושב'], ['●', `🦉${NBSP}a1`, 'Opus', '📖', 'קורא']])
 })
 
 test('structure: at every width 24..200, both directions, many rooms — a card per room, four (or three) column Boxes, one Text per value and no Box per value, colour only on the status column, no time anywhere in a row, every title one line, a pin Text only on the pinned card, every row\'s cells the same count', { timeoutMs: 30_000 }, () => {
@@ -403,7 +470,8 @@ test('structure: at every width 24..200, both directions, many rooms — a card 
         expect(rooms[i]!.pinned ? texts(pinOf(card)) : pinOf(card), at).toBe(rooms[i]!.pinned ? PIN : undefined)
         expect(rooms[i]!.moreLabel ? more?.props.height : more, at).toBe(rooms[i]!.moreLabel ? 1 : undefined)
         const cols = columnsOf(card)
-        expect([3, 4], at).toContain(cols.length)
+        expect(cols.length, at).toBeGreaterThanOrEqual(3)
+        expect(cols.length, at).toBeLessThanOrEqual(6)
         expect(cols.map(c => c.props.flexGrow), at).toEqual([...cols.slice(0, -1).map(() => 0), 1])
         const perCol = cols.map(c => cellsOf(c).length)
         expect(new Set(perCol).size, at).toBe(1)
@@ -426,15 +494,10 @@ test('structure: at every width 24..200, both directions, many rooms — a card 
         // the table is as tall as its rows: no spacer in a window that holds every row, so the table block is the table itself
         expect(table, at).toBe(tableOf(card))
       })
-      // the rows read as the model says: the status mark with the badges, `${emoji} ${name}`, the model word, the activity or its emoji
-      const m = officeModel(p)
+      // the rows read as the model says: the status mark with the badges, `${emoji} ${name}`, the model word (in the mode that has it), the
+      // activity's emoji and its word (in the mode that has it), the task from CENTRE_AT
       cs.forEach((card, i) => {
-        const rows = rowsOf(card)
-        const rm = m.rooms[i]!
-        rows.forEach((r, k) => {
-          const x = rm.rows[k]!
-          expect(r, `${columns} ${rtl} ${rm.id} row ${k}`).toEqual(rm.showModel ? [x.status, x.who, x.model, x.act] : [x.status, x.who, x.act])
-        })
+        rowsOf(card).forEach((r, k) => expect(r, `${columns} ${rtl} ${rooms[i]!.id} row ${k}`).toEqual(modelRow(p, i, k)))
       })
     }
   }
@@ -462,11 +525,13 @@ test('fx: a new ⭐ stamp pulses the finisher\'s row — the four cells tinted, 
   expect(f.timers).toHaveLength(0)
   expect(withBg(tree, FX_BG.done).length + withBg(tree, FX_BG.doneAlt).length).toBe(0)
   const pulse = (t: unknown) => withBg(t, FX_BG.done).length + withBg(t, FX_BG.doneAlt).length
-  // a new star on lead (it finished): its row's four cells carry the tint, the clock starts
+  // a new star on lead (it finished): its row's cells (one per column of the mode) carry the tint, the clock starts
   p = withAgents(p, [ag('lead', { status: 'done', star: 7000, act: '✅ סיים' }), p.rooms[0]!.agents[1]!])
   tree = Office(p, f.surface)
-  expect(pulse(tree)).toBe(4)
-  expect(withBg(tree, FX_BG.done).every(n => n.type === 'Text' && n.props.wrap === 'truncate')).toBe(true)   // the tint rides the row's four Texts (no cell Box)
+  const ncol = columnsOf(cards(tree)[0]!).length
+  expect(ncol).toBe(5)
+  expect(pulse(tree)).toBe(ncol)
+  expect(withBg(tree, FX_BG.done).every(n => n.type === 'Text' && n.props.wrap === 'truncate')).toBe(true)   // the tint rides the row's Texts (no cell Box)
   expect(rowsOf(cards(tree)[0]!)[0]![0]).toBe('⭐')   // the ⭐ badge is the props': on the status column
   expect(f.timers).toHaveLength(1)
   expect(f.timers[0]!.ms).toBe(FX_TICK_MS)
@@ -483,7 +548,7 @@ test('fx: a new ⭐ stamp pulses the finisher\'s row — the four cells tinted, 
     const now = withBg(tree, FX_BG.done).length > 0 ? FX_BG.done : FX_BG.doneAlt
     expect(now).not.toBe(last)
     last = now
-    expect(pulse(tree)).toBe(4)
+    expect(pulse(tree)).toBe(ncol)
     expect(f.timers[0]!.stopped).toBe(false)
   }
   f.tick()
@@ -606,14 +671,14 @@ test('window: the cards the window touches are drawn whole, their rows only wher
     expect(cellsOf(col)).toHaveLength(10)
     expect(col.children).toHaveLength(10)   // no spacer inside a column
   }
-  expect(rowsOf(card).map(r => r[1])).toEqual(Array.from({ length: 10 }, (_, i) => `🦉 a${i + 2}`))
+  expect(rowsOf(card).map(r => r[1])).toEqual(Array.from({ length: 10 }, (_, i) => `🦉${NBSP}a${i + 2}`))
   // two rooms, the window past the first: the first card is not drawn — a spacer of its lines stands before the second
   const two = props({ rooms: [room('A', Array.from({ length: 10 }, (_, i) => ag(`a${i}`))), room('B', Array.from({ length: 10 }, (_, i) => ag(`b${i}`)))], offset: 6 + 20, rows: 10 })
   const t3 = Office(two, fake(45, 0).surface)
   expect(kidsOf(t3).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'round'])
   expect(byKey(t3, 'spacer')!.props.height).toBe(17)   // room A's card: 7 + 10 lines
   expect(cards(t3)).toHaveLength(1)
-  expect(rowsOf(cards(t3)[0]!).map(r => r[1])).toEqual(Array.from({ length: 9 }, (_, i) => `🦉 b${i}`))   // lines 20..29: B's title at 19, rule 20, rows 21..29
+  expect(rowsOf(cards(t3)[0]!).map(r => r[1])).toEqual(Array.from({ length: 9 }, (_, i) => `🦉${NBSP}b${i}`))   // lines 20..29: B's title at 19, its blank line 20, rows 21..29
   // a window on the gap between the cards draws both (the first for its frame alone: its rows are a spacer)
   const t4 = Office({ ...two, offset: 6 + 14, rows: 10 }, fake(45, 0).surface)
   expect(cards(t4)).toHaveLength(2)
@@ -658,7 +723,7 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   // lines above the window lie above the viewport, which the engine's native scroll hides
   const plain = Office(crowd, fake(45, 0).surface)
   expect(kidsOf(plain).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
-  expect(rowsOf(cards(plain)[0]!)[0]![1]).toBe('🦉 g30')
+  expect(rowsOf(cards(plain)[0]!)[0]![1]).toBe(`🦉${NBSP}g30`)
   // the drawer opens (a click on g43): a spacer of the 34 lines above the window, then the drawer — at Client row 6 + 34 = 40,
   // the engine's offset: the viewport's first rows — then the card from line 34 as a FRAGMENT: no frame (the frame's cells as
   // padding), no spacer for the rows above the window, the window's rows as cells and the rest a spacer, the bottom padding line,
@@ -666,7 +731,7 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   const p = { ...crowd, selected: 'g43', drawer: drawer({ id: 'g43' }) }
   const C = chromeRows(p)
   const H = overlayRows(p)
-  expect(C).toBe(CHROME_ROWS + H)
+  expect(C).toBe(CHROME_ROWS_SEARCH + H)   // (sixty agents: the search field on its own line)
   const f = fake(45, 0)
   const tree = Office(p, f.surface)
   expect(kidsOf(tree).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
@@ -680,7 +745,7 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   expect(frag).toMatchObject({ props: { flexDirection: 'column', paddingX: 2, marginBottom: 1, width: '100%', height: 66 - 34, overflow: 'hidden' } })
   expect(frag.props.borderStyle).toBeUndefined()
   expect(clientRowOf(tree, 'fragment')).toBe(C + 34)
-  expect(rowsOf(frag)[0]![1]).toBe('🦉 g30')
+  expect(rowsOf(frag)[0]![1]).toBe(`🦉${NBSP}g30`)
   expect(rowsOf(frag)).toHaveLength(25 - H)
   for (const col of columnsOf(frag)) {
     expect(cellsOf(col)).toHaveLength(25 - H)
@@ -698,15 +763,15 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   // the pointer: the drawer's rows (offset..offset + H - 1, its gap included) and the drawer's old place under the chrome (the
   // spacer's rows now) answer nothing; the first row under the drawer — Client row offset + H = C + 34 — opens g30
   for (let yy = p.offset; yy < p.offset + H; yy++) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
-  for (let yy = CHROME_ROWS; yy < CHROME_ROWS + H; yy++) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
+  for (let yy = CHROME_ROWS_SEARCH; yy < CHROME_ROWS_SEARCH + H; yy++) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
   expect(f.posts).toEqual([])
   expect(C + 34).toBe(p.offset + H)
   f.pointer({ type: 'down', x: 5, y: p.offset + H, button: 'left' })
   expect(f.posts).toEqual([{ t: 'open', id: 'g30' }])
   f.pointer({ type: 'down', x: 5, y: p.offset + 25 - 1, button: 'left' })     // the viewport's last row: g43's (line 34 + 13)
   expect(f.posts[1]).toEqual({ t: 'open', id: `g${30 + 25 - H - 1}` })
-  // two rooms — A lines 0..36, B 37..73 (its title 39, its rule 40, its rows 41..70, its gap 73) — the window from line 40 (B's
-  // rule): the spacer is 40 lines (A whole, B's border, padding and title), the drawer at the offset, B's fragment from its rule
+  // two rooms — A lines 0..36, B 37..73 (its title 39, its blank line 40, its rows 41..70, its gap 73) — the window from line 40 (B's
+  // rule): the spacer is 40 lines (A whole, B's border, padding and title), the drawer at the offset, B's fragment from its blank line
   const two = props({ rows: 25, offset: 6 + 40, rooms: [room('A', Array.from({ length: 30 }, (_, i) => ag(`a${i}`))), room('B', Array.from({ length: 30 }, (_, i) => ag(`b${i}`)))], selected: 'b5', drawer: drawer({ id: 'b5' }) })
   const H2 = overlayRows(two)
   const C2 = chromeRows(two)
@@ -715,17 +780,17 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   expect(byKey(t2, 'spacer')!.props.height).toBe(40)
   expect(clientRowOf(t2, 'drawer')).toBe(two.offset)
   const f2 = byKey(t2, 'fragment')!
-  expect((f2.children as Node[]).map(n => texts(n).startsWith('─') ? 'rule' : n === blockOf(f2) ? 'table' : `h${n.props.height}`)).toEqual(['rule', 'table', 'h1', 'rule'])
+  expect((f2.children as Node[]).map(n => texts(n).startsWith('─') ? 'rule' : n === blockOf(f2) ? 'table' : `h${n.props.height}`)).toEqual(['h1', 'table', 'h1', 'rule'])   // (the blank line under B's title, the table, the bottom padding, the frame's bottom as a rule)
   expect(f2.props.height).toBe(73 - 40)
   expect(rowsOf(f2)).toHaveLength(25 - H2 - 1)
-  expect(rowsOf(f2)[0]![1]).toBe('🦉 b0')
+  expect(rowsOf(f2)[0]![1]).toBe(`🦉${NBSP}b0`)
   // the window's top at B's title (line 39): the fragment opens with the title line — its pin zone and head hover answer, as in a
   // whole card; at B's padding line (38) a blank line leads; at B's top (37) B is a whole card after a spacer of A's lines
   const g = fake(45, 0)
   const atTitle = Office({ ...two, offset: 6 + 39 }, g.surface)
   const f3 = byKey(atTitle, 'fragment')!
   expect((f3.children as Node[]).length).toBe(5)
-  expect(texts((f3.children as Node[])[0])).toMatch(/room B/)
+  expect(texts((f3.children as Node[])[0])).toContain(nb('room B'))
   g.pointer({ type: 'move', x: 20, y: C2 + 39 })
   expect(g.surface.state!.hoverRoom).toBe('B')
   expect(texts(((byKey(Office({ ...two, offset: 6 + 39 }, g.surface), 'fragment')!.children as Node[])[0]!.children as Node[])[0])).toBe(PIN)
@@ -769,20 +834,20 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   const help = Office(ph, fake(45, 0).surface)
   expect(kidsOf(help).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
   expect(clientRowOf(help, 'help')).toBe(ph.offset)
-  expect(byKey(help, 'help')).toMatchObject({ props: { height: HELP_ROWS, marginBottom: OVERLAY_GAP } })
+  expect(byKey(help, 'help')).toMatchObject({ props: { height: helpRows(45), marginBottom: OVERLAY_GAP } })
   expect(texts(byKey(help, 'help'))).toMatch(/^הגדרות$/m)
   expect(rowsOf(cards(help)[0]!)).toHaveLength(25 - overlayRows(ph))
   // at the top the drawer sits under the fixed chrome, the cards from line 0 — whole, no fragment
   const top = Office({ ...p, offset: 0 }, fake(45, 0).surface)
   expect(kidsOf(top).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round'])
-  expect(rowsOf(cards(top)[0]!)[0]![1]).toBe('🦉 g0')
-  // a window no taller than the drawer: the drawer keeps its place in the chrome, scrolled as content — the window (lines 29..39,
-  // offset 46 less the whole chrome of 17) cuts through A's card, so A is drawn from its top with no spacer, then B
+  expect(rowsOf(cards(top)[0]!)[0]![1]).toBe(`🦉${NBSP}g0`)
+  // a window no taller than the drawer: the drawer keeps its place in the chrome, scrolled as content — the window (lines 40 - H2 .. 39:
+  // offset 46 less the whole chrome of 6 + H2, 12 with the drawer's seven lines) cuts through A's card, so A is drawn from its top with no spacer, then B
   const sf = fake(45, 0)
   const short = Office({ ...two, rows: H2 }, sf.surface)
   expect(kidsOf(short).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round', 'round'])
-  expect(sf.surface.state!.inst.win).toEqual({ from: 29, count: H2 })
-  expect(rowsOf(cards(short)[0]!).map(r => r[1])).toEqual(['🦉 a25', '🦉 a26', '🦉 a27', '🦉 a28', '🦉 a29'])
+  expect(sf.surface.state!.inst.win).toEqual({ from: 40 - H2, count: H2 })
+  expect(rowsOf(cards(short)[0]!).map(r => r[1])).toEqual(Array.from({ length: H2 - 6 }, (_, i) => `🦉${NBSP}a${40 - H2 - 4 + i}`))   // (the window's rows of A: lines 40 - H2 .. 33)
   expect(rowsOf(cards(short)[1]!)).toHaveLength(0)
   // the overlay keeps its place at the top too: scrolled 20 rows further, a spacer stands for A's card
   const further = Office({ ...two, rows: H2, offset: 46 + 20 }, fake(45, 0).surface)
@@ -903,7 +968,7 @@ test('the row budget\'s cut: the lines of the cut card drawn past it in the view
 
 test('search: the Input draws the typed text (not props.search) across props updates; the post is debounced; an outside change is adopted', () => {
   const f = fake()
-  const p = props()
+  const p = withAgents(props(), many())   // (thirteen shown: the field is drawn)
   let tree = Office(p, f.surface)
   const input = () => nodes(tree).find(n => n.type === 'Input')!
   expect(input().props.value).toBe('')
@@ -940,11 +1005,15 @@ test('search: the Input draws the typed text (not props.search) across props upd
   // Hebrew word in the string (office-layout.ts iconLabel), leads the English one
   expect(input().props.placeholder).toBe('חיפוש סוכנים 🔍')
   expect((nodes(Office({ ...p, rtl: false, lang: 'en', labels: LABELS_EN }, fake().surface)).find(n => n.type === 'Input')!.props as { placeholder: string }).placeholder).toBe('🔍 Search agents')
-  // a pane too narrow for the word cuts it (whole glyphs, the ellipsis trailing), the glass whole: never wider than the line by LINE_FIT
-  const narrowPh = (q: Partial<OfficeProps>) => (nodes(Office(props(q), fake(q.columns).surface)).find(n => n.type === 'Input')!.props as { placeholder: string }).placeholder
-  expect(narrowPh({ columns: 12 })).toBe('חיפוש… 🔍')
-  expect(narrowPh({ columns: 12, rtl: false, lang: 'en', labels: LABELS_EN })).toBe('🔍 Searc…')
-  for (const columns of [8, 12, 15, 16, 45]) { expect(textWidth(narrowPh({ columns }))).toBeLessThanOrEqual(Math.max(4, fitLine(columns))); expect(textWidth(narrowPh({ columns, rtl: false, lang: 'en', labels: LABELS_EN }))).toBeLessThanOrEqual(Math.max(4, fitLine(columns))) }
+  // a pane too narrow for the words draws the first word alone, narrower still cuts it (whole glyphs, the ellipsis trailing), the
+  // glass whole: never wider than the field holds by FIT
+  const narrowPh = (q: Partial<OfficeProps>) => (nodes(Office(withAgents(props(q), many()), fake(q.columns).surface)).find(n => n.type === 'Input')!.props as { placeholder: string }).placeholder
+  expect(narrowPh({ columns: 24 })).toBe('חיפוש סוכנים 🔍')                                      // 18 cells by FIT hold the 15
+  expect(narrowPh({ columns: 16 })).toBe('חיפוש 🔍')                                              // 12: the first word
+  expect(narrowPh({ columns: 16, rtl: false, lang: 'en', labels: LABELS_EN })).toBe('🔍 Search')
+  expect(narrowPh({ columns: 8 })).toBe('חי… 🔍')                                                // 6: the word cut, the glass whole
+  expect(narrowPh({ columns: 8, rtl: false, lang: 'en', labels: LABELS_EN })).toBe('🔍 Se…')
+  for (const columns of [8, 12, 15, 16, 24, 45, 64, 200]) { expect(textWidth(narrowPh({ columns }))).toBeLessThanOrEqual(Math.max(4, fitCells(Math.min(columns, CENTRE_AT)))); expect(textWidth(narrowPh({ columns, rtl: false, lang: 'en', labels: LABELS_EN }))).toBeLessThanOrEqual(Math.max(4, fitCells(Math.min(columns, CENTRE_AT)))) }
   // a pasted page: the field and the post keep SEARCH_MAX code points (never half an emoji) — a post over the surface's
   // bound would throw in the handler, and the Input's value would swell the tree past its bound (either unmounts the office)
   ;(input().props.onSubmit as (v: string) => void)('🔍'.repeat(SEARCH_MAX + 50))
@@ -990,7 +1059,18 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   expect(inner45).toBe(30)
   expect(t).toMatch(/^מודל 🧠 Opus 5\.5 · פעולה 🧠 ח…$/m)
   expect(t).toMatch(/^✂ התוצאה קוצרה — לפלט המלא פ…$/m)
-  for (const l of drawerLines(p.drawer!, LABELS, inner45)) if (l.kind !== 'chips') { expect(t).toContain(l.text); expect(textWidth(l.text)).toBeLessThanOrEqual(inner45) }
+  for (const l of drawerLines(p.drawer!, LABELS, inner45)) if (l.text) { expect(t).toContain(l.text); expect(textWidth(l.text)).toBeLessThanOrEqual(inner45) }
+  // THE STATUS LINE: the mark (coloured) and the dim text as two Texts on one line, a blank line after it
+  const statusLine = (box: Node) => (box.children as Node[])[2]!
+  const drawerBox = byKey(tree, 'drawer')!
+  expect((statusLine(drawerBox).children as Node[]).map(n => [n.type, n.props.color, n.props.dimColor, texts(n)])).toEqual([['Text', DOT_FG.running, undefined, '●'], ['Text', undefined, true, 'עובד · זמן 3 דק׳ · Explore']])
+  expect((drawerBox.children as Node[])[3]).toMatchObject({ type: 'Box', props: { height: 1 } })
+  expect(texts((drawerBox.children as Node[])[3])).toBe('')
+  // (a 70-column drawer: its 46 cells hold the 34 of this line whole; a 45-column one cuts it to 27 with an ellipsis, as the probe's did)
+  const failedBox = byKey(Office({ ...p, columns: 70, drawer: drawer({ status: 'done', failed: true, elapsedMin: 9, type: 'general-purpose' }) }, fake(70).surface), 'drawer')!
+  expect((statusLine(failedBox).children as Node[]).map(n => texts(n))).toEqual(['❌', 'נכשל · משך 9 דק׳ · general-purpose'])
+  expect((statusLine(byKey(Office({ ...p, drawer: drawer({ status: 'done', failed: true, elapsedMin: 9, type: 'general-purpose' }) }, fake().surface), 'drawer')!).children as Node[]).map(n => texts(n))).toEqual(['❌', 'נכשל · משך 9 דק׳ · general…'])
+  expect((statusLine(failedBox).children as Node[])[0]!.props.color).toBe(DOT_FG.done)
   const wide = texts(Office({ ...p, columns: 70 }, fake(70).surface))
   expect(wide).toMatch(/^✂ התוצאה קוצרה — לפלט המלא פתחו את הטרמינל$/m)
   expect(wide).toMatch(/^מודל 🧠 Opus 5\.5 · פעולה 🧠 חושב$/m)
@@ -1000,7 +1080,7 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   // every line of the drawer is one row tall by construction; the card has a fixed height so the cards below never move
   expect((box.children as Node[]).every(l => l.type === 'Box' && l.props.height === 1 && l.props.overflow === 'hidden')).toBe(true)
   expect(box.props.height).toBe(DRAWER_FRAME_ROWS + (box.children as Node[]).length)
-  expect(box.props.height).toBe(chromeRows(p) - CHROME_ROWS - OVERLAY_GAP)
+  expect(box.props.height).toBe(chromeRows(p) - fixedRows(p) - OVERLAY_GAP)
   const close = nodes(tree).find(n => n.type === 'Button' && n.props.key === 'close')!
   expect(close.props.hotkey).toBe('x')
   // read ✕ THEN the word, as the toolbar's controls: the ✕ trails the Hebrew word in the string (iconLabel), leads the English one
@@ -1013,10 +1093,10 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   // the settings popover: titled הגדרות, the rows, the ✕; it wins over the drawer
   tree = Office({ ...p, helpOpen: true }, f.surface)
   const helpBox = byKey(tree, 'help')!
-  expect(helpBox).toMatchObject({ props: { borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, height: HELP_ROWS, marginBottom: OVERLAY_GAP } })   // (the cards' padding, the drawer's too)
+  expect(helpBox).toMatchObject({ props: { borderStyle: 'round', borderColor: CARD_BORDER, paddingX: 1, paddingY: 1, height: helpRows(45), marginBottom: OVERLAY_GAP } })   // (the cards' padding, the drawer's too)
   expect(nodes((helpBox.children as Node[])[0]).some(n => n.type === 'Text' && n.props.bold === true && texts(n) === 'הגדרות')).toBe(true)
   expect(texts(tree)).not.toMatch(/עזרה|קיצורי מקלדת/)
-  expect(texts(tree)).toMatch(/k \/ j/)
+  expect(texts(tree)).toContain(nb('k / j'))
   // the close row promises x alone: Escape never reaches a Client (it returns the focus), so the popover does not offer it
   expect(HELP.find(([k]) => k === 'scClose')?.[1]).toBe('x')
   expect(HELP.find(([k]) => k === 'scSettings')?.[1]).toBe('h')
@@ -1100,18 +1180,29 @@ test('settings: the popover holds the demo, motion and language Buttons in words
   expect(btn('lang')?.props.label).toBe('🌐 English')
   // the Buttons row sits right under the title, inside the popover; the hotkeys only when wide (the desktop draws a chip per hotkey)
   const box = byKey(tree, 'help')!
-  expect(box.props.height).toBe(HELP_ROWS)
-  expect(HELP_ROWS).toBe(2 + 2 + 1 + 1 + HELP.length)   // the border, the padding line above and below, the title, the Buttons row, the shortcuts
+  expect(box.props.height).toBe(helpRows(45))
+  expect(helpRows(45)).toBe(2 + 2 + 1 + 1 + HELP.length)   // the border, the padding line above and below, the title, the Buttons row, the shortcuts (one pair under WIDE_FROM)
   expect(HELP.map(([, keys]) => keys)).toContain('s')
   expect(HELP.map(([k]) => k)).toContain('scStill')
   expect(HELP.map(([k]) => k)).toContain('scSettings')
   expect(LABELS.scStill).toBeTruthy()
   expect(LABELS.scSettings).toBe('הגדרות')
   expect(texts(tree)).toMatch(/^s$/m)
+  // the popover's children: the title line, the Buttons line, the shortcuts (one column-major pair here: a column of the labels, a column of the dim keys)
   const rows = box.children as Node[]
-  expect(rows.length).toBe(1 + 1 + HELP.length)
+  expect(rows.length).toBe(3)
   expect(nodes(rows[1]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['demo', 'still', 'lang'])
   expect(nodes(rows[0]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['closeHelp'])
+  const pairs = rows[2]!.children as Node[]
+  expect(pairs).toHaveLength(1)
+  expect(rows[2]).toMatchObject({ props: { flexDirection: 'row-reverse', columnGap: PAIRS_GAP, width: '100%' } })
+  const [labelsCol, keysCol] = pairs[0]!.children as Node[]
+  expect(labelsCol).toMatchObject({ props: { flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0, paddingLeft: 1 } })
+  expect(keysCol).toMatchObject({ props: { flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 } })
+  expect(cellsOf(labelsCol!).map(n => texts(n))).toEqual(HELP.map(([k]) => nb(LABELS[k]!)))
+  expect(cellsOf(keysCol!).map(n => texts(n))).toEqual(HELP.map(([, keys]) => nb(keys)))
+  expect(cellsOf(keysCol!).every(n => n.props.dimColor === true && n.props.color === undefined)).toBe(true)
+  expect(cellsOf(labelsCol!).every(n => !texts(n).includes(' '))).toBe(true)
   for (const k of ['demo', 'still', 'lang']) expect(btn(k)?.props.hotkey).toBeUndefined()
   const wide = Office(open({ columns: COMPACT_BELOW }), fake(COMPACT_BELOW).surface)
   expect(['demo', 'still', 'lang'].map(k => btn(k, wide)?.props.hotkey)).toEqual(['d', 's', 'l'])
@@ -1147,7 +1238,7 @@ test('settings: the popover holds the demo, motion and language Buttons in words
 })
 
 // (a few thousand renders: a loaded machine stretches the suite tenfold — the 5 s default timeout would fail it with no code change)
-test('header: one bold Text of the counts in words (`🎭 עובדים 2 · סיימו 0`) at the reading edge, the five-hour meter dim at the other — the full label (bar and reset clock) where the whole line fits by LINE_FIT from COMPACT_BELOW columns, else the short form, else nothing; the words give way to the icons on a narrow pane', { timeoutMs: 30_000 }, () => {
+test('header: one bold Text of the counts in words (`🎭 עובדים 2 · סיימו 0`) at the reading edge, the five-hour meter dim at the other — THE LABEL LADDER: the full label (bar and reset clock) where the whole line fits by LINE_FIT from WIDE_FROM columns, else the short form, else the tiny `⏳ 42%`, else nothing; the words give way to the icons on a narrow pane', { timeoutMs: 30_000 }, () => {
   const R = new Date(2026, 9, 10, 14, 30).toISOString() // (a local wall-clock time: reads back as 14:30 in any zone)
   const u = { pct: 42.4, resetsAt: R }
   /** The header's two Texts: the counts and the meter ('' when none). */
@@ -1164,9 +1255,15 @@ test('header: one bold Text of the counts in words (`🎭 עובדים 2 · סי
   expect(header(120, { usage: { pct: 85, resetsAt: R }, lang: 'en', labels: LABELS_EN, rtl: false })).toEqual(['🎭 2 working · 0 finished', '⚠ 5h ▰▰▰▰▰▰▰▰▰▱ 85% · 14:30'])
   // no reset time: the label without its clock part
   expect(header(120, { usage: { pct: 42, resetsAt: '' } })[1]).toBe('⏳ 5h ▰▰▰▰▱▱▱▱▱▱ 42%')
-  // narrow (under COMPACT_BELOW): the short form, no bar, no clock
-  expect(header(COMPACT_BELOW - 1, { usage: u })[1]).toBe(short)
+  // under WIDE_FROM: the short form, no bar, no clock (the probe's round 8: the full meter from 80)
+  expect(header(WIDE_FROM - 1, { usage: u })[1]).toBe(short)
+  expect(header(WIDE_FROM, { usage: u })[1]).toBe(full)
+  expect(header(COMPACT_BELOW, { usage: u })[1]).toBe(short)
   expect(header(45, { usage: { pct: 80, resetsAt: R } })[1]).toBe('⚠ 5h 80%')
+  // narrower still: the tiny form, then nothing (a search line's far edge takes the short meter under ONE_LINE_FROM when the field is drawn: THE LABEL LADDER below)
+  expect(usageTiny(u)).toBe('⏳ 42%')
+  expect(header(34, { usage: u })[1]).toBe('⏳ 42%')                                            // 21 words + 1 + 6 = 28 = fitLine(34); the short form's 9 would not fit
+  expect(header(30, { usage: u, counts: { run: 12, idle: 30, done: 120 } })[1]).toBe('')     // the icons' 25 leave no room for even the tiny form in 24
   // no reading: no meter at any width
   for (const columns of [24, 45, 59, 60, 90, 200]) expect(header(columns, { usage: null })[1]).toBe('')
   // the probe's header at the probe's width: the words and the short meter both drawn
@@ -1184,21 +1281,28 @@ test('header: one bold Text of the counts in words (`🎭 עובדים 2 · סי
     for (const reading of readings) {
       const fullOf = usageLabel(reading, 'he', 100)
       const shortOf = usageShort(reading)
+      const tinyOf = usageTiny(reading)
       for (let columns = 24; columns <= 200; columns++) {
         const at = `${JSON.stringify(counts)}, ${reading.pct}%, ${columns} columns`
+        const L = geometry(columns).L   // (the line is the reading column's: 100 cells at most)
         const [c, m] = header(columns, { counts, usage: reading })
         expect(c, at).not.toMatch(REFUSED_RE)
-        expect(['', shortOf, fullOf], at).toContain(m)
+        expect(['', tinyOf, shortOf, fullOf], at).toContain(m)
         // a meter only when the whole line fits; the words only when they fit alone (the icons form is the floor: a 24-column
         // pane with three-digit counts clips it — the height-1 Box keeps it one line)
-        if (m) expect(textWidth(c) + 1 + textWidth(m), at).toBeLessThanOrEqual(fitLine(columns))
-        if (m === fullOf) expect(columns, `${at}: the bar`).toBeGreaterThanOrEqual(COMPACT_BELOW)
+        if (m) expect(textWidth(c) + 1 + textWidth(m), at).toBeLessThanOrEqual(L)
+        if (m === fullOf) expect(columns, `${at}: the bar`).toBeGreaterThanOrEqual(WIDE_FROM)
+        // the ladder: the full label whenever the line holds it from WIDE_FROM, else the short whenever it fits, else the tiny
+        if (columns >= WIDE_FROM && textWidth(c) + 1 + textWidth(fullOf) <= L) expect(m, at).toBe(fullOf)
+        else if (textWidth(c) + 1 + textWidth(shortOf) <= L) expect(m, at).toBe(shortOf)
+        else if (textWidth(c) + 1 + textWidth(tinyOf) <= L) expect(m, at).toBe(tinyOf)
+        else expect(m, at).toBe('')
         const words = c.includes('עובדים')
-        if (words) expect(textWidth(c), at).toBeLessThanOrEqual(fitLine(columns))
+        if (words) expect(textWidth(c), at).toBeLessThanOrEqual(L)
         const icons = `🎭 🟢${counts.run}${counts.idle ? ` · ⏳${counts.idle}` : ''} · ✅${counts.done}`
         if (!words) expect(c, at).toBe(icons)
         // the words whenever they alone fit: a wider pane never loses them
-        if (textWidth(`🎭 עובדים ${counts.run}${counts.idle ? ` · ממתינים ${counts.idle}` : ''} · סיימו ${counts.done}`) <= fitLine(columns)) expect(words, at).toBe(true)
+        if (textWidth(`🎭 עובדים ${counts.run}${counts.idle ? ` · ממתינים ${counts.idle}` : ''} · סיימו ${counts.done}`) <= L) expect(words, at).toBe(true)
       }
     }
   }
@@ -1299,14 +1403,14 @@ test('limits: 200 agents with the drawer open — in 3 rooms and in 200 rooms �
   expect(maxJson).toBeLessThan(90_000)
 })
 
-/** THE RENDER COST's bounds (office-client.tsx): what the desktop lays out per row and per card. */
-const ROW_TEXTS = 4
-/** A card around its rows: the card, the title line (its Box, the pin Text, the title Box and Text, the counts Box and Text), the rule (Box, Text), the table block (a column Box, two spacers, the table), four columns, the more line (Box, Text). */
-const CARD_NODES = 1 + 6 + 2 + 4 + 4 + 2
-/** The Boxes of a card around its rows: the card, the title line and its two Boxes, the rule, the block and two spacers, the table, four columns, the more line. */
-const CARD_BOXES = 1 + 3 + 1 + 3 + 1 + 4 + 1
+/** THE RENDER COST's bounds (office-client.tsx): what the desktop lays out per row and per card — a Text per column of the mode, six at most (status, who, model, the activity's emoji and word, the task). */
+const ROW_TEXTS = 6
+/** A card around its rows: the card, the title line (its Box, the pin Text, the title Box and Text, the counts Box and Text), the blank line (a Box), the table block (a column Box, two spacers, the table), six columns, the more line (Box, Text). */
+const CARD_NODES = 1 + 6 + 1 + 4 + 6 + 2
+/** The Boxes of a card around its rows: the card, the title line and its two Boxes, the blank line, the block and two spacers, the table, six columns, the more line. */
+const CARD_BOXES = 1 + 3 + 1 + 3 + 1 + 6 + 1
 
-test('THE RENDER COST (the regression guard no load can flake): a drawn row costs the desktop ROW_TEXTS Texts and NO Box, a card at most CARD_NODES nodes (CARD_BOXES Boxes) around its rows, the whole tree ROW_TEXTS × WINDOW_ROWS plus the cards and the chrome at the biggest window; and THE ROOM MEMO — a redraw measures only the rooms whose props or width changed, a decor change none', () => {
+test('THE RENDER COST (the regression guard no load can flake): a drawn row costs the desktop a Text per column (ROW_TEXTS at most) and NO Box, a card at most CARD_NODES nodes (CARD_BOXES Boxes) around its rows, the whole tree ROW_TEXTS × WINDOW_ROWS plus the cards and the chrome at the biggest window; and THE ROOM MEMO — a redraw measures only the rooms whose props or width changed, a decor change none', () => {
   const agents = crowd()
   const three = [room('A', agents.slice(0, 80), { moreDone: 3, moreLabel: 'עוד 3 שסיימו', pinned: true }), room('B', agents.slice(80, 140)), room('C', agents.slice(140))]
   const d = drawer({ task: 'x'.repeat(600), result: 'y'.repeat(300), truncated: true })
@@ -1324,9 +1428,10 @@ test('THE RENDER COST (the regression guard no load can flake): a drawn row cost
       for (const col of cols) expect(col.children.length, at).toBe(n)
       for (const col of cols) expect((col.children as Node[]).every(c => c.type === 'Text' && c.props.wrap === 'truncate'), at).toBe(true)
       const all = nodes(card)
+      expect(cols.length, at).toBeLessThanOrEqual(ROW_TEXTS)
       expect(all.filter(x => x.type === 'Box').length, at).toBeLessThanOrEqual(CARD_BOXES)
-      expect(all.length, at).toBeLessThanOrEqual(CARD_NODES + n * ROW_TEXTS)
-      expect(all.filter(x => x.type === 'Text').length, at).toBeLessThanOrEqual(5 + n * ROW_TEXTS)   // the pin, the title, the counts, the rule, the more line
+      expect(all.length, at).toBeLessThanOrEqual(CARD_NODES + n * cols.length)
+      expect(all.filter(x => x.type === 'Text').length, at).toBeLessThanOrEqual(4 + n * cols.length)   // the pin, the title, the counts, the more line
     }
     expect(rowsDrawn, at).toBeLessThanOrEqual(WINDOW_ROWS)
     // the whole tree: the chrome (the header, the toolbar, the search, the drawer's lines) and the cards
@@ -1361,12 +1466,243 @@ test('THE RENDER COST (the regression guard no load can flake): a drawn row cost
   const q = { ...p, rooms: three.map(r => r.id === 'B' ? { ...r, agents: r.agents.map(a => a.id === 'agent-90' ? { ...a, act: '🔎 מחפש קוד' } : a) } : r) }
   Office(q, f.surface)
   expect(cache.builds).toBe(4)
-  // a resize: every room (the fit and the title cut follow the width)
+  // a resize inside the frozen column (200 → 120: the reading column is 100 cells either way): nothing; out of it (90): every room
+  // (the mode and the title cut follow the width)
   Office({ ...q, columns: 120 }, f.surface)
+  expect(cache.builds).toBe(4)
+  Office({ ...q, columns: 90 }, f.surface)
   expect(cache.builds).toBe(7)
   // a room gone (a search): dropped; back: measured again
-  Office({ ...q, columns: 120, rooms: q.rooms.filter(r => r.id !== 'C') }, f.surface)
+  Office({ ...q, columns: 90, rooms: q.rooms.filter(r => r.id !== 'C') }, f.surface)
   expect([...cache.rooms.keys()]).toEqual(['A', 'B'])
-  Office({ ...q, columns: 120 }, f.surface)
+  Office({ ...q, columns: 90 }, f.surface)
   expect(cache.builds).toBe(8)
+})
+
+// ---------------------------------------------------------------------------
+// the width (probe rounds 8-9)
+// ---------------------------------------------------------------------------
+
+test('THE LINE COUNTS (probe rounds 8-9): at every width 24..200, narrowing and then widening on ONE instance (the hysteresis riding in it), both directions, with and without the drawer — the chrome\'s rows add up to chromeRows and the first card starts there, every card is its line map (the title, a text-free blank line, a Text per column per row and no Box, the more line with its blank), NO Text of a card holds a plain space; the mode changes words and columns and never a line\'s position (the same line shape at a width whichever way it was reached); narrowing draws the fresh mode, widening never a richer one', { timeoutMs: 120_000 }, () => {
+  const rooms = [
+    room('A', [ag('lead', { emoji: '💼', act: '🧠 חושב' }), ag('a1', { name: 'הקרטוגרף', model: 'Sonnet 4.5', act: '🔎 מחפש קוד' }), ag('d1', { status: 'done', act: '✅ סיים', star: 7 })], { moreDone: 2, moreLabel: 'עוד 2 שסיימו' }),
+    room('B', [ag('b1', { status: 'stale', act: '💤 ממתין' }), ag('b2', { failed: true, status: 'done', act: '✅ סיים' }), ag('b3', { longRunning: true })], { title: 'Plan the static-registry move and the v2 config rollout', pinned: true }),
+    room('C', many(8).map(a => ({ ...a, name: 'הצב' })), { title: 'בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל' }),
+  ]   // (fourteen shown: the search field drawn)
+  const w = officeWidest(rooms)
+  for (const withDrawer of [false, true]) {
+    for (const rtl of [true, false]) {
+      const f = fake(200, 0)
+      const shapes = new Map<number, string>()
+      const ranks: Record<'down' | 'up', number[]> = { down: [], up: [] }
+      const sweep = (dir: 'down' | 'up') => {
+        for (let i = 0; i <= 176; i++) {
+          const columns = dir === 'down' ? 200 - i : 24 + i
+          f.size(columns, 0)
+          const p = props({ columns, rtl, rooms, rows: 80, ...(withDrawer ? { selected: 'a1', drawer: drawer({ id: 'a1' }) } : {}) })
+          // (the model the instance will draw: the mode from the rank it kept — the hysteresis — not the fresh one)
+          const before = f.surface.state?.inst.lastRank ?? null
+          const m = officeModel(p, NO_DECOR, undefined, before)
+          const rowOf = (i: number, k: number) => { const r = m.rooms[i]!.rows[k]!; return [r.status, r.who, ...(m.mode.model !== 'none' ? [r.model] : []), r.actEmoji, ...(m.mode.word ? [r.actWord] : []), ...(m.geo.centred ? [r.task] : [])] }
+          const tree = Office(p, f.surface)
+          const at = `${dir} ${columns} ${rtl ? 'rtl' : 'ltr'}${withDrawer ? ' drawer' : ''}`
+          expect(chromeOf(tree), at).toBe(chromeRows(p))
+          expect(f.surface.state!.inst.lastRank, at).toBe(m.mode.rank)
+          const cs = cards(tree)
+          expect(cs.length, at).toBe(3)
+          cs.forEach((card, i) => {
+            const { title, blank, more } = partsOf(card)
+            expect(title.props.height, at).toBe(1)
+            expect(blank, at).toEqual({ type: 'Box', props: { height: 1 }, children: [] })
+            const rm = m.rooms[i]!
+            expect(rowsOf(card).length, at).toBe(rm.rows.length)
+            if (rm.more) expect(more, at).toMatchObject({ props: { height: 1, marginTop: 1 } })
+            else expect(more, at).toBeUndefined()
+            for (const col of columnsOf(card)) expect((col.children as Node[]).every(c => c.type === 'Text'), at).toBe(true)
+            for (const n of nodes(card)) if (n.type === 'Text') expect(texts(n), at).not.toContain(' ')
+            rowsOf(card).forEach((r, k) => expect(r, `${at} ${rm.id} row ${k}`).toEqual(rowOf(i, k)))
+          })
+          // the line shape: the root's props, its children's keys and heights, every card's parts' heights and margins — never the columns
+          const root = tree as unknown as Node
+          const shape = JSON.stringify([
+            [root.props.width, root.props.marginLeft],
+            kidsOf(tree).map(n => [n.props.key ?? n.props.borderStyle, n.props.height, n.props.marginTop, n.props.marginBottom]),
+            cs.map(c => (c.children as Node[]).map(k => [k.props.height, k.props.marginTop])),
+          ])
+          if (dir === 'down') shapes.set(columns, shape)
+          else expect(shape, at).toBe(shapes.get(columns))
+          ranks[dir][columns] = f.surface.state!.inst.lastRank ?? -1
+        }
+      }
+      sweep('down')
+      sweep('up')
+      for (let c = 24; c <= 200; c++) {
+        expect(ranks.down[c], `${c} ${rtl} ${withDrawer}`).toBe(chooseMode(w, geometry(c), null).rank)
+        expect(ranks.up[c]!, `${c} ${rtl} ${withDrawer}`).toBeGreaterThanOrEqual(ranks.down[c]!)
+      }
+      expect(new Set(ranks.down).size).toBeGreaterThan(2)   // the sweep crossed thresholds
+      expect(ranks.up.some((r, c) => r > ranks.down[c]!)).toBe(true)   // ... and the hysteresis held a poorer mode somewhere on the way up
+    }
+  }
+})
+
+test('THE READING COLUMN (probe round 8): under CENTRE_AT the root is the pane; from it a frozen column of 100 cells, centred by a left margin — the pointer\'s x maps to the column by the same margin (a click in a margin hits nothing); the card\'s padding 2 and the floors (minWidth per column from the office-wide widest value, aligned across the cards) from WIDE_FROM; the dim task column from CENTRE_AT, growing, with no floor', () => {
+  const rooms = [room('A', [ag('lead', { task: 'תכנון המעבר לרישום הסטטי' }), ag('a1', { name: 'הקרטוגרף', model: 'Sonnet 4.5', act: '🔎 מחפש קוד', task: 'x'.repeat(40) })]), room('B', [ag('b1', { status: 'done', act: '✅ סיים', task: '' })])]
+  // under WIDE_FROM: a plain column root, the cards' padding 1, no floors, no task column
+  const narrow = Office(props({ columns: 79, rooms }), fake(79).surface) as unknown as Node
+  expect(narrow.props).toEqual({ flexDirection: 'column' })
+  expect(cards(narrow)[0]!.props.paddingX).toBe(1)
+  expect(columnsOf(cards(narrow)[0]!).every(c => c.props.minWidth === undefined)).toBe(true)
+  expect(columnsOf(cards(narrow)[0]!)).toHaveLength(5)
+  // from WIDE_FROM: the padding 2, the floors on every column, the same on every card
+  const wide = Office(props({ columns: 80, rooms }), fake(80).surface) as unknown as Node
+  expect(wide.props).toEqual({ flexDirection: 'column' })
+  expect(cards(wide)[0]!.props.paddingX).toBe(2)
+  const floors80 = floorsOf(officeWidest(rooms), officeModel(props({ columns: 80, rooms })).mode)
+  expect(columnsOf(cards(wide)[0]!).map(c => c.props.minWidth)).toEqual([floors80.status, floors80.who, floors80.model, floors80.actEmoji, floors80.actWord])
+  expect(columnsOf(cards(wide)[1]!).map(c => c.props.minWidth)).toEqual(columnsOf(cards(wide)[0]!).map(c => c.props.minWidth))
+  // from CENTRE_AT: the frozen column with its margin, the task column (dim, growing, no floor) last
+  const f = fake(140, 0)
+  const p = props({ columns: 140, rooms })
+  const tree = Office(p, f.surface) as unknown as Node
+  expect(geometry(140).margin).toBe(20)
+  expect(tree.props).toEqual({ flexDirection: 'column', width: CENTRE_AT, flexShrink: 0, marginLeft: 20 })
+  const cols = columnsOf(cards(tree)[0]!)
+  expect(cols).toHaveLength(6)
+  expect(cols.map(c => c.props.flexGrow)).toEqual([0, 0, 0, 0, 0, 1])
+  expect(cols[5]!.props.minWidth).toBeUndefined()
+  const floors140 = floorsOf(officeWidest(rooms), officeModel(p).mode)
+  expect(cols.slice(0, 5).map(c => c.props.minWidth)).toEqual([floors140.status, floors140.who, floors140.model, floors140.actEmoji, floors140.actWord])
+  expect(rowsOf(cards(tree)[0]!)).toEqual([modelRow(p, 0, 0), modelRow(p, 0, 1)])
+  expect(rowsOf(cards(tree)[0]!)[0]![5]).toBe(nb('תכנון המעבר לרישום הסטטי'))
+  expect(rowsOf(cards(tree)[0]!)[1]![5]).toBe('x'.repeat(23) + '…')
+  expect(rowsOf(cards(tree)[1]!)[0]![5]).toBe(NBSP)   // an empty task: the cell's one no-break space
+  expect(cellsOf(cols[5]!).every(c => c.props.dimColor === true && c.props.color === undefined)).toBe(true)
+  // the pointer: the margin off its x — in the left margin nothing, at margin + 5 the row, the pin zone at the column's right edge, the right margin nothing
+  const C = chromeRows(p)
+  const m = officeModel(p)
+  const yLead = m.hits.find(h => h.kind === 'agent' && h.id === 'lead')!.y
+  f.pointer({ type: 'down', x: 5, y: C + yLead, button: 'left' })
+  expect(f.posts).toEqual([])
+  f.pointer({ type: 'down', x: 20 + 5, y: C + yLead, button: 'left' })
+  expect(f.posts).toEqual([{ t: 'open', id: 'lead' }])
+  f.pointer({ type: 'down', x: 20 + 99, y: C + 2, button: 'left' })
+  expect(f.posts[1]).toEqual({ t: 'pin', room: 'A' })
+  f.pointer({ type: 'down', x: 20 + 100 + 3, y: C + yLead, button: 'left' })
+  f.pointer({ type: 'down', x: 139, y: C + 2, button: 'left' })
+  expect(f.posts).toHaveLength(2)
+  f.pointer({ type: 'move', x: 20 + 50, y: C + 2 })
+  expect(f.surface.state!.hoverRoom).toBe('A')
+  expect(f.surface.state!.inst.margin).toBe(20)
+  // at exactly CENTRE_AT the column is the pane: no margin; at 101 still none (the odd cell stays on the right)
+  const at100 = Office(props({ columns: 100, rooms }), fake(100).surface) as unknown as Node
+  expect(at100.props).toEqual({ flexDirection: 'column', width: CENTRE_AT, flexShrink: 0, marginLeft: 0 })
+  expect(columnsOf(cards(at100)[0]!)).toHaveLength(6)
+  expect((Office(props({ columns: 101, rooms }), fake(101).surface) as unknown as Node).props.marginLeft).toBe(0)
+  expect((Office(props({ columns: 102, rooms }), fake(102).surface) as unknown as Node).props.marginLeft).toBe(1)
+  // the fragment under an overlay at the window's top keeps the frame's cells as padding: the border and the padding of the width
+  const crowd = withAgents(props({ columns: 80, rows: 25, offset: 40, selected: 'g43', drawer: drawer({ id: 'g43' }) }), Array.from({ length: 60 }, (_, i) => ag(`g${i}`)))
+  const frag = byKey(Office(crowd, fake(80, 0).surface), 'fragment')!
+  expect(frag.props.paddingX).toBe(3)
+  expect(texts((frag.children as Node[])[(frag.children as Node[]).length - 1])).toBe('─'.repeat(80))
+  expect(texts((byKey(Office({ ...crowd, columns: 140 }, fake(140, 0).surface), 'fragment')!.children as Node[]).slice(-1)[0])).toBe('─'.repeat(CENTRE_AT))
+})
+
+test('the toolbar and the search (probe round 8): under ONE_LINE_FROM the toolbar line then — with the field drawn — the search on a line of its own with a blank line above and below, the short meter at its far edge when the header had no room for one; from ONE_LINE_FROM the Buttons at the reading edge and the field at the other edge of ONE line, inputWidth cells wide (INPUT_MIN..INPUT_MAX after the toolbar\'s words by FIT); the chrome four rows either way without the field', () => {
+  const u = { pct: 42.4, resetsAt: '' }
+  const p = withAgents(props({ usage: u }), many())
+  // 40 columns, crowded counts (the icons' 25 cells: `🎭 🟢120 · ⏳300 · ✅1200`): no room for the short meter in the header (25 + 1 + 9 > 33),
+  // so it rides the search line's far edge (15 + 2 + 9 ≤ 33); the toolbar then has no margin of its own (the search line's blank is the gap)
+  const crowded = { run: 120, idle: 300, done: 1200 }
+  const t40 = Office({ ...p, columns: 40, counts: crowded }, fake(40).surface)
+  expect(kidsOf(t40).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  expect((byKey(t40, 'header')!.children as Node[]).length).toBe(1)
+  const sl = byKey(t40, 'searchLine')!
+  expect(sl).toMatchObject({ props: { flexDirection: 'row-reverse', columnGap: 2, marginTop: 1, marginBottom: 1, height: 1, overflow: 'hidden' } })
+  expect((sl.children as Node[]).map(n => n.type)).toEqual(['Box', 'Text'])
+  expect((sl.children as Node[])[0]).toMatchObject({ props: { flexGrow: 1, flexShrink: 1, minWidth: 0, overflow: 'hidden' } })
+  expect(nodes((sl.children as Node[])[0]).find(n => n.type === 'Input')?.props.key).toBe('search')
+  expect(texts((sl.children as Node[])[1])).toBe(usageShort(u))
+  expect((sl.children as Node[])[1]!.props.dimColor).toBe(true)
+  expect(byKey(t40, 'toolbar')!.props.marginBottom).toBeUndefined()
+  expect(chromeOf(t40)).toBe(CHROME_ROWS_SEARCH)
+  // the header has room for the short meter (the probe's counts): the search line carries none
+  const t45 = Office({ ...p, columns: 45 }, fake(45).surface)
+  expect(texts(byKey(t45, 'header'))).toContain(usageShort(u))
+  expect((byKey(t45, 'searchLine')!.children as Node[]).map(n => n.type)).toEqual(['Box'])
+  // no field (an office of two): the toolbar alone with its blank line as a margin; the meter's last step, the tiny form, in the header (25 + 1 + 6 ≤ 33)
+  const t40b = Office(props({ columns: 40, counts: crowded, usage: u }), fake(40).surface)
+  expect(kidsOf(t40b).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'round'])
+  expect(byKey(t40b, 'toolbar')!.props.marginBottom).toBe(1)
+  expect(texts(byKey(t40b, 'header'))).toContain(usageTiny(u))
+  expect(chromeOf(t40b)).toBe(CHROME_ROWS_MIN)
+  // from ONE_LINE_FROM: one line — the Buttons Box (gap 2, rigid) and the field Box (inputWidth cells, rigid), space-between; the chrome four rows
+  const words = ['הצג שסיימו ☐', 'צליל 🔕', 'הגדרות ⚙️']
+  for (const columns of [ONE_LINE_FROM, 70, 79, 80, 99, 100, 140, 200]) {
+    const t = Office({ ...p, columns }, fake(columns).surface)
+    const at = `${columns}`
+    expect(kidsOf(t).map(n => n.props.key ?? n.props.borderStyle), at).toEqual(['header', 'toolbar', 'round'])
+    const tb = byKey(t, 'toolbar')!
+    expect(tb, at).toMatchObject({ props: { flexDirection: 'row-reverse', justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1 } })
+    const [buttons, field] = tb.children as Node[]
+    expect(buttons, at).toMatchObject({ props: { flexDirection: 'row-reverse', gap: TOOLBAR_GAP, flexWrap: 'nowrap', flexShrink: 0 } })
+    expect(nodes(buttons).filter(n => n.type === 'Button').map(n => n.props.key), at).toEqual(['showDone', 'mute', 'help'])
+    expect(field, at).toMatchObject({ props: { width: inputWidth(geometry(columns), words), flexShrink: 0, height: 1, overflow: 'hidden' } })
+    expect(nodes(field).find(n => n.type === 'Input')?.props.key, at).toBe('search')
+    expect(chromeOf(t), at).toBe(CHROME_ROWS_MIN)
+    expect(byKey(t, 'searchLine'), at).toBeUndefined()
+  }
+  // inputWidth: what the column leaves after the toolbar's words by FIT and the gaps, between INPUT_MIN and INPUT_MAX
+  const toolbarCells = Math.ceil(words.reduce((n, l) => n + textWidth(l), 0) / FIT) + 2 * TOOLBAR_GAP
+  expect(toolbarCells).toBe(42)
+  expect(inputWidth(geometry(64), words)).toBe(Math.max(INPUT_MIN, Math.min(INPUT_MAX, 64 - toolbarCells - 2)))
+  expect(inputWidth(geometry(64), words)).toBe(20)
+  expect(inputWidth(geometry(74), words)).toBe(30)
+  expect(inputWidth(geometry(100), words)).toBe(INPUT_MAX)
+  expect(inputWidth(geometry(200), words)).toBe(INPUT_MAX)
+  expect(inputWidth(geometry(24), words)).toBe(INPUT_MIN)
+  expect([INPUT_MIN, INPUT_MAX]).toEqual([12, 30])
+  // without the agents for it no field from ONE_LINE_FROM either: the Buttons alone on the line; an active search keeps it with two agents
+  expect((byKey(Office(props({ columns: 80 }), fake(80).surface), 'toolbar')!.children as Node[]).length).toBe(1)
+  expect(nodes(Office(props({ columns: 45, search: 'x' }), fake(45).surface)).find(n => n.type === 'Input')).toBeDefined()
+  expect(nodes(Office(props({ columns: 80, search: 'x' }), fake(80).surface)).find(n => n.type === 'Input')).toBeDefined()
+  expect(chromeOf(Office(props({ columns: 45, search: 'x' }), fake(45).surface))).toBe(CHROME_ROWS_SEARCH)
+  // the search typed in the field reaches the hooks whatever the line it sits on
+  const g = fake(80)
+  const one = Office({ ...p, columns: 80 }, g.surface)
+  ;(nodes(one).find(n => n.type === 'Input')!.props.onSubmit as (v: string) => void)('owl')
+  expect(g.posts).toEqual([{ t: 'search', q: 'owl' }])
+})
+
+test('the weights in the tree (round 8): working = a bold who; waiting = a regular who and a dim activity word; finished = all dim; a ❌ row keeps a regular who; the model always dim; colour on the status mark alone', () => {
+  const p = props({ columns: 51, rooms: [room('A', [ag('run'), ag('wait', { status: 'stale', act: '💤 ממתין' }), ag('fin', { status: 'done', act: '✅ סיים' }), ag('bad', { status: 'done', failed: true, act: '⛔ נכשל' })])] })
+  const cols = columnsOf(cards(Office(p, fake(51).surface))[0]!)
+  expect(cols).toHaveLength(5)
+  const [status, who, model, emoji, word] = cols.map(cellsOf)
+  expect(status!.map(c => c.props.color)).toEqual([DOT_FG.running, DOT_FG.stale, DOT_FG.done, DOT_FG.done])
+  expect(status!.map(c => texts(c))).toEqual(['●', '●', '○', '❌'])
+  expect(who!.map(c => [c.props.bold, c.props.dimColor])).toEqual([[true, false], [false, false], [false, true], [false, false]])
+  expect(model!.every(c => c.props.dimColor === true)).toBe(true)
+  expect(emoji!.map(c => c.props.dimColor)).toEqual([false, false, true, true])
+  expect(word!.map(c => c.props.dimColor)).toEqual([false, true, true, true])
+  for (const col of [who, model, emoji, word]) expect(col!.every(c => c.props.color === undefined)).toBe(true)
+})
+
+test('the settings\' shortcuts from WIDE_FROM: two column pairs side by side (PAIRS_GAP apart), the second padded with a blank row to the first\'s HELP_PAIR_ROWS, the popover helpRows tall; the popover\'s and the drawer\'s padding the cards\' (2 from WIDE_FROM)', () => {
+  const t = Office(props({ columns: 80, helpOpen: true }), fake(80).surface)
+  const box = byKey(t, 'help')!
+  expect(box).toMatchObject({ props: { paddingX: 2, height: helpRows(80), width: '100%' } })
+  expect(helpRows(80)).toBe(11)
+  expect((box.children as Node[])).toHaveLength(3)
+  const pairs = (box.children as Node[])[2]!.children as Node[]
+  expect(pairs).toHaveLength(2)
+  const labelsOf = (pair: Node) => cellsOf((pair.children as Node[])[0]!).map(n => texts(n))
+  const keysOf = (pair: Node) => cellsOf((pair.children as Node[])[1]!).map(n => texts(n))
+  expect(labelsOf(pairs[0]!)).toEqual(HELP.slice(0, HELP_PAIR_ROWS).map(([k]) => nb(LABELS[k]!)))
+  expect(keysOf(pairs[0]!)).toEqual(HELP.slice(0, HELP_PAIR_ROWS).map(([, k]) => nb(k)))
+  expect(labelsOf(pairs[1]!)).toEqual([...HELP.slice(HELP_PAIR_ROWS).map(([k]) => nb(LABELS[k]!)), NBSP])
+  expect(keysOf(pairs[1]!)).toEqual([...HELP.slice(HELP_PAIR_ROWS).map(([, k]) => nb(k)), NBSP])
+  for (const pair of pairs) for (const col of pair.children as Node[]) for (const cell of cellsOf(col)) expect(texts(cell)).not.toContain(' ')
+  expect(byKey(Office(props({ columns: 80, selected: 'lead', drawer: drawer() }), fake(80).surface), 'drawer')!.props.paddingX).toBe(2)
+  expect(byKey(Office(props({ columns: 79, selected: 'lead', drawer: drawer() }), fake(79).surface), 'drawer')!.props.paddingX).toBe(1)
 })

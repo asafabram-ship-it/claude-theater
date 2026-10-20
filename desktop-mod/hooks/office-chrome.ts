@@ -1,7 +1,10 @@
 // office-chrome.ts: the pure maths of the desktop office's chrome — the rows
-// the surface module draws above the cards (header, toolbar, search, each
-// with its blank line, the footer line, the settings popover or the drawer),
-// their exact heights, the drawer's wrapped lines, and the window of layout
+// the surface module draws above the cards (the header and the toolbar with
+// their blank lines; the search on the toolbar's line from ONE_LINE_FROM
+// columns, else on a line of its own with a blank line above it — and only
+// while the office shows more than SEARCH_FROM agents or a search is active;
+// the footer line; the settings popover or the drawer), their exact heights,
+// the drawer's wrapped lines and its one status line, and the window of layout
 // lines the engine's scroll offset shows; and the ONE definition of the characters the surfaces refuse
 // (REFUSED_RE), with the two cleaners built on it: cleanSearch (the search
 // text) and cleanAgentText (every agent text the payload carries, cleaned by
@@ -10,11 +13,18 @@
 // engine, no clock, so both sides import it — the hooks never import the
 // surface module itself.
 
-import { CARD_FRAME, cut, fitCells, fitLine, textWidth } from './office-layout'
+import { DOT_FG, cut, fitCells, fitLine, geometry, markOf, textWidth } from './office-layout'
 import type { OfficeDrawer, OfficeProps } from './office-props'
 
-/** The chrome rows always there, as the probe lays them: the header, a blank line, the toolbar, a blank line, the search, a blank line. */
-export const CHROME_ROWS = 6
+/**
+ * The chrome rows always there, by the width (the probe's rounds 8-9): the header and a blank line, the toolbar and a blank
+ * line — 4 rows — and, under ONE_LINE_FROM columns while the search field is drawn, the search line with a blank line above
+ * it: 6. From ONE_LINE_FROM the search shares the toolbar's line. (`fixedRows`; the overlay and the footer come on top.)
+ */
+export const CHROME_ROWS_MIN = 4
+export const CHROME_ROWS_SEARCH = 6
+/** The search field is drawn only while the office shows more than this many agents (spec 2026-10-10 §2 item 22) — or while a search is active. */
+export const SEARCH_FROM = 12
 /** Under this many columns the pane draws no key-hint chips (ui.tsx's rule; the Client's toolbar puts hotkeys on its Buttons only from here, since the desktop draws a chip per hotkey). */
 export const COMPACT_BELOW = 60
 /** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested). */
@@ -30,12 +40,44 @@ export const HELP: ReadonlyArray<readonly [string, string]> = [
 ]
 /** The settings popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
 export const HELP_BUTTON_ROWS = 1
-/** The settings popover's height: the border, the padding line above and below (the cards' paddingY), the title row, the Buttons row, one row per shortcut. */
-export const HELP_ROWS = 2 + 2 + 1 + HELP_BUTTON_ROWS + HELP.length
+/** The rows of the first pair when the shortcuts are drawn in two column pairs (from WIDE_FROM: the probe's). */
+export const HELP_PAIR_ROWS = 5
+/**
+ * The shortcut rows as the settings popover lays them: one column-major table (label | key) under WIDE_FROM; from it two
+ * pairs side by side, the second padded with a blank row to the first's height (so the popover's height is the first
+ * pair's rows either way).
+ */
+export function helpPairs(wide: boolean): ReadonlyArray<ReadonlyArray<readonly [string, string]>> {
+  if (!wide) return [HELP]
+  const second: Array<readonly [string, string]> = [...HELP.slice(HELP_PAIR_ROWS)]
+  while (second.length < HELP_PAIR_ROWS) second.push([' ', ' '] as const)
+  return [HELP.slice(0, HELP_PAIR_ROWS), second]
+}
+/** The settings popover's height at `columns`: the border, the padding line above and below (the cards' paddingY), the title row, the Buttons row, the shortcut rows (one pair's from WIDE_FROM). */
+export function helpRows(columns: number): number {
+  return 2 + 2 + 1 + HELP_BUTTON_ROWS + helpPairs(geometry(columns).wide)[0]!.length
+}
 /** The blank line under the settings popover | the drawer, before the first card (the cards' own gap). */
 export const OVERLAY_GAP = 1
 /** The drawer card's frame: its border and its padding line, top and bottom (the cards' style). */
 export const DRAWER_FRAME_ROWS = 4
+
+/** The agents the office shows: the rows of every room in the props (the held-back finished and the ones over the props cap are not among them). */
+export function shownAgents(p: Pick<OfficeProps, 'rooms'>): number {
+  let n = 0
+  for (const room of p.rooms) n += room.agents.length
+  return n
+}
+
+/** Whether the search field is drawn: more than SEARCH_FROM agents shown, or a search active (its text stays visible whatever the count). */
+export function searchShown(p: Pick<OfficeProps, 'rooms' | 'search'>): boolean {
+  return shownAgents(p) > SEARCH_FROM || p.search !== ''
+}
+
+/** The chrome rows always there at this width and office: 4, or 6 with the search on its own line (under ONE_LINE_FROM). */
+export function fixedRows(p: Pick<OfficeProps, 'rooms' | 'search' | 'columns'>): number {
+  return searchShown(p) && !geometry(p.columns).oneLine ? CHROME_ROWS_SEARCH : CHROME_ROWS_MIN
+}
 
 /** Whether `labels`, `gap` cells apart, fit in `width` cells by LINE_FIT (the desktop draws letters wider than a cell): the toolbar and the settings' Buttons row draw their words only then, else their icons alone. */
 export function labelsFit(labels: readonly string[], width: number, gap = 1): boolean {
@@ -43,13 +85,13 @@ export function labelsFit(labels: readonly string[], width: number, gap = 1): bo
 }
 /**
  * The window's budget. The Client's whole tree must stay under 100,000 characters serialized or the
- * instance unmounts; a drawn agent row (four Texts, no Box) serializes to under ROW_CHARS characters
- * whatever the width — the dearest row, pulsing and focused with the widest texts the props allow,
- * measured 488 on the fake surface (375 plain; the fix wave of 2026-10-19), so ROW_CHARS keeps a
- * margin over it — and the rows drawn in one window are capped at WINDOW_ROWS: a pane taller than
- * that leaves its lowest rows blank rather than losing the pane. (The chrome, the drawer and the card
- * frames of a window cost about 10,000 more: office-client.test.ts's limits sweep guards the whole
- * tree, the pulsing rows included.)
+ * instance unmounts; a drawn agent row (a Text per column, six at most, no Box) serializes to under
+ * ROW_CHARS characters whatever the width — the dearest row, pulsing and focused with the widest texts
+ * the props allow in the six columns of the frozen column, measured 716 on the fake surface (2026-10-20;
+ * 488 for the four Texts of the fix wave of 2026-10-19), so ROW_CHARS keeps a margin over it — and
+ * the rows drawn in one window are capped at WINDOW_ROWS: a pane taller than that leaves its lowest rows
+ * blank rather than losing the pane. (The chrome, the drawer and the card frames of a window cost about
+ * 10,000 more: office-client.test.ts's limits sweep guards the whole tree, the pulsing rows included.)
  */
 export const WINDOW_CHARS = 80_000
 export const ROW_CHARS = 800
@@ -63,11 +105,12 @@ const CONTROL_RE = /\p{Cc}/gu
  * from a Hebrew source often carries them. Named one by one, not \p{Cf}: that class also holds the
  * zero-width joiner of emoji sequences (man + ZWJ + laptop), which must stay.
  */
-const BIDI_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
+const BIDI_RE = /[؜‎‏‪-‮⁦-⁩]/g
 /**
  * A character a surface refuses in a Text or a Button's label: a bidi control, or a control character
  * other than tab and newline (the two a Text takes). Built from the two sets above — the ONE definition
- * of what the surfaces refuse — for the guards and the tests.
+ * of what the surfaces refuse — for the guards and the tests. (A no-break space, U+00A0, is a space
+ * separator, not a control: the one-line values of the cards ride it — office-layout.ts nb.)
  */
 export const REFUSED_RE = new RegExp(`${BIDI_RE.source}|(?![\\t\\n])${CONTROL_RE.source}`, 'u')
 /**
@@ -110,8 +153,13 @@ export function cleanSearch(q: string): string {
   return Array.from(q.replace(BIDI_RE, '').slice(0, 2 * SEARCH_MAX).replace(CONTROL_RE, ' ')).slice(0, SEARCH_MAX).join('')
 }
 
-/** One drawn line of the drawer: `text` as the Client draws it — one Text, cut or wrapped to the inner width (the model line and the ✂ note are composed strings, the desktop laying a Hebrew-first Text right-to-left); `chips` for the chips line, a Text per chip. */
-export type DrawerLine = { kind: 'name' | 'dim' | 'chips' | 'head' | 'body' | 'note'; text: string; chips?: string[] }
+/**
+ * One drawn line of the drawer: `text` as the Client draws it — one Text, cut or wrapped to the inner width (the model line
+ * and the ✂ note are composed strings, the desktop laying a Hebrew-first Text right-to-left); the `status` line carries the
+ * status `mark` (markOf, in `color`) before its dim text; `blank` is the empty line between the identity and the content;
+ * `head` a dim heading (משימה, תוצאה), `body` a plain line (the model line, the task's and the result's lines).
+ */
+export type DrawerLine = { kind: 'name' | 'dim' | 'status' | 'blank' | 'head' | 'body' | 'note'; text: string; mark?: string; color?: string }
 
 /**
  * THE OVERLAY IN VIEW: whether the settings popover | the drawer (`overlay` rows, part of the chrome) is drawn at
@@ -149,9 +197,9 @@ export function windowOf(chrome: number, offset: number, bodyRows: number, len: 
   return { from, count: Math.max(0, Math.min(visible, len - from)) }
 }
 
-/** The cells the drawer's lines are wrapped to: the card's inner width (border and padding off) by FIT, so a line drawn wider than a cell still fits its height-1 Box. */
+/** The cells the drawer's lines are wrapped to: the card's inner width (border and padding off, at this width's geometry) by FIT, so a line drawn wider than a cell still fits its height-1 Box. */
 export function drawerInner(columns: number): number {
-  return Math.max(1, fitCells(columns - CARD_FRAME))
+  return Math.max(1, fitCells(geometry(columns).inner))
 }
 
 /** `s` without a trailing ellipsis (what `cut` appends when it drops glyphs). */
@@ -193,26 +241,31 @@ export function wrapLines(text: string, width: number, max: number): string[] {
   return out
 }
 
-/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels. */
+/**
+ * The drawer's ONE status line (the probe's round 8: `● עובד · זמן 12 דק׳ · general-purpose`): the status word (❌ נכשל
+ * for a failed agent), the clock (the duration once done — a failed or killed agent is done — else the elapsed time; none
+ * when unknown) and the agent type, a ` · ` apart, the empty parts left out; cut to `max` cells. (The mark is the
+ * Client's own Text before it: office-layout.ts markOf.)
+ */
+export function drawerStatus(d: OfficeDrawer, L: Record<string, string>, max: number): string {
+  const lbl = (k: string) => L[k] ?? ''
+  const done = d.status === 'done'
+  const word = d.failed ? lbl('dFailed') : done ? lbl('dDone') : d.status === 'stale' ? lbl('dStale') : lbl('dWorking')
+  const clock = d.elapsedMin !== null ? `${done ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}${lbl('dMinutes')}` : ''
+  return cut([word, clock, d.type].filter(Boolean).join(' · '), max)
+}
+
+/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content. */
 export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number): DrawerLine[] {
   const lbl = (k: string) => L[k] ?? ''
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
   if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
-  const chips = [...d.chips]
-  // the label follows the status, as the text cards' does (a failed or killed agent is done: its chip reads ❌, its clock is a duration)
-  if (d.elapsedMin !== null) chips.push(`${d.done ? lbl('dDuration') : lbl('dElapsed')}${d.elapsedMin}${lbl('dMinutes')}`)
-  const shown: string[] = []
-  let used = 0
-  for (const c of chips) {
-    const w = textWidth(c) + 2 + (shown.length ? 1 : 0)
-    if (used + w > inner) break
-    shown.push(c)
-    used += w
-  }
-  lines.push({ kind: 'chips', text: shown.map(c => ` ${c} `).join(' '), chips: shown })
+  // the status line: the mark (the badge or the dot, in the status's colour) then the dim text, a gap cell between
+  lines.push({ kind: 'status', text: drawerStatus(d, L, Math.max(1, inner - 3)), mark: markOf(d), color: DOT_FG[d.status] })
+  lines.push({ kind: 'blank', text: '' })
   // the model line and the ✂ note are one string each (a label, a value, a mark, a space apart), drawn as one Text the way the
   // probe writes its lines; no colon after a label — it would be drawn before the Hebrew word
-  lines.push({ kind: 'head', text: cut([lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act].join(' '), inner) })
+  lines.push({ kind: 'body', text: cut([lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act].join(' '), inner) })
   lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
   for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })
   if (d.result) {
@@ -223,28 +276,28 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   return lines
 }
 
-/** The empty office's lines: the message, the sub's sentences (split at each " - " / " — "), each wrapped by FIT. */
+/** The empty office's lines: the message, the sub's sentences (split at each " - " / " — "), each wrapped by FIT to the reading column. */
 export function emptyLines(p: OfficeProps): { msg: string[]; sub: string[] } {
   if (!p.empty) return { msg: [], sub: [] }
-  const w = Math.max(1, fitCells(p.columns))
+  const w = Math.max(1, fitCells(geometry(p.columns).W))
   return { msg: wrapLines(p.empty.msg, w, 2), sub: p.empty.sub ? p.empty.sub.split(/\s[-—]\s/).flatMap(s => wrapLines(s, w, 2)) : [] }
 }
 
-/** The rows the empty-office block takes (🏢, the lines, the demo Button; the blank line over it is the search's). */
+/** The rows the empty-office block takes (🏢, the lines, the demo Button; the blank line over it is the toolbar's or the search's). */
 export function emptyRows(p: OfficeProps): number {
   if (!p.empty) return 0
   const e = emptyLines(p)
   return 1 + e.msg.length + e.sub.length + (p.empty.kind === 'office' ? 1 : 0)
 }
 
-/** The rows above the layout: the chrome's six, the footer line when there is one, then the settings popover or the drawer. */
+/** The rows above the layout: the chrome's fixed rows (fixedRows: four, or six with the search on its own line), the footer line when there is one, then the settings popover or the drawer. */
 export function chromeRows(p: OfficeProps): number {
-  return CHROME_ROWS + (p.footer ? 1 : 0) + overlayRows(p)
+  return fixedRows(p) + (p.footer ? 1 : 0) + overlayRows(p)
 }
 
 /** The settings popover's or the drawer's rows, their gap included (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
 export function overlayRows(p: OfficeProps): number {
-  if (p.helpOpen) return HELP_ROWS + OVERLAY_GAP
+  if (p.helpOpen) return helpRows(p.columns) + OVERLAY_GAP
   if (p.drawer) return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns)).length + OVERLAY_GAP
   return 0
 }

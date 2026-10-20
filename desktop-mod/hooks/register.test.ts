@@ -84,7 +84,8 @@ async function writesOf(captured: ReturnType<typeof beneath>['captured'], act: (
 }
 
 test('ui.message: the office Client\'s own posts — toolbar Buttons, letter keys, tile and room-head clicks, the search Input — change prefs / view / the store as the text cards\' presses do, one atom per message', { timeoutMs: 30_000 }, async ($, on) => {
-  const { captured, clock } = beneath(on, () => fixture(), PREFS())
+  let agents = fixture()
+  const { captured, clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
   expect(OFFICE_KEY).toBe('office') // the ui.message / ui.fault matchers carry it as a literal (validate reads matchers statically)
@@ -153,16 +154,25 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect(captured.store.roomDone).toEqual({})
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.showDone).toBe(false)
 
-  // the search Input: the typed text reaches view.search after the module's debounce (one view write), the office
-  // narrows; Enter with the same text writes nothing; an empty Enter clears it
+  // the search Input — drawn only while the office shows more than SEARCH_FROM agents (spec 2026-10-10 §2 item 22): ten more
+  // working agents in room B bring it; then the typed text reaches view.search after the module's debounce (one view write),
+  // the office narrows; Enter with the same text writes nothing; an empty Enter clears it; the ten leave again
+  expect(await ui.find({ in: OFFICE_KEY, key: 'search' })).toBeUndefined()
+  agents = [...fixture(), ...Array.from({ length: 10 }, (_, i) => agent({ id: `x${i}`, role: 'extra work', session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research', persona_id: 20 + i }))]
+  await clock.advance(POLL_MS)
+  expect(await ui.find({ in: OFFICE_KEY, key: 'search' })).toBeDefined()
   await ui.input({ key: 'search', text: 'triage', kind: 'change' })
   expect((await propsOf(ui)).search).toBe('')
   expect(await writesOf(captured, () => ui.advance(SEARCH_DEBOUNCE_MS))).toEqual({ view: 1 })
   expect((await propsOf(ui)).search).toBe('triage')
   expect((await propsOf(ui)).rooms.map(r => r.agents.map(a => a.id))).toEqual([['b1']])
+  expect(await ui.find({ in: OFFICE_KEY, key: 'search' })).toBeDefined()   // one agent shown, the search active: the field stays
   expect(await writesOf(captured, () => ui.input({ key: 'search', text: 'triage', kind: 'submit' }))).toEqual({})
   expect(await writesOf(captured, () => ui.input({ key: 'search', text: '', kind: 'submit' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).search).toBe('')
+  agents = fixture()
+  await clock.advance(POLL_MS)
+  expect(await ui.find({ in: OFFICE_KEY, key: 'search' })).toBeUndefined()
 
   // the demo: view.demo on and off — its Button in the help popover (`דמו 🎬`, then `יציאה ✕ 🎬`), its letter with the help closed
   await ui.press({ key: 'help' })

@@ -300,8 +300,13 @@ function finishedAt(a: Agent): number {
 /**
  * PAGE render()'s filtering and ordering: search → drop closed chats and the
  * finished the room hides (but for the `recentDone` most recently finished of
- * each room, by end_ms then mtime_ms, newest first; ties by payload order) →
- * rooms sorted pinned, then with-running, then by last activity (newest first).
+ * each room — THE BADGED FIRST: a failed agent, or one whose ⭐ is alive
+ * (`starred`, the ids the caller stamps: office-props.ts), ranks ahead of the
+ * rest, so it is never held behind the more line (the cards design, round 8);
+ * then by end_ms, then mtime_ms, newest first; ties by payload order) → rooms
+ * sorted pinned, then with-running, then by last activity (newest first).
+ * (Without a recent-done pick — the text cards, the poll — `starred` changes
+ * nothing.)
  */
 export function officeView(
   all: readonly Agent[],
@@ -311,6 +316,7 @@ export function officeView(
   roomDone: Readonly<Record<string, boolean>>,
   pins: readonly string[],
   recentDone = 0,
+  starred: ReadonlySet<string> = new Set(),
 ): OfficeView {
   const stat = roomStats(all)
   const needle = q.toLowerCase().trim()
@@ -325,8 +331,9 @@ export function officeView(
   }
   const kept = new Set<string>()
   const moreDone = new Map<string, number>()
+  const badged = (a: Agent): number => (a.failed === true || starred.has(a.id) ? 1 : 0)
   for (const [s, list] of held) {
-    const ranked = list.map((a, i) => ({ a, i })).sort((x, y) => finishedAt(y.a) - finishedAt(x.a) || x.i - y.i)
+    const ranked = list.map((a, i) => ({ a, i })).sort((x, y) => badged(y.a) - badged(x.a) || finishedAt(y.a) - finishedAt(x.a) || x.i - y.i)
     ranked.slice(0, recentDone).forEach(({ a }) => kept.add(a.id))
     if (ranked.length > recentDone) moreDone.set(s, ranked.length - recentDone)
   }

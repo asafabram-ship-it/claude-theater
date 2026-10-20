@@ -9,8 +9,9 @@
 // a test to loosen.
 //
 // THE THREE WIDTHS: every test runs at 34, 51 and 120 columns (`suite`), the
-// probe's narrow, reference and wide panes (rounds 8-9) — the toolbar and the
-// settings in their icon-only forms at 34, in words from 51; the search on a
+// probe's narrow, reference and wide panes (rounds 8-9) — the toolbar in its
+// icon-only form at 34 and in words from 51, the settings' Buttons in words at
+// every one of the three (the probe's L) but icons while the demo runs at 34; the search on a
 // line of its own under ONE_LINE_FROM and beside the toolbar at 120; the
 // reading column frozen at 100 cells and centred by a margin at 120, which the
 // pointer's x must count; the table mode poorer at 34 (the activity's emoji
@@ -86,8 +87,9 @@ const HIDE_LINE = nb(`▸ ${HIDE_LABEL}`)
  *   column / margin  the reading column's cells and its centring margin (CENTRE_AT: the pane up to 99, a frozen 100 centred
  *                    by 10 at 120 — the pointer's x counts the margin);
  *   toolbar / settings  the three labels of each, in Hebrew and in English: their words when the set fits the line by
- *                    LINE_FIT (office-chrome.ts labelsFit), else the icons alone — 34 columns hold neither set, 51 and 100 both;
- *                    `exitDemo` the demo Button while the demo runs (`יציאה ✕ 🎬`, the icons alone `✕ 🎬`);
+ *                    LINE_FIT (office-chrome.ts labelsFit, the whole column: the probe's L), else the icons alone — 34 columns
+ *                    hold the settings' set (26 ≤ 28) but not the toolbar's, 51 and 100 both; `exitDemo` the demo Button while
+ *                    the demo runs (`יציאה ✕ 🎬`, which at 34 no longer fits beside the other two: the icons alone, `✕ 🎬`);
  *   hotkeys          whether the Buttons carry their letters as hotkeys (from COMPACT_BELOW: the desktop draws a chip per hotkey);
  *   searchRows       the chrome's rows while the search field is drawn: 6 with the field on its own line, 4 beside the
  *                    toolbar from ONE_LINE_FROM;
@@ -106,8 +108,6 @@ type Width = {
   settings: Labels; settingsEn: Labels; exitDemo: string; frozen: string
   hotkeys: boolean; searchRows: number; helpRows: number
   model: ModelCol; word: boolean; task: boolean
-  /** Whether the Hebrew office's mode is regained after a round trip through English (whose wider names drop it): the hysteresis asks two cells to spare, which 34 columns' model column lacks (one). */
-  regained: boolean
   countsA: string; tallA: string; tallB: string; drawerType: boolean
 }
 const WORDS_HE: Labels = ['הצג שסיימו ☐', 'צליל 🔔', 'הגדרות ⚙️']
@@ -116,9 +116,9 @@ const ICONS: Labels = ['☐', '🔔', '⚙️']
 const SETTINGS_HE: Labels = ['דמו 🎬', 'תנועה 🎞', '🌐 English']
 const SETTINGS_EN: Labels = ['🎬 Demo', '🎞 Motion', '🌐 עברית']
 const WIDTHS: Record<34 | 51 | 120, Width> = {
-  34: { column: 34, margin: 0, toolbar: ICONS, toolbarEn: ICONS, settings: ['🎬', '🎞', 'EN'], settingsEn: ['🎬', '🎞', 'עב'], exitDemo: '✕ 🎬', frozen: '🖼', hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, regained: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
-  51: { column: 51, margin: 0, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, regained: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
-  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, regained: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+  34: { column: 34, margin: 0, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
+  51: { column: 51, margin: 0, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
 }
 type Columns = keyof typeof WIDTHS
 
@@ -567,12 +567,13 @@ function suite(COLUMNS: Columns): void {
     expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'en'))
     expect(hitOf(p1, 'pin', SA).x).toBe(0)
     // the row in the mode the English names leave the office (wider than the Hebrew ones: the word, then the model column, go
-    // before the names are cut — office-layout.ts chooseMode, from the Hebrew mode's rank: the module's hysteresis): the mark
-    // alone at the left edge, the who, the model (its version from MODEL_FULL_FROM), the emoji, the word when the mode has it,
-    // the task from CENTRE_AT
+    // before the names are cut — office-layout.ts chooseMode, chosen afresh: the names moved the widest values, so the Hebrew
+    // mode's token is no hysteresis here, ModeToken): the mark alone at the left edge, the who, the model (its version from
+    // MODEL_FULL_FROM), the emoji, the word when the mode has it, the task from CENTRE_AT
     const m0 = officeModel(p0)
     expect(m0.mode).toMatchObject({ model: W.model, word: W.word })
-    const m1 = officeModel(p1, NO_DECOR, undefined, m0.mode.rank)
+    const m1 = officeModel(p1, NO_DECOR, undefined, m0.token)
+    expect(m1.mode).toEqual(officeModel(p1).mode)
     expect(rowsOf(await cardOf(ui, p1, SA)).find(r => r[1] === whoOf(p1, 'a1'))).toEqual(a1RowIn(p1, m1.mode, 'Reading'))
     expect(whoOf(p1, 'a1')).toBe(nb(`${PERSONA_EMOJI[3]} ${personaName(7, 'en')}`))   // (the fixture's agents all carry persona 3's emoji: `agent()`; the English name whole at every width — 11 cells, under the narrowest cap)
     expect(m1.mode.rank).toBeGreaterThanOrEqual(m0.mode.rank)   // never richer than the Hebrew office's
@@ -586,10 +587,11 @@ function suite(COLUMNS: Columns): void {
     expect(await label(ui, 'lang')).toBe(W.settings[2])
     expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
     expect(roomOf(p2, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'he'))
-    // THE HYSTERESIS through the real mount: the Hebrew mode comes back only with two cells to spare over the English rank
-    // (office-layout.ts chooseMode) — at 34 the model column stays dropped (one cell to spare), so the rows are three Texts
-    const m2 = officeModel(p2, NO_DECOR, undefined, m1.mode.rank)
-    expect(m2.mode.rank === m0.mode.rank).toBe(W.regained)
+    // THE HYSTERESIS is about the width (office-layout.ts ModeToken): the names moved the widest values again, so the Hebrew
+    // mode is back at once at every width — at 34 the model column with it (the English rank held it dropped before this fix:
+    // one cell to spare), the rows four Texts as before the round trip
+    const m2 = officeModel(p2, NO_DECOR, undefined, m1.token)
+    expect(m2.mode).toEqual(m0.mode)
     expect(rowsOf(await cardOf(ui, p2, SA)).find(r => r[1] === whoOf(p2, 'a1'))).toEqual(a1RowIn(p2, m2.mode, 'קורא'))
     await ui.press({ key: 'closeHelp' })
     await ui.key({ in: OFFICE_KEY, key: 'l' })
@@ -795,12 +797,17 @@ function suite(COLUMNS: Columns): void {
     expect(p0.rooms.flatMap(r => r.agents)).toHaveLength(SEARCH_FROM + 1)
     expect(chromeRows(p0)).toBe(W.searchRows)
     expect((await kidsOf(ui)).map(k => propsOf(k).key).includes('searchLine')).toBe(W.searchRows === CHROME_ROWS_SEARCH)   // its own line, or inside the toolbar's
-    expect((await input())?.props.placeholder).toBe('חיפוש סוכנים 🔍')   // the whole placeholder fits the field at every width
+    expect((await input())?.props.placeholder).toBe('🔍 חיפוש סוכנים')   // the whole placeholder fits the field at every width
     expect((await input())?.props.value).toBe('')
+    // the first keystroke of a search posts at once (under ONE_LINE_FROM the hooks size the chrome by view.search); the next
+    // ones wait SEARCH_DEBOUNCE_MS of quiet. (The typed text is the native field's until the next render: the module's onInput
+    // keeps it in `inst.query` and never redraws for a keystroke, so the tree as last drawn still carries the old value — the
+    // value is read once the post landed)
+    await ui.input({ key: 'search', text: 't', kind: 'change' })
+    expect((await officeProps(ui)).search).toBe('t')
+    expect(chromeRows(await officeProps(ui))).toBe(W.searchRows)
     await ui.input({ key: 'search', text: 'triage', kind: 'change' })
-    // (the typed text is the native field's until the next render: the module's onInput keeps it in `inst.query` and never
-    // redraws for a keystroke, so the tree as last drawn still carries the old value — the value is read once the post landed)
-    expect((await officeProps(ui)).search).toBe('')   // not yet: the module waits SEARCH_DEBOUNCE_MS of quiet
+    expect((await officeProps(ui)).search).toBe('t')   // not yet
     await ui.advance(SEARCH_DEBOUNCE_MS)
     const p1 = await officeProps(ui)
     expect(p1.search).toBe('triage')

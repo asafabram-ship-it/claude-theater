@@ -27,13 +27,18 @@
 // card). THE WIDTH (probe rounds 8-9, office-layout.ts geometry): one reading
 // column, the pane up to 99 cells and a frozen 100-cell column centred by a
 // left margin from 100; the TABLE MODE decided once per render for the whole
-// office with two cells of hysteresis — the last mode's rank lives in the
-// instance (`inst.lastRank`), never in the props — and the columns aligned
-// across the cards by minWidth floors from WIDE_FROM; the dim task column from
-// CENTRE_AT. THE LABEL LADDER of the chrome, by LINE_FIT: the full meter (from
-// WIDE_FROM) → the header's words → the toolbar's words → the short meter (in
-// the header, else at the search line's far edge) → the tiny meter; a meter is
-// drawn whole or not at all. Hierarchy by weight, not colour: working = a bold
+// office with two cells of hysteresis while the pane is dragged — the last
+// mode's token (its rank and the widest values it was chosen from) lives in
+// the instance (`inst.lastMode`), never in the props; a change of content
+// that moves the widest values chooses the mode afresh (office-layout.ts
+// ModeToken) — and the columns aligned across the cards by minWidth floors
+// from WIDE_FROM; the dim task column from CENTRE_AT. THE LABEL LADDER of the
+// chrome, by LINE_FIT — what gives way as the pane narrows, in order: the full
+// meter (from WIDE_FROM) → the header's words → the toolbar's words → the
+// short meter (in the header, else at the search line's far edge) → the tiny
+// meter → no meter (under 25 cells); so the header's words go before the
+// short meter does, and a meter is drawn whole or not at all. Hierarchy by
+// weight, not colour: working = a bold
 // name; waiting = a regular name, a dim activity word; finished = all dim; a ❌
 // row keeps a regular name; the status mark is the one coloured glyph. No
 // selection band: the open drawer says which agent is selected; the keyboard
@@ -80,21 +85,28 @@
 // keystrokes cannot reset it; the `search` post is debounced. The render is
 // wrapped in try/catch and draws a short red Text instead of throwing (spec
 // §10). The search text is cleaned and capped (cleanSearch) before it is drawn
-// or posted; the keyboard focus (j / k) is local and never posted.
+// or posted; the keyboard focus (j / k) is local and never posted. The field
+// is drawn while the office shows more than SEARCH_FROM agents or a search is
+// active — text in the field (office-chrome.ts searchShown: `props.search`, or
+// the text typed and not yet posted, `inst.query`), so a poll that drops the
+// count mid-word never unmounts the field under the person's fingers; the
+// first keystroke of a search posts at once, since under ONE_LINE_FROM the
+// hooks size the chrome by `props.search`.
 //
 // The strings are drawn as the probe writes them (the desktop lays a
 // Hebrew-first Text right-to-left): a labelled control reads icon-then-word
 // through office-layout.ts iconLabel (the toolbar's three, the settings'
-// three, the drawer's close, the glass of the search, the empty office's demo
-// Button); a composed line (the header's counts, the drawer's status and model
-// lines and note) is one Text.
+// three, the drawer's close, the empty office's demo Button); the search's
+// placeholder is the probe's `🔍 חיפוש סוכנים` (the glass leading); a composed
+// line (the header's counts, the drawer's status and model lines and note) is
+// one Text.
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, drawerInner, drawerLines, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
+import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, drawerInner, drawerLimits, drawerLines, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
-import type { Floors, Geo, Hit, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
+import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
 
@@ -125,8 +137,8 @@ export type OfficeInst = {
   /** The reading column's centring margin as last drawn: taken off the pointer's x before the hit test. */
   margin: number
   model: OfficeModel
-  /** THE HYSTERESIS: the rank of the table mode last chosen (office-layout.ts chooseMode), null before the first model. Never in the props. */
-  lastRank: number | null
+  /** THE HYSTERESIS: the table mode last chosen — its rank and the widest values it was chosen from (office-layout.ts ModeToken), null before the first model. Never in the props. */
+  lastMode: ModeToken | null
   /** Agent id → the line of its row. */
   rowAt: Map<string, number>
   /** The agent ids in line order. */
@@ -170,10 +182,10 @@ function decorOf(s: OfficeState): OfficeDecor {
   return { hoverRoom: s.hoverRoom, focus: s.focus, pulse: new Set(s.inst.fx.map(f => f.id)) }
 }
 
-/** The model of the props under the decor (the table mode from the last one's rank: the hysteresis), and the indexes the events read from it (the rows' lines, their order, the unpinned heads). */
+/** The model of the props under the decor (the table mode from the last one's token: the hysteresis), and the indexes the events read from it (the rows' lines, their order, the unpinned heads). */
 function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
-  const model = officeModel(p, d, inst.cache, inst.lastRank)
-  inst.lastRank = model.mode.rank
+  const model = officeModel(p, d, inst.cache, inst.lastMode)
+  inst.lastMode = model.token
   const rowAt = new Map<string, number>()
   const order: string[] = []
   const titleAt = new Map<number, string>()
@@ -193,7 +205,7 @@ function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
 
 function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
-    props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, floors: null }, lastRank: null,
+    props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null }, lastMode: null,
     rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
     fx: [], stop: null, seen: null, query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
   }
@@ -282,8 +294,10 @@ function listen(surface: Surface): void {
           send(surface, { t: 'pin', room: hit.id })
         } else send(surface, { t: 'roomDone', room: hit.id })   // the title's ✅ counts and the "more / hide finished" line: the room's toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
-        // the unpinned room whose title line is under the pointer (its dim 📌): one setState when it changes
-        const room = ev.type === 'leave' || !drawn ? null : inst.titleAt.get(y) ?? null
+        // the unpinned room whose title line is under the pointer (its dim 📌): one setState when it changes; a pointer in a
+        // centring margin (off the column's cells, as for a click) hovers nothing
+        const inColumn = x >= 0 && x < inst.model.geo.W
+        const room = ev.type === 'leave' || !drawn || !inColumn ? null : inst.titleAt.get(y) ?? null
         if (room !== cur.hoverRoom) surface.setState({ ...cur, hoverRoom: room })
       }
     } catch {
@@ -366,15 +380,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     if (props.drawer && !props.helpOpen) {
       const dk = JSON.stringify([props.columns, props.lang, props.drawer])
       if (dk !== inst.drawerKey) {
-        inst.drawer = drawerLines(props.drawer, props.labels, inner)
+        inst.drawer = drawerLines(props.drawer, props.labels, inner, drawerLimits(props.columns))
         inst.drawerKey = dk
       }
     }
-    // (the settings | drawer rows: chromeRows' overlayRows, from the memoised lines, the gap under the overlay included)
-    const helpH = helpRows(props.columns)
-    const overlayRows = props.helpOpen ? helpH + OVERLAY_GAP : props.drawer ? DRAWER_FRAME_ROWS + inst.drawer.length + OVERLAY_GAP : 0
-    const search = searchShown(props)
-    inst.chrome = fixedRows(props) + (props.footer ? 1 : 0) + overlayRows
 
     // --- the search text: ours unless the hooks changed it from outside (not our own echo); cleaned either way ---
     if (props.search !== inst.propsSearch) {
@@ -385,6 +394,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (inst.debounce) { inst.debounce(); inst.debounce = null }
       }
     }
+    // (the settings | drawer rows: chromeRows' overlayRows, from the memoised lines, the gap under the overlay included; the
+    // search field by the props AND the text typed into it — a poll between keystrokes never takes the field away)
+    const helpH = helpRows(props.columns)
+    const overlayRows = props.helpOpen ? helpH + OVERLAY_GAP : props.drawer ? DRAWER_FRAME_ROWS + inst.drawer.length + OVERLAY_GAP : 0
+    const search = searchShown(props, inst.query)
+    inst.chrome = fixedRows(props, inst.query) + (props.footer ? 1 : 0) + overlayRows
 
     const L = props.labels
     const lbl = (k: string) => L[k] ?? ''
@@ -400,29 +415,43 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const line = (children: RenderElement[], extra: Record<string, unknown> = {}) => Box({ flexDirection: row, columnGap: 1, flexWrap: 'nowrap', height: 1, overflow: 'hidden', ...extra, children })
     const kids: RenderElement[] = []
 
-    // --- THE LABEL LADDER (by LINE_FIT, the line's L cells): the header's words (`🎭 עובדים 4 · ממתינים 1 · סיימו 3`) whenever they
-    //     fit, else the icons with the counts; the meter beside it — the full label (bar and reset clock, usage.ts) from WIDE_FROM
-    //     when the whole line fits, else the short `⏳ 5h 42%` when that fits; else, under ONE_LINE_FROM with the search on its own
-    //     line, the short meter at that line's far edge when it fits beside the placeholder; else the tiny `⏳ 42%` in the header;
-    //     else nothing: a meter is drawn whole or not at all, never cut in half (`5h 4…` reads as 4%) ---
+    // --- THE LABEL LADDER (by LINE_FIT, the line's L cells) — what gives way as the pane narrows, in order: the full meter (bar and
+    //     reset clock, usage.ts; from WIDE_FROM) → the header's words (`🎭 עובדים 4 · ממתינים 1 · סיימו 3`, else the icons with the
+    //     counts, the probe's `🎭 🟢4 ⏳1 ✅3`) → the toolbar's words (below) → the short meter `⏳ 5h 42%` (in the header; under
+    //     ONE_LINE_FROM with the field drawn, at the search line's far edge when it fits beside the placeholder) → the tiny `⏳ 42%`
+    //     → no meter. So the meter keeps its place before the words do: the richest pair of (counts, meter) that fits — the words
+    //     with the full, the short, or the short on the search line; else the icons with one of those; else the words, else the
+    //     icons, with the tiny; else the counts alone. A meter is drawn whole or not at all, never cut in half (`5h 4…` reads as 4%) ---
     const c = props.counts
     const fit = geo.L
     const part = (icon: string, n: number, label: string, words: boolean): string => (words ? (rtl ? `${label} ${n}` : `${n} ${label}`) : `${icon}${n}`)
-    const countsOf = (words: boolean) => `🎭 ${[part('🟢', c.run, lbl('working'), words), ...(c.idle ? [part('⏳', c.idle, lbl('idleN'), words)] : []), part('✅', c.done, lbl('finished'), words)].join(' · ')}`
-    const counts = textWidth(countsOf(true)) <= fit ? countsOf(true) : countsOf(false)
-    const fits = (meter: string) => textWidth(counts) + 1 + textWidth(meter) <= fit
+    const countsOf = (words: boolean) => `🎭 ${[part('🟢', c.run, lbl('working'), words), ...(c.idle ? [part('⏳', c.idle, lbl('idleN'), words)] : []), part('✅', c.done, lbl('finished'), words)].join(words ? ' · ' : ' ')}`
+    const wordsHdr = countsOf(true)
+    const iconsHdr = countsOf(false)
+    const fits = (counts: string, meter: string) => textWidth(counts) + (meter ? 1 + textWidth(meter) : 0) <= fit
     const full = props.usage ? usageLabel(props.usage, props.lang, props.nowMin) : ''
     const short = props.usage ? usageShort(props.usage) : ''
     const tiny = props.usage ? usageTiny(props.usage) : ''
-    // the placeholder's forms: the label's words (without the trailing ellipsis) behind the glass, or its first word alone
+    // the placeholder's forms (the probe's `🔍 חיפוש סוכנים`, the glass leading): the label's words (without the trailing ellipsis),
+    // or its first word alone
     const phWord = lbl('searchPlaceholder').replace(/…$/, '')
-    const phFull = iconLabel('🔍', phWord, rtl)
-    const phShort = iconLabel('🔍', phWord.split(' ')[0] ?? phWord, rtl)
-    let meterHeader = props.usage ? (geo.wide && fits(full) ? full : fits(short) ? short : '') : ''
+    const phFull = `🔍 ${phWord}`
+    const phShort = `🔍 ${phWord.split(' ')[0] ?? phWord}`
+    /** Whether the search line (under ONE_LINE_FROM, with the field drawn) has room for the short meter at its far edge beside the placeholder. */
+    const searchLineRoom = search && !geo.oneLine && textWidth(phFull) + 2 + textWidth(short) <= fit
+    /** The meter beside `counts` as [in the header, on the search line]: the full form from WIDE_FROM, else the short, in the header; else the short on the search line; null when the counts leave it no room. */
+    const place = (counts: string): [string, string] | null =>
+      geo.wide && fits(counts, full) ? [full, ''] : fits(counts, short) ? [short, ''] : searchLineRoom && fits(counts, '') ? ['', short] : null
+    let counts = fits(wordsHdr, '') ? wordsHdr : iconsHdr
+    let meterHeader = ''
     let meterSearch = ''
-    if (props.usage && !meterHeader) {
-      if (search && !geo.oneLine && textWidth(phFull) + 2 + textWidth(short) <= fit) meterSearch = short
-      else if (fits(tiny)) meterHeader = tiny
+    if (props.usage) {
+      const withWords = place(wordsHdr)
+      const withIcons = withWords ?? place(iconsHdr)
+      if (withWords) { counts = wordsHdr; [meterHeader, meterSearch] = withWords }
+      else if (withIcons) { counts = iconsHdr; [meterHeader, meterSearch] = withIcons }
+      else if (fits(wordsHdr, tiny)) { counts = wordsHdr; meterHeader = tiny }
+      else if (fits(iconsHdr, tiny)) { counts = iconsHdr; meterHeader = tiny }
     }
     kids.push(Box({ key: 'header', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
       Text({ bold: true, children: [counts] }),
@@ -441,21 +470,23 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, { t: 'mute' }) }),
       Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, { t: 'help' }) }),
     ]
-    // --- search (only while the office shows more than SEARCH_FROM agents, or a search is active): the typed text is the
-    //     module's; the post waits SEARCH_DEBOUNCE_MS. The placeholder: the words when the field holds them by FIT, else the
-    //     first word, else that word cut (never wider than the field). On the toolbar's line from ONE_LINE_FROM (the Buttons at
-    //     the reading edge, the field INPUT_MIN..INPUT_MAX cells at the other), else on a line of its own with a blank line
-    //     above and below (the probe's), the short meter at its far edge when the header had no room for one ---
+    // --- search (only while the office shows more than SEARCH_FROM agents, or a search is active — in the props or typed): the
+    //     typed text is the module's; the post waits SEARCH_DEBOUNCE_MS, except the first keystroke of a search, posted at once
+    //     (under ONE_LINE_FROM the hooks size the chrome by `props.search`: the field's own line must reach them with the text).
+    //     The placeholder: the words when the field holds them by FIT, else the first word, else that word cut (never wider than
+    //     the field). On the toolbar's line from ONE_LINE_FROM (the Buttons at the reading edge, the field INPUT_MIN..INPUT_MAX
+    //     cells at the other), else on a line of its own with a blank line above and below (the probe's), the short meter at
+    //     its far edge when the header had no room for one ---
     const inputW = inputWidth(geo, worded)
     const fieldCells = geo.oneLine ? inputW : geo.W - (meterSearch ? textWidth(meterSearch) + 2 : 0)
     const phRoom = fitCells(fieldCells)
-    const placeholder = phRoom >= textWidth(phFull) ? phFull : phRoom >= textWidth(phShort) ? phShort : iconLabel('🔍', cut(phWord.split(' ')[0] ?? phWord, Math.max(1, phRoom - 3)), rtl)
+    const placeholder = phRoom >= textWidth(phFull) ? phFull : phRoom >= textWidth(phShort) ? phShort : `🔍 ${cut(phWord.split(' ')[0] ?? phWord, Math.max(1, phRoom - 3))}`
     const field = () => Input({
       key: 'search',
       placeholder,
       value: inst.query,
       // (cleaned and capped: a paste of a page or of an escape sequence would make the post or the value unmount the office)
-      onInput: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, false) },
+      onInput: (v: string) => { const was = inst.query; inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, was === '' && inst.query !== '') },
       onSubmit: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, true) },
     })
     if (geo.oneLine) {
@@ -481,18 +512,27 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     if (props.helpOpen) {
       // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs), the
       // motion toggle (🎞 running, 🖼 frozen), the language (the other language's name) — their words when the three fit the
-      // popover's inner width, else the icons alone (the language as EN / עב); their letters d / s / l are KEY_MESSAGES' either way
+      // line by LINE_FIT (the probe's L: the whole column, gap 1), else the icons alone (the language as EN / עב); their letters
+      // d / s / l are KEY_MESSAGES' either way
       const hIcons = [props.demo ? '🎬 ✕' : '🎬', props.prefs.still ? '🖼' : '🎞', '🌐']
       const hWords = [props.demo ? lbl('exitDemo') : lbl('demoLabel'), lbl('hbMotion'), lbl('switchTo')]
       const hWorded = hIcons.map((icon, i) => iconLabel(icon, hWords[i]!, rtl))
       // (the icons alone keep their states, as the toolbar's ☑ / 🔕 do: `🎬 ✕` while the demo runs — the pair reversed for the Hebrew
       // reader as in the worded label, iconLabel — 🖼 while frozen)
-      const hb = labelsFit(hWorded, geo.inner) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
+      const hb = labelsFit(hWorded, geo.W) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
       // the shortcuts as a column-major table (the probe's): a column of the labels and a column of the dim keys, each a one-line
       // Text with no plain space (nb: a wrapped row would push the rows under it out of the popover's fixed height); two pairs side
-      // by side from WIDE_FROM, the second padded to the first's rows
+      // by side from WIDE_FROM, the second padded to the first's rows. The labels are cut (by LINE_FIT, as the title is) to what
+      // the popover's inner width leaves the pairs after their widest keys and padding cells, so the keys are never clipped
+      const pairs = helpPairs(geo.wide)
+      const keysW = pairs.map(rows => Math.max(...rows.map(([, keys]) => textWidth(keys))))
+      const labelsW = pairs.map(rows => Math.max(...rows.map(([k]) => textWidth(lbl(k) || k))))
+      const pairsRoom = fitLine(geo.inner) - (pairs.length - 1) * PAIRS_GAP
+      const pairsNeed = (cap: number) => pairs.reduce((n, _, i) => n + Math.min(labelsW[i]!, cap) + 1 + keysW[i]!, 0)
+      let labelMax = Math.max(...labelsW)
+      while (labelMax > 4 && pairsNeed(labelMax) > pairsRoom) labelMax--
       const pair = (rows: ReadonlyArray<readonly [string, string]>): RenderElement => Box({ flexDirection: row, children: [
-        Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, ...padEdge, children: rows.map(([k]) => Text({ children: [nb(lbl(k) || k)] })) }),
+        Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, ...padEdge, children: rows.map(([k]) => Text({ children: [nb(cut(lbl(k) || k, labelMax))] })) }),
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, children: rows.map(([, keys]) => Text({ dimColor: true, children: [nb(keys)] })) }),
       ] })
       overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, height: helpH, marginBottom: OVERLAY_GAP, width: '100%', overflow: 'hidden', children: [
@@ -502,7 +542,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
           Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, { t: 'still' }) }),
           Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, { t: 'lang' }) }),
         ]),
-        Box({ flexDirection: row, columnGap: PAIRS_GAP, width: '100%', children: helpPairs(geo.wide).map(pair) }),
+        Box({ flexDirection: row, columnGap: PAIRS_GAP, width: '100%', children: pairs.map(pair) }),
       ] })
     } else if (props.drawer) {
       // the drawer as a card in the cards' style: every line in a height-1 Box, so the rows under it never move

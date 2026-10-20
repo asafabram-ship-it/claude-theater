@@ -23,7 +23,7 @@
 import { I18N, activityLabel, dirOf, modelLabel } from './i18n'
 import { JUST_FINISHED_MS, RESULT_CHAR_LIMIT } from './model'
 import type { Agent, Payload, Prefs, View } from './model'
-import { ACT_MAX, NAME_MAX, TASK_MAX, cut } from './office-layout'
+import { ACT_MAX, NAME_MAX, cut, cutTask } from './office-layout'
 import { UNKNOWN_MODEL_PILL } from './office-svg'
 import { personaName } from './personas'
 import { RECENT_DONE, agentElapsed, effectivePayload, emptyKind, headerCounts, isLongRunning, minuteClock, officeView, roomShowsDone } from './ui'
@@ -42,7 +42,7 @@ export type OfficeAgent = {
   status: 'running' | 'stale' | 'done'
   act: string                                               // activityLabel(a, lang)
   model: string                                             // modelLabel(a.model) or '?'
-  task: string                                              // cut(task_short, TASK_MAX)
+  task: string                                              // cutTask(task_short): TASK_MAX cells, TASK_UNITS code units
   failed: boolean; longRunning: boolean
   star: number                                              // detection stamp (the poll's clock) of a just-finished agent inside the ⭐ window, else 0
 }
@@ -184,7 +184,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
       // the row's name is the persona's, always (the role / task stays in the drawer: Asaf's cleanup, 2026-10-17)
       id: a.id, emoji: a.emoji, name: cut(personaName(a.persona_id, lang), NAME_MAX), status: a.status,
       act: cut(activityLabel(a, lang), ACT_MAX), model: modelLabel(a.model) || UNKNOWN_MODEL_PILL,
-      task: cut(a.task_short, TASK_MAX),
+      task: cutTask(a.task_short),
       failed: a.failed === true, longRunning: isLongRunning(a, now),
       star: starOf(a),
     }

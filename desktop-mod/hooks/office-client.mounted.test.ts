@@ -227,13 +227,16 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input (dr
   await ui.key({ in: OFFICE_KEY, key: 'x' })                // x closes it
   expect((await officeProps(ui)).drawer).toBeNull()
   expect(await focused(ui, p0)).toEqual([whoOf(p0, 'a1')])  // a1's row (no drawer: the chrome is p0's again)
-  // typing while a publish lands (a1 moves to Write): the field keeps 'ab' through the redraw and the debounce
+  // typing while a publish lands (a1 moves to Write): the first keystroke of a search posts at once (under ONE_LINE_FROM the
+  // hooks size the chrome by it), the next waits — and the field keeps 'ab' through the redraw and the debounce
+  await ui.input({ key: 'search', text: 'a', kind: 'change' })
+  expect((await officeProps(ui)).search).toBe('a')          // at once ('a' is in a1's role: its row stays)
   await ui.input({ key: 'search', text: 'ab', kind: 'change' })
   agents = agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
   await clock.advance(POLL_MS * 2)
   expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a1')?.act).toBe('✏️ כותב')   // the publish redrew the Client
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('ab')
-  expect((await officeProps(ui)).search).toBe('')           // not yet: the module waits SEARCH_DEBOUNCE_MS of quiet
+  expect((await officeProps(ui)).search).toBe('a')          // not yet: the module waits SEARCH_DEBOUNCE_MS of quiet
   await ui.advance(SEARCH_DEBOUNCE_MS)                      // the search post goes out: the hook writes view.search, the pane redraws
   expect((await officeProps(ui)).search).toBe('ab')
   expect((await officeProps(ui)).empty?.kind).toBe('nomatch') // nobody matches "ab"

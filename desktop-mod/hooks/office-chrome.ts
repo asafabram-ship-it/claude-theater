@@ -27,9 +27,17 @@ export const CHROME_ROWS_SEARCH = 6
 export const SEARCH_FROM = 12
 /** Under this many columns the pane draws no key-hint chips (ui.tsx's rule; the Client's toolbar puts hotkeys on its Buttons only from here, since the desktop draws a chip per hotkey). */
 export const COMPACT_BELOW = 60
-/** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested). */
+/** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested); under DRAWER_NARROW_BELOW columns one line fewer each (the probe's: a pane that narrow is short too). */
 export const TASK_LINES = 4
 export const RESULT_LINES = 3
+export const TASK_LINES_NARROW = 3
+export const RESULT_LINES_NARROW = 2
+export const DRAWER_NARROW_BELOW = 34
+export type DrawerLimits = { task: number; result: number }
+/** The drawer's line limits at `columns`. */
+export function drawerLimits(columns: number): DrawerLimits {
+  return columns < DRAWER_NARROW_BELOW ? { task: TASK_LINES_NARROW, result: RESULT_LINES_NARROW } : { task: TASK_LINES, result: RESULT_LINES }
+}
 /**
  * The help rows: a label key and the keys shown beside it (spec §6.4; the still toggle's `s` since Task 2.8b-3). The close
  * row promises `x` alone: Escape never reaches a Client — it hands the keyboard back to the prompt (engine types,
@@ -69,14 +77,19 @@ export function shownAgents(p: Pick<OfficeProps, 'rooms'>): number {
   return n
 }
 
-/** Whether the search field is drawn: more than SEARCH_FROM agents shown, or a search active (its text stays visible whatever the count). */
-export function searchShown(p: Pick<OfficeProps, 'rooms' | 'search'>): boolean {
-  return shownAgents(p) > SEARCH_FROM || p.search !== ''
+/**
+ * Whether the search field is drawn: more than SEARCH_FROM agents shown, or a search active — text in the field (spec
+ * 2026-10-10 §2 item 22): `p.search` as the hooks hold it, or `typed`, the text the Client's field holds before its post
+ * lands (the module passes its own; the hooks, which size the Client by the props alone, pass nothing — so the module posts
+ * the first keystroke of a search at once, and the two agree a redraw later). The field stays whatever the count then.
+ */
+export function searchShown(p: Pick<OfficeProps, 'rooms' | 'search'>, typed = ''): boolean {
+  return shownAgents(p) > SEARCH_FROM || p.search !== '' || typed !== ''
 }
 
 /** The chrome rows always there at this width and office: 4, or 6 with the search on its own line (under ONE_LINE_FROM). */
-export function fixedRows(p: Pick<OfficeProps, 'rooms' | 'search' | 'columns'>): number {
-  return searchShown(p) && !geometry(p.columns).oneLine ? CHROME_ROWS_SEARCH : CHROME_ROWS_MIN
+export function fixedRows(p: Pick<OfficeProps, 'rooms' | 'search' | 'columns'>, typed = ''): number {
+  return searchShown(p, typed) && !geometry(p.columns).oneLine ? CHROME_ROWS_SEARCH : CHROME_ROWS_MIN
 }
 
 /** Whether `labels`, `gap` cells apart, fit in `width` cells by LINE_FIT (the desktop draws letters wider than a cell): the toolbar and the settings' Buttons row draw their words only then, else their icons alone. */
@@ -87,8 +100,10 @@ export function labelsFit(labels: readonly string[], width: number, gap = 1): bo
  * The window's budget. The Client's whole tree must stay under 100,000 characters serialized or the
  * instance unmounts; a drawn agent row (a Text per column, six at most, no Box) serializes to under
  * ROW_CHARS characters whatever the width — the dearest row, pulsing and focused with the widest texts
- * the props allow in the six columns of the frozen column, measured 716 on the fake surface (2026-10-20;
- * 488 for the four Texts of the fix wave of 2026-10-19), so ROW_CHARS keeps a margin over it — and
+ * the props allow in the six columns of the frozen column (the task bounded in code units too,
+ * office-layout.ts TASK_UNITS: a cell cut alone lets a ZWJ family emoji task cost 816), measured 716
+ * on the fake surface with a Hebrew task (2026-10-20; 488 for the four Texts of the fix wave of
+ * 2026-10-19), so ROW_CHARS keeps a margin over it — and
  * the rows drawn in one window are capped at WINDOW_ROWS: a pane taller than that leaves its lowest rows
  * blank rather than losing the pane. (The chrome, the drawer and the card frames of a window cost about
  * 10,000 more: office-client.test.ts's limits sweep guards the whole tree, the pulsing rows included.)
@@ -103,9 +118,10 @@ const CONTROL_RE = /\p{Cc}/gu
 /**
  * The bidi controls (ALM, LRM, RLM, LRE..RLO, LRI..PDI): the desktop refuses them in a Text, and a paste
  * from a Hebrew source often carries them. Named one by one, not \p{Cf}: that class also holds the
- * zero-width joiner of emoji sequences (man + ZWJ + laptop), which must stay.
+ * zero-width joiner of emoji sequences (man + ZWJ + laptop), which must stay. Written as escapes: the raw
+ * controls would reorder this line in an editor and survive no formatter (the class would collapse to `[-]`).
  */
-const BIDI_RE = /[؜‎‏‪-‮⁦-⁩]/g
+const BIDI_RE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
 /**
  * A character a surface refuses in a Text or a Button's label: a bidi control, or a control character
  * other than tab and newline (the two a Text takes). Built from the two sets above — the ONE definition
@@ -255,8 +271,8 @@ export function drawerStatus(d: OfficeDrawer, L: Record<string, string>, max: nu
   return cut([word, clock, d.type].filter(Boolean).join(' · '), max)
 }
 
-/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content. */
-export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number): DrawerLine[] {
+/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content — the task and the result wrapped to `limits` lines (drawerLimits: one fewer each under DRAWER_NARROW_BELOW). */
+export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number, limits: DrawerLimits = { task: TASK_LINES, result: RESULT_LINES }): DrawerLine[] {
   const lbl = (k: string) => L[k] ?? ''
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
   if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
@@ -267,10 +283,10 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   // probe writes its lines; no colon after a label — it would be drawn before the Hebrew word
   lines.push({ kind: 'body', text: cut([lbl('dModel'), '🧠', d.model, '·', lbl('dAction'), d.act].join(' '), inner) })
   lines.push({ kind: 'head', text: cut(lbl('dTask'), inner) })
-  for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, TASK_LINES)) lines.push({ kind: 'body', text: t })
+  for (const t of wrapLines(d.task || lbl('taskUnavailable'), inner, limits.task)) lines.push({ kind: 'body', text: t })
   if (d.result) {
     lines.push({ kind: 'head', text: cut(lbl('dResult'), inner) })
-    for (const t of wrapLines(d.result, inner, RESULT_LINES)) lines.push({ kind: 'body', text: t })
+    for (const t of wrapLines(d.result, inner, limits.result)) lines.push({ kind: 'body', text: t })
     if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner) })
   }
   return lines
@@ -298,7 +314,7 @@ export function chromeRows(p: OfficeProps): number {
 /** The settings popover's or the drawer's rows, their gap included (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
 export function overlayRows(p: OfficeProps): number {
   if (p.helpOpen) return helpRows(p.columns) + OVERLAY_GAP
-  if (p.drawer) return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns)).length + OVERLAY_GAP
+  if (p.drawer) return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), drawerLimits(p.columns)).length + OVERLAY_GAP
   return 0
 }
 

@@ -22,7 +22,8 @@
 // across all its rooms (`officeWidest`), with HYSTERESIS cells kept by the
 // caller (the Client's instance, never the props): a mode is dropped the
 // instant it stops fitting and regained only with two cells to spare
-// (`chooseMode`). The ladder, richest first: the activity word → the model's
+// (`chooseMode`) — while the pane is dragged; a change of CONTENT that moves
+// the widest values chooses the mode afresh (`ModeToken`). The ladder, richest first: the activity word → the model's
 // version → the names down to NAME_MIN → the model column → the names to
 // NAME_FLOOR. From WIDE_FROM the columns align across the cards by minWidth
 // floors (`floorsOf`); from CENTRE_AT a dim task column rides at the end.
@@ -53,6 +54,12 @@ export const NAME_MAX = 24
 export const ACT_MAX = 18
 export const PILL_MAX = 12
 export const TASK_MAX = 24
+/**
+ * The row's task in UTF-16 code units as well (cutTask): a cell cut alone bounds no serialized cost — a ZWJ family emoji is
+ * two cells and eleven units, a stack of combining marks one cell and dozens — and the row's cost (office-chrome.ts
+ * ROW_CHARS) is the premise of the window's row budget.
+ */
+export const TASK_UNITS = 2 * TASK_MAX
 /** The narrowest a name is cut to before the model column gives way (the probe's ladder: names down to 8, then the column). */
 export const NAME_MIN = 8
 /** The names' floor once the model column is gone (the probe: the narrowest panes only). */
@@ -114,8 +121,8 @@ const ZWJ = '‍'
 const ELLIPSIS = '…'
 /** A Hebrew-script character (a letter, a point, the geresh). (i18n.ts hebrewRuleOk uses the same class.) */
 const HEBREW_RE = /\p{Script=Hebrew}/u
-/** The no-break space (U+00A0): a space the desktop never breaks a line on — and no surface refuses (office-chrome.ts REFUSED_RE: it is no control). */
-export const NBSP = ' '
+/** The no-break space (U+00A0): a space the desktop never breaks a line on — and no surface refuses (office-chrome.ts REFUSED_RE: it is no control). (Escaped: an invisible literal would survive no formatter.) */
+export const NBSP = '\u00A0'
 
 export type Glyph = { ch: string; w: number }
 
@@ -153,6 +160,21 @@ export function cut(s: string, max: number): string {
   if (n === gs.length) return s
   while (n > 0 && w + 1 > max) { n--; w -= gs[n]!.w }
   return gs.slice(0, n).map(g => g.ch).join('') + ELLIPSIS
+}
+
+/** `s` cut to at most `max` UTF-16 code units, whole glyphs only, the ellipsis (one unit) trailing when something was dropped. */
+export function capUnits(s: string, max: number): string {
+  if (s.length <= max) return s
+  const gs = glyphs(s)
+  let n = gs.length
+  let units = s.length
+  while (n > 0 && units + 1 > max) { n--; units -= gs[n]!.ch.length }
+  return gs.slice(0, n).map(g => g.ch).join('') + ELLIPSIS
+}
+
+/** A row's short task as the props carry it and the task column draws it: cut to TASK_MAX cells, then to TASK_UNITS code units. */
+export function cutTask(s: string): string {
+  return capUnits(cut(s, TASK_MAX), TASK_UNITS)
 }
 
 /**
@@ -355,6 +377,20 @@ export function modeAt(w: Widest, rank: number, budget: number, full: boolean): 
 }
 
 /**
+ * THE HYSTERESIS's token: the rank of the table mode last chosen and the widest values it was chosen from (`widestKey`), kept
+ * by the caller between renders (the Client's instance), never in the props. The hysteresis is about the WIDTH: a rank kept
+ * for the same widest values holds while the pane is dragged; once the content moved the office's widest values (a ⭐ or ❌
+ * widened the marks, an agent with a long activity or model came or went, the names changed with the language) the mode is
+ * chosen afresh, as a new instance would — a column dropped for a transient agent comes back the moment it leaves.
+ */
+export type ModeToken = { rank: number; key: string }
+
+/** The identity of the widest values the mode depends on: the widths per column and the set of names (their order is not one). */
+export function widestKey(w: Widest): string {
+  return [w.mark, w.modelFull, w.modelFamily, w.actEmoji, w.actWord, ...[...w.names].sort()].join('\u0000')
+}
+
+/**
  * THE HYSTERESIS: the richest mode that fits — a mode above the last one (`last`, the rank kept by the caller between renders;
  * null before the first) must fit with HYSTERESIS cells to spare, the last one or a poorer one the budget alone. So a mode is
  * dropped the instant it stops fitting and regained only with two cells to spare: no flapping at a threshold. A regained mode
@@ -436,7 +472,8 @@ export type RoomView = {
   moreAt: number
 }
 
-export type OfficeModel = { rooms: RoomView[]; lines: Line[]; hits: Hit[]; geo: Geo; mode: TableMode; floors: Floors | null }
+/** `token` is what the caller keeps for the next render's hysteresis (the mode's rank and the widest values' key). */
+export type OfficeModel = { rooms: RoomView[]; lines: Line[]; hits: Hit[]; geo: Geo; mode: TableMode; token: ModeToken; floors: Floors | null }
 
 /**
  * What the surface module lays on the model from its local state, by id:
@@ -475,7 +512,7 @@ type RoomBase = {
  * the same way (`office`), measured again only when a room changed. `builds` counts the bases built, `measures` the
  * office-wide measurements (the tests' guards).
  */
-export type RoomCache = { rooms: Map<string, { key: string; base: RoomBase }>; office: { key: string; widest: Widest } | null; builds: number; measures: number }
+export type RoomCache = { rooms: Map<string, { key: string; base: RoomBase }>; office: { key: string; widest: Widest; widestKey: string } | null; builds: number; measures: number }
 export function roomCache(): RoomCache {
   return { rooms: new Map(), office: null, builds: 0, measures: 0 }
 }
@@ -495,7 +532,7 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
     rows: room.agents.map(a => ({
       id: a.id, mark: markOf(a), color: DOT_FG[a.status], who: nb(`${a.emoji} ${cut(a.name, mode.nameMax)}`),
       model: mode.model === 'none' ? '' : nb(modelText(a.model, mode.model === 'full')),
-      actEmoji: firstGlyph(a.act), actWord: mode.word ? nb(restWord(a.act)) : '', task: nb(cut(a.task, TASK_MAX)),
+      actEmoji: firstGlyph(a.act), actWord: mode.word ? nb(restWord(a.act)) : '', task: nb(cutTask(a.task)),
       bold: a.status === 'running', dim: a.status === 'done', failed: a.failed,
     })),
   }
@@ -513,24 +550,31 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
  * keeps pinZone cells at the reading edge for the pin and the counts' zone (countsZone) at the other edge for the room's ✅
  * toggle (when the room has finished agents). The decor changes only the pin of the head it hovers, the focus marker and
  * the pulse flags — never a line, never a hit. The table mode is chosen once for the office (chooseMode) from `last`, the
- * rank the caller kept from its previous model (the hysteresis; null on the first). With a `cache` (THE ROOM MEMO), a room
- * whose props, width and mode did not change is not measured again, nor is the office when no room changed.
+ * token the caller kept from its previous model (the hysteresis: its rank counts only while the widest values are the ones
+ * it was chosen from — ModeToken; null on the first). With a `cache` (THE ROOM MEMO), a room whose props, width and mode did
+ * not change is not measured again, nor is the office when no room changed.
  */
-export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, cache?: RoomCache, last: number | null = null): OfficeModel {
+export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, cache?: RoomCache, last: ModeToken | null = null): OfficeModel {
   const { rtl } = props
   const geo = geometry(props.columns)
   const jsons = props.rooms.map(r => (cache ? JSON.stringify(r) : ''))
   let widest: Widest
+  let wkey: string
   if (cache) {
     const key = jsons.join('\u0000')
-    if (cache.office && cache.office.key === key) widest = cache.office.widest
+    if (cache.office && cache.office.key === key) ({ widest, widestKey: wkey } = cache.office)
     else {
       widest = officeWidest(props.rooms)
-      cache.office = { key, widest }
+      wkey = widestKey(widest)
+      cache.office = { key, widest, widestKey: wkey }
       cache.measures += 1
     }
-  } else widest = officeWidest(props.rooms)
-  const mode = chooseMode(widest, geo, last)
+  } else {
+    widest = officeWidest(props.rooms)
+    wkey = widestKey(widest)
+  }
+  const mode = chooseMode(widest, geo, last !== null && last.key === wkey ? last.rank : null)
+  const token: ModeToken = { rank: mode.rank, key: wkey }
   const floors = geo.wide ? floorsOf(widest, mode) : null
   const rooms: RoomView[] = []
   const lines: Line[] = []
@@ -582,7 +626,7 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
     })
   })
   if (cache) for (const id of [...cache.rooms.keys()]) if (!seen.has(id)) cache.rooms.delete(id)
-  return { rooms, lines, hits, geo, mode, floors }
+  return { rooms, lines, hits, geo, mode, token, floors }
 }
 
 /** The agent or room control under cell (x, y) of the reading column, if any. */

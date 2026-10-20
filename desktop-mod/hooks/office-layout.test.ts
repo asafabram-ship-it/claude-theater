@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TITLE_GAP, TITLE_MIN, WIDE_FROM, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestName } from './office-layout'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -97,8 +97,59 @@ test('cutWords (the probe\'s title cut): a title that fits is whole; a longer on
   expect(cutWords('תקרא את המסמך הארוך מאוד', 12).startsWith('…')).toBe(false)
 })
 
+test('cutTask / capUnits / TASK_UNITS: the row\'s task cut to TASK_MAX cells AND to TASK_UNITS code units, whole glyphs, one ellipsis — a ZWJ family emoji task (eleven units a glyph) is bounded by the units, a Hebrew one by the cells', () => {
+  expect(TASK_UNITS).toBe(2 * TASK_MAX)
+  const family = '👨‍👩‍👧‍👦'
+  expect(family.length).toBe(11)
+  expect(textWidth(family)).toBe(EMOJI_CELLS)
+  expect(capUnits('abc', 3)).toBe('abc')
+  expect(capUnits('abcd', 3)).toBe('ab…')
+  expect(capUnits(family.repeat(3), 23)).toBe(`${family}${family}…`)   // 22 units + the ellipsis
+  expect(capUnits(family.repeat(3), 22)).toBe(`${family}…`)            // 23 > 22: a whole glyph fewer
+  expect(capUnits('', 0)).toBe('')
+  // a 24-cell Hebrew task: the cells cut it, the units never do
+  const hebrew = 'תכנון המעבר לרישום הסטטי של המשרד'
+  expect(cutTask(hebrew)).toBe(cut(hebrew, TASK_MAX))
+  expect(cutTask(hebrew).length).toBeLessThanOrEqual(TASK_UNITS)
+  // thirteen families: 24 cells hold twelve (132 units) — the units cut it to four (44) and one ellipsis
+  const families = cutTask(family.repeat(13))
+  expect(families).toBe(`${family.repeat(4)}…`)
+  expect(families.length).toBeLessThanOrEqual(TASK_UNITS)
+  expect(families.match(/…/g)).toHaveLength(1)
+  // a stack of combining marks on one letter (one cell, many units): bounded too, whole glyphs only
+  const acute = String.fromCharCode(0x301)
+  const stacked = 'a' + acute.repeat(90)
+  expect(textWidth(stacked)).toBe(1)
+  expect(cutTask(stacked)).toBe('…')
+  expect(cutTask('x' + stacked)).toBe('x…')                              // 92 units: the stack goes whole
+  expect(cutTask('x' + stacked.slice(0, 40))).toBe('x' + stacked.slice(0, 40))   // 41 units, two cells: kept
+  expect(cutTask('xy' + stacked.slice(0, 40)).length).toBeLessThanOrEqual(TASK_UNITS)
+  expect(cutTask('')).toBe('')
+})
+
+test('widestKey: the identity of the widest values the mode depends on — the same for the same rooms in any order (a pin reorders them), different once a mark, a model, an activity or a name moved them', () => {
+  const rooms = probeRooms()
+  const key = widestKey(officeWidest(rooms))
+  expect(widestKey(officeWidest([...rooms].reverse()))).toBe(key)
+  expect(widestKey(officeWidest(rooms.map(r => ({ ...r, pinned: !r.pinned, title: 'x' }))))).toBe(key)
+  expect(widestKey(officeWidest(rooms.map(r => ({ ...r, agents: [...r.agents].reverse() }))))).toBe(key)
+  // another ⭐ (the probe's office has a ⭐ and a ❌: the mark is two cells either way): the same; no badge at all (the marks one
+  // cell): another key, and one ⭐ among the plain marks another again
+  expect(widestKey(officeWidest(rooms.map(r => ({ ...r, agents: r.agents.map(a => a.id === 'owl' ? { ...a, star: 9 } : a) }))))).toBe(key)
+  const plain = rooms.map(r => ({ ...r, agents: r.agents.map(a => ({ ...a, star: 0, failed: false, longRunning: false })) }))
+  expect(widestKey(officeWidest(plain))).not.toBe(key)
+  expect(widestKey(officeWidest(plain.map(r => ({ ...r, agents: r.agents.map(a => a.id === 'owl' ? { ...a, star: 9 } : a) }))))).not.toBe(widestKey(officeWidest(plain)))
+  // a longer activity word, a longer model, a new name: another key
+  expect(widestKey(officeWidest(rooms.map(r => ({ ...r, agents: r.agents.map(a => a.id === 'owl' ? { ...a, act: '🔌 claude-in-chrome' } : a) }))))).not.toBe(key)
+  expect(widestKey(officeWidest(rooms.map(r => ({ ...r, agents: r.agents.map(a => a.id === 'owl' ? { ...a, model: 'Sonnet 4.5.1' } : a) }))))).not.toBe(key)
+  expect(widestKey(officeWidest(rooms.map(r => ({ ...r, agents: r.agents.map(a => a.id === 'owl' ? { ...a, name: 'The owl of the night' } : a) }))))).not.toBe(key)
+  expect(widestKey(officeWidest([]))).toBe(widestKey(officeWidest([])))
+})
+
 test('nb / NBSP (round 9): every plain space of a one-line value a no-break space, the width unchanged — a Text drawn from it can never wrap; restWord: an activity\'s word after its emoji', () => {
   expect(NBSP).toBe(' ')
+  expect(NBSP.length).toBe(1)
+  expect(NBSP.charCodeAt(0)).toBe(0xa0)
   expect(nb('🦉 הינשוף')).toBe(`🦉${NBSP}הינשוף`)
   expect(nb('a b  c')).toBe(`a${NBSP}b${NBSP}${NBSP}c`)
   expect(nb('')).toBe('')
@@ -637,10 +688,15 @@ test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base 
   const fresh = officeModel({ ...q, columns: 39 }, NO_DECOR, cache)
   expect(fresh.mode.rank).toBe(0)
   expect(cache.builds).toBe(10)
-  const held = officeModel({ ...q, columns: 39 }, NO_DECOR, cache, 1)
+  const token = { rank: 1, key: widestKey(officeWidest(q.rooms)) }
+  const held = officeModel({ ...q, columns: 39 }, NO_DECOR, cache, token)
   expect(held.mode.rank).toBe(1)
+  expect(held.token).toEqual({ rank: 1, key: token.key })
   expect(cache.builds).toBe(13)
-  expect(JSON.stringify(held)).toBe(JSON.stringify(officeModel({ ...q, columns: 39 }, NO_DECOR, undefined, 1)))
+  expect(JSON.stringify(held)).toBe(JSON.stringify(officeModel({ ...q, columns: 39 }, NO_DECOR, undefined, token)))
+  // THE TOKEN: a rank kept for other widest values (the content changed) is no hysteresis — the fresh choice, as a new instance's
+  expect(officeModel({ ...q, columns: 39 }, NO_DECOR, cache, { rank: 1, key: 'other' }).mode.rank).toBe(0)
+  expect(fresh.token).toEqual({ rank: 0, key: token.key })
   // a room gone: dropped from the cache; back again: built again
   officeModel({ ...q, columns: 30, rooms: q.rooms.slice(0, 2) }, NO_DECOR, cache)
   expect([...cache.rooms.keys()]).toEqual(['a', 'b'])

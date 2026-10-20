@@ -155,14 +155,17 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.showDone).toBe(false)
 
   // the search Input — drawn only while the office shows more than SEARCH_FROM agents (spec 2026-10-10 §2 item 22): ten more
-  // working agents in room B bring it; then the typed text reaches view.search after the module's debounce (one view write),
-  // the office narrows; Enter with the same text writes nothing; an empty Enter clears it; the ten leave again
+  // working agents in room B bring it; then the first keystroke reaches view.search at once (one view write: the hooks size
+  // the chrome by it under ONE_LINE_FROM) and the rest after the module's debounce (one more), the office narrows; Enter with
+  // the same text writes nothing; an empty Enter clears it; the ten leave again
   expect(await ui.find({ in: OFFICE_KEY, key: 'search' })).toBeUndefined()
   agents = [...fixture(), ...Array.from({ length: 10 }, (_, i) => agent({ id: `x${i}`, role: 'extra work', session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research', persona_id: 20 + i }))]
   await clock.advance(POLL_MS)
   expect(await ui.find({ in: OFFICE_KEY, key: 'search' })).toBeDefined()
+  expect(await writesOf(captured, () => ui.input({ key: 'search', text: 't', kind: 'change' }))).toEqual({ view: 1 })
+  expect((await propsOf(ui)).search).toBe('t')
   await ui.input({ key: 'search', text: 'triage', kind: 'change' })
-  expect((await propsOf(ui)).search).toBe('')
+  expect((await propsOf(ui)).search).toBe('t')
   expect(await writesOf(captured, () => ui.advance(SEARCH_DEBOUNCE_MS))).toEqual({ view: 1 })
   expect((await propsOf(ui)).search).toBe('triage')
   expect((await propsOf(ui)).rooms.map(r => r.agents.map(a => a.id))).toEqual([['b1']])

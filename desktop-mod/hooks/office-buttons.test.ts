@@ -424,3 +424,41 @@ test('R9 · the hit zones are what is drawn: the dim 📌 shows over the pin zon
   expect((await officeProps(ui)).helpOpen).toBe(false)
   await ui.unmount()
 })
+
+// ---------------------------------------------------------------------------
+// Q2 (phase A): the drawer one height per width, a second click closes it, the settings close it
+// ---------------------------------------------------------------------------
+
+test('Q2 · the drawer is ONE height at a width, whoever it shows (a result or none, a long task or a short one): browsing the agents never moves the cards; a second click on the open agent closes it; the settings Button closes an open drawer, and closing the settings brings no old drawer back', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  const heights = new Set<number>()
+  const tops = new Set<string>()
+  for (const id of ['demo-mcp-dd', 'demo-writer-ff', 'demo-build-ee', 'demo-conv-research', 'demo-finisher-gg', 'demo-reader-bb']) {
+    const p = await officeProps(ui)
+    await down(ui, cellOf(p, hitOf(p, 'agent', id)))
+    const q = await officeProps(ui)
+    expect(q.drawer?.id, id).toBe(id)
+    heights.add(chromeRows(q))
+    tops.add(JSON.stringify(officeModel(q).rooms.map(r => r.top)))
+  }
+  expect([...heights], 'the drawer changed height between agents').toHaveLength(1)
+  expect(tops.size).toBe(1)
+  // the same row again: closed
+  const p1 = await officeProps(ui)
+  await down(ui, cellOf(p1, hitOf(p1, 'agent', 'demo-reader-bb')))
+  const p2 = await officeProps(ui)
+  expect(p2.drawer, 'a second click on the open agent').toBeNull()
+  expect(p2.selected).toBeNull()
+  expect(chromeRows(p2)).toBe(chromeRows(p0))
+  // the settings close an open drawer; closed, nothing comes back
+  await down(ui, cellOf(p2, hitOf(p2, 'agent', 'demo-mcp-dd')))
+  expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
+  await ui.press({ key: 'help' })
+  const p3 = await officeProps(ui)
+  expect([p3.helpOpen, p3.selected, p3.drawer]).toEqual([true, null, null])
+  await ui.press({ key: 'closeHelp' })
+  const p4 = await officeProps(ui)
+  expect([p4.helpOpen, p4.selected, p4.drawer]).toEqual([false, null, null])
+  await ui.unmount()
+})

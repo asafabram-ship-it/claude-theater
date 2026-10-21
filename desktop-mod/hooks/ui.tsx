@@ -637,7 +637,8 @@ const flipShowDone = (p: Prefs): Prefs => ({ ...p, showDone: !p.showDone })
 const flipMuted = (p: Prefs): Prefs => ({ ...p, muted: !p.muted })
 const flipStill = (p: Prefs): Prefs => ({ ...p, still: !p.still })
 const flipPin = (room: string) => (p: Prefs): Prefs => ({ ...p, pins: p.pins.includes(room) ? p.pins.filter(x => x !== room) : [...p.pins, room] })
-const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen })
+/** The settings popover opened or closed — and an open drawer closed with it (live check 7, Q2: the settings replace the drawer, and closing them brings no old drawer back). */
+const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen, selected: null })
 /**
  * The text cards' focus ON THE SELECTED CARD (live check 7, R2): what an `open` post of the office Client writes as
  * view.focusIndex — the selection written at once, the card's place in the text cards' walk derived when they draw (the

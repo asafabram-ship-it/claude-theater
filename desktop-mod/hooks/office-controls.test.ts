@@ -776,8 +776,9 @@ function suite(COLUMNS: Columns): void {
   // the rows and the drawer
   // ---------------------------------------------------------------------------
 
-  t('row click: a click on an agent row selects it and opens its drawer (view.selected, the card in the cards\' style with the persona, the status line, the task; the row carries the focus marker, no band); the row\'s last cell opens it too, a cell past the column or in the margin nothing; a click on another row moves the drawer there', async ($, on) => {
-    const { ui, captured } = await mountOffice($, on)
+  t('row click: a click on an agent row selects it and opens its drawer (view.selected, the card in the cards\' style with the persona, the status line, the task; the row carries the focus marker, no band); the row\'s last cell opens it too, a cell past the column or in the margin nothing; a click on another row moves the drawer there, a second click on the open one closes it', async ($, on) => {
+    // (a 40-row body: the drawer is ONE height at a width — its most lines, live check 7 Q2 — and the opened row stays in view under it)
+    const { ui, captured } = await mountOffice($, on, fixture, { offset: 0, bodyRows: 40 })
     const p0 = await officeProps(ui)
     expect(p0.drawer).toBeNull()
     expect(p0.selected).toBeNull()
@@ -814,7 +815,11 @@ function suite(COLUMNS: Columns): void {
     await deadRow(ui, yA1, 'the cell past the column', GEO.margin + GEO.W)
     if (GEO.margin > 0) await deadRow(ui, yA1, 'the margin\'s last cell', GEO.margin - 1)
     expect((await officeProps(ui)).drawer?.id).toBe('d1')
-    // another row (the finished one, by its middle): its drawer, with a duration
+    // d1 again (by its middle): its drawer is open, so the second click closes it (live check 7, Q2); once more, it opens — the
+    // finished one's drawer, with a duration
+    await click(ui, 'agent', 'd1')
+    expect((await officeProps(ui)).drawer).toBeNull()
+    expect((await officeProps(ui)).selected).toBeNull()
     await click(ui, 'agent', 'd1')
     const p2 = await officeProps(ui)
     expect(p2.selected).toBe('d1')
@@ -941,7 +946,7 @@ function suite(COLUMNS: Columns): void {
   })
 
   t('o / Enter: opens the focused row\'s drawer (view.selected); with no focus, nothing', async ($, on) => {
-    const { ui } = await mountOffice($, on)
+    const { ui } = await mountOffice($, on, fixture, { offset: 0, bodyRows: 40 })   // (the drawer's one height: the opened row in view under it)
     await ui.key({ in: OFFICE_KEY, key: 'o' })
     expect((await officeProps(ui)).drawer).toBeNull()
     await ui.key({ in: OFFICE_KEY, key: 'j' })
@@ -1132,11 +1137,12 @@ function suite(COLUMNS: Columns): void {
     await deadRow(ui, ph.offset + 2, 'a settings row')
     await deadRow(ui, chromeRows(ph) + FROM - 1, 'the row above the window')
     expect((await officeProps(ui)).helpOpen).toBe(true)
-    await clickRow(ui, chromeRows(ph) + FROM + BODY - Hh - 1)
+    // (the window's first row: the drawer, taller than the settings — its one height, live check 7 Q2 — leaves it in view)
+    await clickRow(ui, chromeRows(ph) + FROM)
     const pq = await officeProps(ui)
     expect(pq.helpOpen).toBe(false)
-    expect(pq.drawer?.id).toBe(lines[FROM + BODY - Hh - 1]!.agent)
-    expect(await focused(ui, pq)).toEqual([whoOf(pq, lines[FROM + BODY - Hh - 1]!.agent!)])
+    expect(pq.drawer?.id).toBe(lines[FROM]!.agent)
+    expect(await focused(ui, pq)).toEqual([whoOf(pq, lines[FROM]!.agent!)])
     await ui.unmount()
   })
 

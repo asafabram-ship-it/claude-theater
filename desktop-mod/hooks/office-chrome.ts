@@ -306,7 +306,17 @@ export function drawerStatus(d: OfficeDrawer, L: Record<string, string>, max: nu
   return cut([word, clock, d.type].filter(Boolean).join(' · '), max)
 }
 
-/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content — the task and the result wrapped to `limits` lines (drawerLimits: one fewer each under DRAWER_NARROW_BELOW). */
+/**
+ * THE DRAWER'S ONE HEIGHT (live check 7, Q2): the most lines a drawer takes at these limits — the name, the sub, the status
+ * line, the blank line, the model line, the task's heading and its `limits.task` lines, the result's heading and its
+ * `limits.result` lines, the ✂ note — what every drawer is padded to, so browsing the agents (a result or none, a long task
+ * or a short one) or an agent finishing never changes its height and the cards under it never hop.
+ */
+export function drawerMax(limits: DrawerLimits): number {
+  return 8 + limits.task + limits.result
+}
+
+/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content — the task and the result wrapped to `limits` lines (drawerLimits: one fewer each under DRAWER_NARROW_BELOW) — then blank lines to drawerMax (THE DRAWER'S ONE HEIGHT). */
 export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number, limits: DrawerLimits = { task: TASK_LINES, result: RESULT_LINES }): DrawerLine[] {
   const lbl = (k: string) => L[k] ?? ''
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
@@ -324,6 +334,7 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
     for (const t of wrapLines(d.result, inner, limits.result)) lines.push({ kind: 'body', text: t })
     if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner) })
   }
+  while (lines.length < drawerMax(limits)) lines.push({ kind: 'blank', text: '' })
   return lines
 }
 

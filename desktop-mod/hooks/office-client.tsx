@@ -301,7 +301,8 @@ function listen(surface: Surface): void {
         if (ev.button !== 'left' || !hit) return
         if (hit.kind === 'agent') {
           if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
-          send(surface, inst, { t: 'open', id: hit.id })
+          // a second click on the agent whose drawer is open closes it (live check 7, Q2) — a close, never a flip in the hooks
+          send(surface, inst, inst.props.drawer?.id === hit.id ? { t: 'close' } : { t: 'open', id: hit.id })
         } else if (hit.kind === 'pin') {
           // THE PIN'S PLACE (Q4): the rooms keep the order drawn now until the pointer leaves the office (the pinned card moves to
           // the top then); the head hover goes, the props' bright 📌 replacing it
@@ -584,7 +585,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         ...(note ? [line([Text({ dimColor: true, children: [nb(cut(note, Math.max(1, fitLine(geo.inner))))] })], { key: 'oversized' })] : []),
       ] })
     } else if (props.drawer) {
-      // the drawer as a card in the cards' style: every line in a height-1 Box, so the rows under it never move
+      // the drawer as a card in the cards' style: every line in a height-1 Box, so the rows under it never move; ONE height at a
+      // width whoever it shows (office-chrome.ts drawerMax: its lines padded with blank lines — live check 7, Q2)
       const items: RenderElement[] = inst.drawer.map((l, i) => {
         // the name line: the persona (bold) at the reading edge, the close Button (read ✕ THEN the word: iconLabel) at the other
         if (l.kind === 'name') return line([

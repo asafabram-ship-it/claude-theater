@@ -10,7 +10,7 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, officeAgents, searchShown, windowOf } from './office-chrome'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, officeAgents, searchShown, windowOf } from './office-chrome'
 import * as OfficeClient from './office-client'
 import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
@@ -340,9 +340,12 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   // the drawer: the card's frame (border, padding) + name, sub, the status line, a blank line, the model line, the task heading, one task line + the gap
   const inner = drawerInner(p.columns)
   expect(inner).toBe(Math.floor((p.columns - PANE_GUTTER - 4) * 0.75))
-  expect(drawerLines(drawer(), LABELS, inner).length).toBe(7)
-  expect(drawerLines(drawer(), LABELS, inner).map(l => l.kind)).toEqual(['name', 'dim', 'status', 'blank', 'body', 'head', 'body'])
-  expect(chromeRows({ ...p, drawer: drawer() })).toBe(CHROME_ROWS_MIN + DRAWER_FRAME_ROWS + 7 + OVERLAY_GAP)
+  // ... then blank lines to its ONE HEIGHT at the width (live check 7, Q2: drawerMax — a short drawer as tall as the longest)
+  const MAX = drawerMax({ task: TASK_LINES, result: RESULT_LINES })
+  expect(MAX).toBe(15)
+  expect(drawerLines(drawer(), LABELS, inner).length).toBe(MAX)
+  expect(drawerLines(drawer(), LABELS, inner).map(l => l.kind)).toEqual(['name', 'dim', 'status', 'blank', 'body', 'head', 'body', ...Array.from({ length: MAX - 7 }, () => 'blank')])
+  expect(chromeRows({ ...p, drawer: drawer() })).toBe(CHROME_ROWS_MIN + DRAWER_FRAME_ROWS + MAX + OVERLAY_GAP)
   expect(DRAWER_FRAME_ROWS).toBe(4)
   expect(OVERLAY_GAP).toBe(1)
   // the settings win over the drawer when both are open (as today: a popover)
@@ -357,7 +360,8 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   expect(helpPairs(true).flat().filter(([k]) => k.trim() !== '')).toEqual([...HELP])
   // a long task wraps to at most TASK_LINES lines, the result to RESULT_LINES (+ heading + the ✂ note), every line within the inner width
   const long = drawer({ task: 'word '.repeat(400), result: 'done '.repeat(400), truncated: true, sub: '' })
-  expect(drawerLines(long, LABELS, inner).length).toBe(5 + TASK_LINES + 1 + RESULT_LINES + 1)
+  expect(drawerLines(long, LABELS, inner).length).toBe(MAX)
+  expect(drawerLines(long, LABELS, inner).filter(l => l.kind !== 'blank').length).toBe(4 + TASK_LINES + 1 + RESULT_LINES + 1)   // (no sub here: one blank line pads it)
   for (const line of drawerLines(long, LABELS, inner)) expect(textWidth(line.text)).toBeLessThanOrEqual(inner)
   // THE STATUS LINE (round 8: `● עובד · זמן 12 דק׳ · general-purpose`): the mark (markOf, in the status's colour) then the status
   // word, the clock (the duration once done — a failed or killed agent is done — else the elapsed; none when unknown) and the
@@ -1018,7 +1022,7 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   expect(texts(byKey(help, 'help'))).toMatch(/^הגדרות$/m)
   expect(rowsOf(cards(help)[0]!)).toHaveLength(25 - overlayRows(ph))
   // at the top the drawer sits under the fixed chrome, the cards from line 0 — whole, no fragment
-  const top = Office({ ...p, offset: 0 }, fake(45, 0).surface)
+  const top = Office({ ...p, offset: 0, rows: 40 }, fake(45, 0).surface)   // (a taller pane: the drawer is its one height — live check 7, Q2)
   expect(kidsOf(top).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round'])
   expect(rowsOf(cards(top)[0]!)[0]![1]).toBe(`🦉${NBSP}g0`)
   // a window no taller than the drawer: the drawer keeps its place in the chrome, scrolled as content — the window (lines 40 - H2 .. 39:
@@ -1379,7 +1383,8 @@ test('the drawer under DRAWER_NARROW_BELOW columns (the probe\'s): the task wrap
     const inner = drawerInner(columns)
     const lines = drawerLines(long, LABELS, inner, drawerLimits(columns))
     const { task, result } = drawerLimits(columns)
-    expect(lines.length, `${columns}`).toBe(5 + task + 1 + result + 1)
+    expect(lines.length, `${columns}`).toBe(drawerMax({ task, result }))   // (THE DRAWER'S ONE HEIGHT: 5 + task + 1 + result + 1, and the sub's line)
+    expect(lines.filter(l => l.kind !== 'blank').length, `${columns}`).toBe(4 + task + 1 + result + 1)
     expect(lines.filter(l => l.kind === 'body').length, `${columns}`).toBe(1 + task + result)
     expect(overlayRows(p), `${columns}`).toBe(DRAWER_FRAME_ROWS + lines.length + OVERLAY_GAP)
     const tree = Office(p, fake(columns).surface)

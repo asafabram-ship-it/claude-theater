@@ -191,3 +191,40 @@ test('R3 · a room\'s finished toggle is drawn at once — no latch to wait for:
   expect(captured.store.roomDone).toEqual({})
   await ui.unmount()
 })
+
+// ---------------------------------------------------------------------------
+// R1 (Q1): the search field by the office's agents — a finished toggle never adds or removes chrome
+// ---------------------------------------------------------------------------
+
+/** The header line and the search line as drawn: each child's text (the meter's place among them). */
+async function chromeTexts(ui: Ui): Promise<string> {
+  type Drawn = { type: string; props?: Record<string, unknown>; children?: Array<Drawn | string> }
+  const isNode = (n: unknown): n is Drawn => typeof n === 'object' && n !== null && 'type' in n
+  const textOf = (n: Drawn | string | undefined): string => (typeof n === 'string' ? n : isNode(n) ? (n.children ?? []).map(textOf).join('') : '')
+  const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as Drawn
+  return (root.children ?? []).filter(isNode).filter(k => ['header', 'searchLine'].includes(String(k.props?.key)))
+    .map(k => `${String(k.props?.key)}: ${(k.children ?? []).filter(isNode).map(c => `[${textOf(c)}]`).join(' ')}`).join(' || ')
+}
+
+test('R1 · the search field is drawn by the office\'s agents (more than SEARCH_FROM, whatever the finished toggles show — Q1): ☐ → ☑ → ☐ in the demo (14 agents, 12 or 14 shown) keeps the chrome, the header and the meter where they were, and the first card\'s top; only the cards under the toggled rows move', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui } = await demoAt($, on, 1, PREFS(), o => {
+    o('session.measure', ($, e) => ({ changed: e.changed }))
+    o('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 200_000, percent: 0 }, rateLimits: [{ kind: 'five_hour' as const, percentUsed: 42, resetsAt: new Date(2026, 9, 10, 14, 30).toISOString() }] } }))
+  })
+  const p0 = await officeProps(ui)
+  expect(p0.usage).not.toBeNull()
+  expect(p0.rooms.flatMap(r => r.agents).length).toBeLessThanOrEqual(12)
+  const chrome0 = chromeRows(p0)
+  const head0 = await chromeTexts(ui)
+  const top0 = officeModel(p0).rooms[0]!.top
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), 'the field (14 in the office)').toBeDefined()
+  for (const step of ['☑', '☐']) {
+    await ui.press({ key: 'showDone' })
+    const p = await officeProps(ui)
+    expect(chromeRows(p), step).toBe(chrome0)
+    expect(await chromeTexts(ui), step).toBe(head0)
+    expect(officeModel(p).rooms[0]!.top, step).toBe(top0)
+    expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), step).toBeDefined()
+  }
+  await ui.unmount()
+})

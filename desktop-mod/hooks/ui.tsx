@@ -38,9 +38,12 @@
 //            what the person did (open / pin / roomDone / the toolbar / search —
 //            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
 //            applies each post as the text cards' press of the same name does
-//            (the shared transitions: one prefs / view atom, the store mirror),
-//            and the write redraws the pane with the new props. Equal state →
-//            equal props → no redraw. The Client is drawn only where the
+//            (the shared transitions: one prefs / view atom, the store mirror)
+//            and ANSWERS it with the Client's next props (live check 7: drawn
+//            at once, not after the redraw); the write's redraw follows with the
+//            same props and the new height. Equal state → equal props → no
+//            redraw. A post is a numbered batch of the frame's actions (the
+//            module's outbox). The Client is drawn only where the
 //            surface's table has one (`'Client' in els`) and while
 //            !DESKTOP.clientFailed; a `ui.fault` of the module (register.tsx)
 //            sets the flag and the desktop falls through to the text cards below

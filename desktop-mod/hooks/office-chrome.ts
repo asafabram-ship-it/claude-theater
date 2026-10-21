@@ -2,9 +2,10 @@
 // the surface module draws above the cards (the header and the toolbar with
 // their blank lines; the search on the toolbar's line from ONE_LINE_FROM
 // columns, else on a line of its own with a blank line above it — and only
-// while the office shows more than SEARCH_FROM agents or a search is active;
-// the footer line; the settings popover or the drawer), their exact heights,
-// the drawer's wrapped lines and its one status line, and the window of layout
+// while the office holds more than SEARCH_FROM agents or a search is active;
+// the footer line; the settings popover or the drawer), their exact heights
+// (the search counted on the agents IN the office, never the ones shown: live
+// check 7), the drawer's wrapped lines and its one status line, and the window of layout
 // lines the engine's scroll offset shows; and the ONE definition of the characters the surfaces refuse
 // (REFUSED_RE), with the two cleaners built on it: cleanSearch (the search
 // text) and cleanAgentText (every agent text the payload carries, cleaned by
@@ -24,7 +25,7 @@ import type { OfficeDrawer, OfficeProps } from './office-props'
  */
 export const CHROME_ROWS_MIN = 4
 export const CHROME_ROWS_SEARCH = 6
-/** The search field is drawn only while the office shows more than this many agents (spec 2026-10-10 §2 item 22) — or while a search is active. */
+/** The search field is drawn only while the office holds more than this many agents (spec 2026-10-10 §2 items 22 and 24) — or while a search is active. */
 export const SEARCH_FROM = 12
 /** Under this many columns the pane draws no key-hint chips (ui.tsx's rule; the Client's toolbar puts hotkeys on its Buttons only from here, since the desktop draws a chip per hotkey). */
 export const COMPACT_BELOW = 60
@@ -75,21 +76,25 @@ export const OVERLAY_GAP = 1
 /** The drawer card's frame: its border and its padding line, top and bottom (the cards' style). */
 export const DRAWER_FRAME_ROWS = 4
 
-/** The agents the office shows: the rows of every room in the props (the held-back finished and the ones over the props cap are not among them). */
-export function shownAgents(p: Pick<OfficeProps, 'rooms'>): number {
-  let n = 0
-  for (const room of p.rooms) n += room.agents.length
-  return n
+/**
+ * The agents IN THE OFFICE: its header counts — working, waiting and finished, every open chat's — whatever the finished
+ * toggles show (live check 7, Q1: counted on the agents SHOWN, a "show finished" click took the office over SEARCH_FROM or
+ * back under it, adding or removing the search line above every card — the cards jumped two rows under the pointer).
+ */
+export function officeAgents(p: Pick<OfficeProps, 'counts'>): number {
+  return p.counts.run + p.counts.idle + p.counts.done
 }
 
 /**
- * Whether the search field is drawn: more than SEARCH_FROM agents shown, or a search active — text in the field (spec
- * 2026-10-10 §2 item 22): `p.search` as the hooks hold it, or `typed`, the text the Client's field holds before its post
- * lands (the module passes its own; the hooks, which size the Client by the props alone, pass nothing — so the module posts
- * the first keystroke of a search at once, and the two agree a redraw later). The field stays whatever the count then.
+ * Whether the search field is drawn: more than SEARCH_FROM agents in the office (officeAgents: a click never adds or removes
+ * it, only a scan does — spec 2026-10-10 §2 item 24), or a search active — text in the field (item 22): `p.search` as the
+ * hooks hold it, or `typed`, the text the Client's field holds before its post lands (the module passes its own; the hooks,
+ * which size the Client by the props alone, pass nothing — so the module posts the first keystroke of a search at once, and
+ * the two agree a redraw later). The field stays whatever the count then. The hooks' officeHeight and the module's
+ * fixedRows both ask it, so they agree.
  */
-export function searchShown(p: Pick<OfficeProps, 'rooms' | 'search'>, typed = ''): boolean {
-  return shownAgents(p) > SEARCH_FROM || p.search !== '' || typed !== ''
+export function searchShown(p: Pick<OfficeProps, 'counts' | 'search'>, typed = ''): boolean {
+  return officeAgents(p) > SEARCH_FROM || p.search !== '' || typed !== ''
 }
 
 /**
@@ -118,7 +123,7 @@ export function demoLine(p: Pick<OfficeProps, 'labels' | 'columns'>): { note: st
 }
 
 /** The chrome rows always there at this width and office: 4, or 6 with the search on its own line (under ONE_LINE_FROM) — and DEMO_ROWS more while the demo runs. */
-export function fixedRows(p: Pick<OfficeProps, 'rooms' | 'search' | 'columns' | 'demo'>, typed = ''): number {
+export function fixedRows(p: Pick<OfficeProps, 'counts' | 'search' | 'columns' | 'demo'>, typed = ''): number {
   return (searchShown(p, typed) && !geometry(p.columns).oneLine ? CHROME_ROWS_SEARCH : CHROME_ROWS_MIN) + (p.demo ? DEMO_ROWS : 0)
 }
 

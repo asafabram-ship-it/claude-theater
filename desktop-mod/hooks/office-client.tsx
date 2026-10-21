@@ -11,7 +11,7 @@
 // the header line (bold counts at the reading edge, the dim 5h meter at the
 // other), the toolbar (`הצג שסיימו ☐` · `צליל 🔔` · `הגדרות ⚙️`, gap 2) — the
 // search field beside it on the same line from ONE_LINE_FROM columns, under it
-// on a line of its own below that, and only while the office shows more than
+// on a line of its own below that, and only while the office holds more than
 // SEARCH_FROM agents or a search is active — then a framed card per room: the
 // title line (the title flush at the reading edge — a 📌 before it only when
 // the room is pinned or its head is under the pointer — the counts at the
@@ -98,8 +98,8 @@
 // wrapped in try/catch and draws a short red Text instead of throwing (spec
 // §10). The search text is cleaned and capped (cleanSearch) before it is drawn
 // or posted; the keyboard focus (j / k) is local and never posted. The field
-// is drawn while the office shows more than SEARCH_FROM agents or a search is
-// active — text in the field (office-chrome.ts searchShown: `props.search`, or
+// is drawn while the office holds more than SEARCH_FROM agents (its counts,
+// whatever the finished toggles show: live check 7) or a search is active — text in the field (office-chrome.ts searchShown: `props.search`, or
 // the text typed and not yet posted, `inst.query`), so a poll that drops the
 // count mid-word never unmounts the field under the person's fingers; the
 // first keystroke of a search posts at once, since under ONE_LINE_FROM the
@@ -477,7 +477,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, inst, { t: 'mute' }) }),
       Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, inst, { t: 'help' }) }),
     ]
-    // --- search (only while the office shows more than SEARCH_FROM agents, or a search is active — in the props or typed): the
+    // --- search (only while the office holds more than SEARCH_FROM agents, or a search is active — in the props or typed): the
     //     typed text is the module's; the post waits SEARCH_DEBOUNCE_MS, except the first keystroke of a search, posted at once
     //     (under ONE_LINE_FROM the hooks size the chrome by `props.search`: the field's own line must reach them with the text).
     //     The placeholder: the words when the field holds them by FIT, else the first word, else that word cut (never wider than

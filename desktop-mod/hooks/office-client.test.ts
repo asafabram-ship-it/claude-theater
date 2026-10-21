@@ -10,7 +10,7 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, searchShown, shownAgents, windowOf } from './office-chrome'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, officeAgents, searchShown, windowOf } from './office-chrome'
 import * as OfficeClient from './office-client'
 import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
@@ -32,20 +32,27 @@ function room(id: string, agents: OfficeAgent[], over: Partial<OfficeRoom> = {})
   const n = (s: OfficeAgent['status']) => agents.filter(a => a.status === s).length
   return { id, title: `room ${id}`, small: id, pinned: false, showDone: false, run: n('running'), stale: n('stale'), done: n('done'), agents, moreDone: 0, moreLabel: '', ...over }
 }
+/** The header counts of `rooms` (the office's agents: what the search field is decided by — office-chrome.ts officeAgents). */
+function countsOf(rooms: readonly OfficeRoom[]): OfficeProps['counts'] {
+  const all = rooms.flatMap(r => r.agents)
+  return { run: all.filter(a => a.status === 'running').length, idle: all.filter(a => a.status === 'stale').length, done: all.filter(a => a.status === 'done').length }
+}
+/** The props of a test (the header counts those of its rooms unless given). */
 function props(over: Partial<OfficeProps> = {}): OfficeProps {
+  const rooms = over.rooms ?? [room('A', [ag('lead', { emoji: '💼', act: '🧠 חושב' }), ag('a1')])]
   return {
     v: 1, lang: 'he', rtl: true, columns: 45, rows: 30, offset: 0, nowMin: 100,
-    counts: { run: 2, idle: 0, done: 0 }, prefs: { showDone: false, muted: true, still: false },
+    counts: countsOf(rooms), prefs: { showDone: false, muted: true, still: false },
     search: '', selected: null, helpOpen: false, demo: false,
-    rooms: [room('A', [ag('lead', { emoji: '💼', act: '🧠 חושב' }), ag('a1')])],
-    drawer: null, footer: '', oversized: '', usage: null, empty: null, labels: LABELS, ...over,
+    rooms, drawer: null, footer: '', oversized: '', usage: null, empty: null, labels: LABELS, ...over,
   }
 }
 function drawer(over: Partial<OfficeDrawer> = {}): OfficeDrawer {
   return { id: 'lead', name: '💼 המנהל', model: 'Opus 5.5', act: '🧠 חושב', task: 'map the docs', result: '', truncated: false, elapsedMin: 3, sub: 'map the docs', status: 'running', failed: false, longRunning: false, star: 0, type: 'Explore', ...over }
 }
 function withAgents(p: OfficeProps, agents: OfficeAgent[]): OfficeProps {
-  return { ...p, rooms: [room('A', agents)] }
+  const rooms = [room('A', agents)]
+  return { ...p, rooms, counts: countsOf(rooms) }
 }
 /** More agents than SEARCH_FROM in one room: the office that draws the search field. */
 const many = (n = SEARCH_FROM + 1) => Array.from({ length: n }, (_, i) => ag(`m${i}`))
@@ -290,28 +297,30 @@ test('cleanAgentText: agent text as every surface takes it — an escape sequenc
 test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe round 8): the chrome is four rows — the header and the toolbar with their blank lines — and six with the search on a line of its own, drawn only while the office shows more than SEARCH_FROM agents or a search is active; from ONE_LINE_FROM the search shares the toolbar\'s line (four rows); then the settings popover | the drawer card (its frame, its lines, the gap under it), the footer line, the empty block', () => {
   expect([CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, SEARCH_FROM]).toEqual([4, 6, 12])
   const p = props({ columns: pane(45) })   // (a 45-cell reading column: the drawer's 30 inner cells below)
-  expect(shownAgents(p)).toBe(2)
+  expect(officeAgents(p)).toBe(2)
   expect(searchShown(p)).toBe(false)
   expect(fixedRows(p)).toBe(CHROME_ROWS_MIN)
   expect(chromeRows(p)).toBe(CHROME_ROWS_MIN)
   // twelve shown: no field; thirteen: the field (under ONE_LINE_FROM on its own line with a blank over it; from it on the toolbar's)
   const twelve = withAgents(p, many(SEARCH_FROM))
   const thirteen = withAgents(p, many())
-  expect(shownAgents(twelve)).toBe(SEARCH_FROM)
+  expect(officeAgents(twelve)).toBe(SEARCH_FROM)
   expect(searchShown(twelve)).toBe(false)
   expect(searchShown(thirteen)).toBe(true)
   expect(fixedRows(thirteen)).toBe(CHROME_ROWS_SEARCH)
   expect(fixedRows({ ...thirteen, columns: pane(ONE_LINE_FROM - 1) })).toBe(CHROME_ROWS_SEARCH)
   expect(fixedRows({ ...thirteen, columns: pane(ONE_LINE_FROM) })).toBe(CHROME_ROWS_MIN)
   expect(fixedRows({ ...thirteen, columns: 200 })).toBe(CHROME_ROWS_MIN)
-  // the agents counted are the ones drawn, across the rooms (the held-back finished and the ones over the props cap are not among them)
-  expect(shownAgents({ ...p, rooms: [room('A', many(7)), room('B', many(6))] })).toBe(13)
-  expect(searchShown({ ...p, rooms: [room('A', many(7)), room('B', many(6))] })).toBe(true)
-  expect(searchShown({ ...p, rooms: [room('A', many(7), { moreDone: 30, moreLabel: 'עוד 30 שסיימו' })] })).toBe(false)
+  // the agents counted are the OFFICE's (its header counts: working, waiting, finished), never the rows drawn — live check 7, Q1:
+  // a room holding its finished back draws fewer rows, the field stays; the rows drawn alone decide nothing
+  expect(officeAgents({ counts: { run: 7, idle: 1, done: 5 } })).toBe(13)
+  expect(searchShown({ ...p, counts: { run: 7, idle: 1, done: 5 } })).toBe(true)
+  expect(searchShown(props({ rooms: [room('A', many(7), { moreDone: 30, moreLabel: 'עוד 30 שסיימו' })], counts: { run: 7, idle: 0, done: 30 } }))).toBe(true)
+  expect(searchShown(props({ rooms: [room('A', many(20))], counts: { run: 12, idle: 0, done: 0 } }))).toBe(false)
   // an active search keeps the field whatever the count (its text would otherwise be lost with the field)
   expect(searchShown({ ...p, search: 'x' })).toBe(true)
   expect(fixedRows({ ...p, search: 'x' })).toBe(CHROME_ROWS_SEARCH)
-  expect(searchShown({ ...p, rooms: [], search: 'zzz' })).toBe(true)
+  expect(searchShown(props({ rooms: [], search: 'zzz' }))).toBe(true)
   // ...and text typed into the field and not yet posted counts as one (the module's `typed`; the hooks pass none)
   expect(searchShown(twelve, 'r')).toBe(true)
   expect(fixedRows(twelve, 'r')).toBe(CHROME_ROWS_SEARCH)
@@ -673,8 +682,8 @@ test('THE DEMO LINE (live check 5): while the demo runs, the first line under th
   expect(chromeOf(tree)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
   expect(chromeRows(p)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
   expect(chromeRows({ ...p, demo: false })).toBe(CHROME_ROWS_MIN)
-  expect(fixedRows({ ...p, rooms: [room('A', many())] })).toBe(CHROME_ROWS_SEARCH + DEMO_ROWS)
-  expect(fixedRows({ ...p, rooms: [room('A', many())], columns: pane(ONE_LINE_FROM) })).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
+  expect(fixedRows(withAgents(p, many()))).toBe(CHROME_ROWS_SEARCH + DEMO_ROWS)
+  expect(fixedRows({ ...withAgents(p, many()), columns: pane(ONE_LINE_FROM) })).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
   expect(officeHeight(p, rowCount(p))).toBe(officeHeight({ ...p, demo: false }, rowCount(p)) + DEMO_ROWS)
   // the hits stay exact: a click on each row's line opens that row (the line map under the taller chrome)
   const C = chromeRows(p)
@@ -1609,23 +1618,27 @@ test('header: one bold Text of the counts in words (`🎭 עובדים 2 · סי
   expect(header(120, { counts: { run: 2, idle: 3, done: 12 } })[0]).toBe('🎭 עובדים 2 · ממתינים 3 · סיימו 12')
   expect(header(120, { counts: { run: 2, idle: 3, done: 12 }, lang: 'en', labels: LABELS_EN, rtl: false })[0]).toBe('🎭 2 working · 3 idle · 12 finished')
   expect(header(24, { counts: { run: 2, idle: 3, done: 12 } })[0]).toBe('🎭 🟢2 ⏳3 ✅12')
-  // THE PROBE'S OFFICE (counts 7/1/5, usage 6%; eleven shown: no search line) dragged from 52 to 24 — the meter whole at every
-  // width from 25: `⏳ 5h 6%` beside the words from 51 (33 + 1 + 8 = 42 = L(51)), beside the icons `🎭 🟢7 ⏳1 ✅5` from 28 to 50
-  // (14 + 1 + 8 = 23 = L(28)), `⏳ 6%` at 25..27 (20 = L(25)), none at 24 (L 19)
+  // THE PROBE'S OFFICE (its counts' widths — 6/1/5 here: twelve in the office, no search line, decided by the office's agents
+  // since live check 7 — usage 6%) dragged from 52 to 24 — the meter whole at every width from 25: `⏳ 5h 6%` beside the words
+  // from 51 (33 + 1 + 8 = 42 = L(51)), beside the icons `🎭 🟢6 ⏳1 ✅5` from 28 to 50 (14 + 1 + 8 = 23 = L(28)), `⏳ 6%` at 25..27
+  // (20 = L(25)), none at 24 (L 19)
   const probe = { counts: { run: 7, idle: 1, done: 5 }, usage: { pct: 6, resetsAt: '' } }
   const probeWords = '🎭 עובדים 7 · ממתינים 1 · סיימו 5'
   const probeIcons = '🎭 🟢7 ⏳1 ✅5'
   expect([textWidth(probeWords), textWidth(probeIcons)]).toEqual([33, 14])
+  const twelveIn = { ...probe, counts: { run: 6, idle: 1, done: 5 } }
+  const twelveWords = probeWords.replace('7', '6')
+  const twelveIcons = probeIcons.replace('7', '6')
   for (let columns = 24; columns <= 52; columns++) {
     const at = `probe ${columns}`
-    const [c, m, s] = header(columns, probe)
+    const [c, m, s] = header(columns, twelveIn)
     expect(s, at).toBe('')
-    if (columns >= 51) expect([c, m], at).toEqual([probeWords, '⏳ 5h 6%'])
-    else if (columns >= 28) expect([c, m], at).toEqual([probeIcons, '⏳ 5h 6%'])
-    else if (columns >= 25) expect([c, m], at).toEqual([probeIcons, '⏳ 6%'])
-    else expect([c, m], at).toEqual([probeIcons, ''])
+    if (columns >= 51) expect([c, m], at).toEqual([twelveWords, '⏳ 5h 6%'])
+    else if (columns >= 28) expect([c, m], at).toEqual([twelveIcons, '⏳ 5h 6%'])
+    else if (columns >= 25) expect([c, m], at).toEqual([twelveIcons, '⏳ 6%'])
+    else expect([c, m], at).toEqual([twelveIcons, ''])
   }
-  // with the search line (thirteen shown, under ONE_LINE_FROM) the probe's own: the words stay and the short meter rides the
+  // with the search line (the probe's own thirteen in the office, under ONE_LINE_FROM): the words stay and the short meter rides the
   // search line's far edge where the header has no room for it beside them (40..50: 15 + 2 + 8 = 25 ≤ L); under 40 the words
   // no longer fit alone, so the icons take the short meter in the header as above
   const probeMany = { ...probe, rooms: [room('A', many())] }
@@ -1666,19 +1679,21 @@ test('header: one bold Text of the counts in words (`🎭 עובדים 2 · סי
         for (let columns = 24; columns <= 200; columns++) {
           const at = `${JSON.stringify(counts)}, ${reading.pct}%, ${columns} columns${field ? ', the field' : ''}`
           const L = geometry(pane(columns)).L   // (the line is the reading column's: 100 cells at most)
-          const [c, m, s] = header(columns, { counts, usage: reading, ...(field ? { rooms: [room('A', many())] } : {}) })
+          const [c, m, s] = header(columns, { counts, usage: reading, ...(field ? { search: 'x' } : {}) })
+          // (the field: a search active, or the office's agents — its counts — more than SEARCH_FROM: live check 7, Q1)
+          const hasField = field || counts.run + counts.idle + counts.done > SEARCH_FROM
           expect(c, at).not.toMatch(REFUSED_RE)
           expect([wordsOf, iconsOf], at).toContain(c)
           expect(['', tinyOf, shortOf, fullOf], at).toContain(m)
           expect(['', shortOf], at).toContain(s)
           expect(m === '' || s === '', at).toBe(true)
           if (m) expect(textWidth(c) + 1 + textWidth(m), at).toBeLessThanOrEqual(L)
-          if (s) { expect(field && columns < ONE_LINE_FROM, at).toBe(true); expect(textWidth(c), at).toBeLessThanOrEqual(L) }
+          if (s) { expect(hasField && columns < ONE_LINE_FROM, at).toBe(true); expect(textWidth(c), at).toBeLessThanOrEqual(L) }
           if (m === fullOf) expect(columns, `${at}: the bar`).toBeGreaterThanOrEqual(WIDE_FROM)
           if (c === wordsOf) expect(textWidth(c), at).toBeLessThanOrEqual(L)
           const w = (meter: string) => textWidth(wordsOf) + 1 + textWidth(meter) <= L
           const i = (meter: string) => textWidth(iconsOf) + 1 + textWidth(meter) <= L
-          const line = field && columns < ONE_LINE_FROM && PH + 2 + textWidth(shortOf) <= L
+          const line = hasField && columns < ONE_LINE_FROM && PH + 2 + textWidth(shortOf) <= L
           const expected =
             columns >= WIDE_FROM && w(fullOf) ? [wordsOf, fullOf, '']
             : w(shortOf) ? [wordsOf, shortOf, '']
@@ -2046,11 +2061,12 @@ test('the toolbar and the search (probe round 8): under ONE_LINE_FROM the toolba
   const t45 = Office({ ...p, columns: pane(45) }, fake(pane(45)).surface)
   expect(texts(byKey(t45, 'header'))).toContain(usageShort(u))
   expect((byKey(t45, 'searchLine')!.children as Node[]).map(n => n.type)).toEqual(['Box'])
-  // no field (an office of two): the toolbar alone with its blank line as a margin; the meter's last step, the tiny form, in the header (24 + 1 + 6 ≤ 33)
-  const t40b = Office(props({ columns: pane(40), counts: crowded, usage: u }), fake(pane(40)).surface)
+  // no field (an office of two — the field is the office's agents' to decide, never its header's width): the toolbar alone with
+  // its blank line as a margin, the short meter in the header beside the icons (the tiny form is the probe ladder's, above)
+  const t40b = Office(props({ columns: pane(40), usage: u }), fake(pane(40)).surface)
   expect(kidsOf(t40b).map(n => n.props.key ?? n.props.borderStyle)).toEqual(['header', 'toolbar', 'round'])
   expect(byKey(t40b, 'toolbar')!.props.marginBottom).toBe(1)
-  expect(texts(byKey(t40b, 'header'))).toContain(usageTiny(u))
+  expect(texts(byKey(t40b, 'header'))).toContain(usageShort(u))
   expect(chromeOf(t40b)).toBe(CHROME_ROWS_MIN)
   // from ONE_LINE_FROM: one line — the Buttons Box (gap 2, rigid) and the field Box (inputWidth cells, rigid), space-between; the chrome four rows
   const words = ['הצג שסיימו ☐', 'צליל 🔕', 'הגדרות ⚙️']

@@ -91,10 +91,15 @@ export type OfficeProps = {
   labels: Record<string, string>                            // the i18n strings the module draws (toolbar, help rows, drawer headings)
 }
 
+/** One action of the office (what a click, a key or the search does). */
 export type OfficeMessage =
   | { t: 'open'; id: string } | { t: 'close' } | { t: 'pin'; room: string } | { t: 'roomDone'; room: string }
   | { t: 'showDone' } | { t: 'mute' } | { t: 'lang' } | { t: 'help' } | { t: 'demo' } | { t: 'still' }
   | { t: 'search'; q: string } | { t: 'content'; rows: number } | { t: 'pull'; seq: number }
+/** An action as THE OUTBOX numbers it (office-client.tsx: each number is applied once per instance). */
+export type OfficeItem = OfficeMessage & { n: number }
+/** What the module posts (live check 7, R12): its id and the outbox's actions — a later post in the same frame carries the earlier ones. */
+export type OfficeBatch = { t: 'batch'; i: string; items: OfficeItem[] }
 
 /** What the builder reads: the office's state at `now` (ms), and the pane's geometry. */
 export type OfficePropsInput = {

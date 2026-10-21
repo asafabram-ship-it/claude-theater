@@ -658,11 +658,20 @@ async function officeOrder($: EngineInterface): Promise<Agent[]> {
   return officeView(office.agents, view.search, prefs.lang, prefs.showDone, roomDone, prefs.pins).order
 }
 
+/** The outbox's last number applied, and whose (the posting instance's id): module memory (THE OUTBOX). */
+let appliedBatch = { i: '', n: 0 }
+/** The most actions of one post read (the module's outbox holds OUTBOX_MAX). */
+const BATCH_MAX = 16
+
 /**
  * THE OFFICE'S POSTS (desktop): `e.data` of a `ui.message` from the office
  * Client (office-client.tsx, OfficeMessage) — code's data, validated here,
  * never trusted — applied as the text cards' press of the same name does,
- * through the shared transitions above, ONE atom per message:
+ * through the shared transitions above, ONE atom per action. A post is a BATCH
+ * (live check 7, R12: one post per frame, a later one replacing an undelivered
+ * one) — `{ t: 'batch', i, items }`, the module's outbox: each item numbered
+ * once per instance `i`, applied in order and only once (a later post carries
+ * the earlier actions too); an old single action is still applied as one:
  *   showDone / mute / still / pin {room} → prefs (+ the $.store mirror)
  *   lang → prefs (+ mirror) and the pane retitled (setLang)
  *   help / close / open {id} / search {q} / demo → view (search: cleaned and
@@ -677,6 +686,23 @@ async function officeOrder($: EngineInterface): Promise<Agent[]> {
  * non-object.
  */
 async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<void> {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return
+  const b = data as { t?: unknown; i?: unknown; items?: unknown }
+  if (b.t !== 'batch') return applyOfficeAction($, data)
+  // THE OUTBOX (office-client.tsx, live check 7 R12): the frame's actions, each numbered once per instance — a number this
+  // instance already sent is skipped (a later post carries the earlier actions too); at most BATCH_MAX are read
+  if (typeof b.i !== 'string' || !Array.isArray(b.items)) return
+  const fresh = (b.items as unknown[]).slice(-BATCH_MAX).filter((it): it is { n: number } =>
+    it !== null && typeof it === 'object' && typeof (it as { n?: unknown }).n === 'number' && (b.i !== appliedBatch.i || (it as { n: number }).n > appliedBatch.n))
+  for (const it of fresh) {
+    appliedBatch = { i: b.i, n: it.n }
+    await applyOfficeAction($, it)
+  }
+}
+
+
+/** One action of the office (an item of a batch, or an old single post). */
+async function applyOfficeAction($: EngineInterface, data: unknown): Promise<void> {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) return
   const m = data as { t?: unknown; id?: unknown; room?: unknown; q?: unknown }
   switch (m.t) {

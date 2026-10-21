@@ -12,7 +12,7 @@ import { expect, test } from 'claude-code/testing'
 import { I18N, hebrewRuleOk } from './i18n'
 import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, searchShown, shownAgents, windowOf } from './office-chrome'
 import * as OfficeClient from './office-client'
-import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
+import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
 import { CARD_BORDER, CENTRE_AT, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, PIN, TASK_UNITS, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth } from './office-layout'
 import type { Hit } from './office-layout'
@@ -51,9 +51,14 @@ function withAgents(p: OfficeProps, agents: OfficeAgent[]): OfficeProps {
 const many = (n = SEARCH_FROM + 1) => Array.from({ length: n }, (_, i) => ag(`m${i}`))
 
 // --- a fake surface: the module's second argument, with every call recorded ---
+// (`posts` are the ACTIONS the hooks apply: every post is a batch of the frame's outbox — THE OUTBOX, office-client.tsx — and
+// the fake applies each numbered item once per instance, as ui.tsx applyOfficeMessage does; `raw` the posts as sent; `debounces`
+// the search's debounce clocks among `timers`)
 type Fake = {
   surface: ClientSurface<OfficeState>
   posts: OfficeMessage[]
+  raw: unknown[]
+  debounces: () => Array<{ ms: number; fn: () => void; stopped: boolean }>
   timers: Array<{ ms: number; fn: () => void; stopped: boolean }>
   setStates: () => number
   pointer: (e: ClientPointerEvent) => void
@@ -63,6 +68,8 @@ type Fake = {
 }
 function fake(columns = 45, rows = 0): Fake {
   const posts: OfficeMessage[] = []
+  const raw: unknown[] = []
+  const applied = new Map<string, number>()
   const timers: Fake['timers'] = []
   let onPointer: ((e: ClientPointerEvent) => void) | undefined
   let onKey: ((e: ClientKeyEvent) => void) | undefined
@@ -79,10 +86,20 @@ function fake(columns = 45, rows = 0): Fake {
     every(ms: number, fn: () => void) { const t = { ms, fn, stopped: false }; timers.push(t); return () => { t.stopped = true } },
     onPointer(fn: (e: ClientPointerEvent) => void) { onPointer = fn; return () => { onPointer = undefined } },
     onKey(fn: (e: ClientKeyEvent) => void) { onKey = fn; return () => { onKey = undefined } },
-    post(d: unknown) { posts.push(d as OfficeMessage) },
+    post(d: unknown) {
+      raw.push(d)
+      const b = d as { t?: string; i?: string; items?: Array<OfficeMessage & { n: number }> }
+      if (b.t !== 'batch') { posts.push(d as OfficeMessage); return }
+      for (const { n, ...m } of b.items ?? []) {
+        if (n <= (applied.get(b.i ?? '') ?? 0)) continue
+        applied.set(b.i ?? '', n)
+        posts.push(m as OfficeMessage)
+      }
+    },
   }
   return {
-    surface: surface as unknown as ClientSurface<OfficeState>, posts, timers,
+    surface: surface as unknown as ClientSurface<OfficeState>, posts, raw, timers,
+    debounces: () => timers.filter(t => t.ms === SEARCH_DEBOUNCE_MS),
     setStates: () => sets,
     pointer: e => onPointer?.(e), key: e => onKey?.(e),
     tick: () => { for (const t of [...timers]) if (!t.stopped) t.fn() },
@@ -529,6 +546,37 @@ test('render: equal props draw with no setState and no timer; a redraw with the 
   expect(f.setStates()).toBe(1)
   expect(f.timers).toHaveLength(0)
   expect(f.posts).toHaveLength(0)
+})
+
+test('THE OUTBOX (live check 7, R12: one post per frame, a later one replacing an undelivered one): every post is a batch — the instance id and its actions not yet cleared, each numbered once — so a second action in the same frame carries the first; a one-shot clock clears the outbox on the next frame (the next post carries its own action alone); the outbox never holds more than OUTBOX_MAX', () => {
+  const f = fake()
+  const tree = Office(props(), f.surface)
+  const press = (key: string) => (byKey(tree, key, 'Button')!.props.onPress as () => void)()
+  press('showDone')
+  press('mute')
+  expect(f.raw).toHaveLength(2)
+  const [first, second] = f.raw as Array<{ t: string; i: string; items: Array<{ t: string; n: number }> }>
+  expect(first).toEqual({ t: 'batch', i: f.surface.state!.inst.id, items: [{ t: 'showDone', n: 1 }] })
+  expect(second).toEqual({ t: 'batch', i: first!.i, items: [{ t: 'showDone', n: 1 }, { t: 'mute', n: 2 }] })
+  expect(first!.i).toMatch(/^[a-z0-9]+$/)
+  expect(f.posts).toEqual([{ t: 'showDone' }, { t: 'mute' }])   // each action applied once
+  // ONE clock clears it on the next frame (a frame tick of OUTBOX_FLUSH_MS), stopped once it ran
+  const flush = f.timers.filter(t => t.ms === OUTBOX_FLUSH_MS)
+  expect(flush).toHaveLength(1)
+  f.tick()
+  expect(flush[0]!.stopped).toBe(true)
+  press('help')
+  expect(f.raw.at(-1)).toEqual({ t: 'batch', i: first!.i, items: [{ t: 'help', n: 3 }] })
+  expect(f.posts).toEqual([{ t: 'showDone' }, { t: 'mute' }, { t: 'help' }])
+  // a burst inside one frame keeps the last OUTBOX_MAX actions
+  for (let i = 0; i < OUTBOX_MAX + 3; i++) press('mute')
+  expect((f.raw.at(-1) as { items: unknown[] }).items).toHaveLength(OUTBOX_MAX)
+  expect(f.posts).toHaveLength(3 + OUTBOX_MAX + 3)
+  // another instance numbers its own actions under its own id
+  const g = fake()
+  const t2 = Office(props(), g.surface)
+  ;(byKey(t2, 'mute', 'Button')!.props.onPress as () => void)()
+  expect((g.raw[0] as { i: string }).i).not.toBe(first!.i)
 })
 
 test('THE FINISH IS THE ⭐ ALONE (live check 6: the row\'s tint flashed a near-black band on the light theme): a new ⭐ stamp marks the finisher\'s status column and nothing else — no cell tinted, no clock started, no redraw of the module\'s own; the first props, a status change, a newcomer and `still` alike; the module exports no tint', () => {
@@ -1085,19 +1133,19 @@ test('search: the Input draws the typed text (not props.search) across props upd
   const onInput = input().props.onInput as (v: string) => void
   onInput('a')
   expect(f.posts).toEqual([{ t: 'search', q: 'a' }])   // the first keystroke of a search posts at once (under ONE_LINE_FROM the hooks size the chrome by it)
-  expect(f.timers).toHaveLength(0)
+  expect(f.debounces()).toHaveLength(0)
   onInput('ab')
   onInput('abc')
   expect(f.posts).toHaveLength(1)
-  expect(f.timers).toHaveLength(2)                 // one debounce clock per further keystroke, the earlier one stopped
-  expect(f.timers[0]!.stopped).toBe(true)
-  expect(f.timers[1]!.ms).toBe(SEARCH_DEBOUNCE_MS)
+  expect(f.debounces()).toHaveLength(2)            // one debounce clock per further keystroke, the earlier one stopped
+  expect(f.debounces()[0]!.stopped).toBe(true)
+  expect(f.debounces()[1]!.ms).toBe(SEARCH_DEBOUNCE_MS)
   // a publish lands between keystrokes with the old search: the field keeps 'abc'
   tree = Office({ ...p, nowMin: p.nowMin + 1 }, f.surface)
   expect(input().props.value).toBe('abc')
   f.tick()
   expect(f.posts).toEqual([{ t: 'search', q: 'a' }, { t: 'search', q: 'abc' }])
-  expect(f.timers[1]!.stopped).toBe(true)
+  expect(f.debounces()[1]!.stopped).toBe(true)
   // the echo of our own post keeps the field; so does an echo of an older post while typing went on
   tree = Office({ ...p, search: 'abc' }, f.surface)
   expect(input().props.value).toBe('abc')
@@ -1109,7 +1157,7 @@ test('search: the Input draws the typed text (not props.search) across props upd
   // Enter posts at once (no debounce left running)
   ;(input().props.onSubmit as (v: string) => void)('abcde')
   expect(f.posts[3]).toEqual({ t: 'search', q: 'abcde' })
-  expect(f.timers.every(t => t.stopped)).toBe(true)
+  expect(f.debounces().every(t => t.stopped)).toBe(true)
   // an outside change (the hooks cleared the search) is adopted
   tree = Office({ ...p, search: 'abcde' }, f.surface)
   tree = Office({ ...p, search: '' }, f.surface)

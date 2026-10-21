@@ -87,7 +87,9 @@
 // `o` opens the focus only while its row is among them.
 //
 // Discipline (spec §7.3-7.4, Phase 0): no clock runs but the search's debounce
-// (`surface.every`, a one-shot); the render never calls `setState` (the one
+// and THE OUTBOX's clearing (`surface.every`, one-shots started from events:
+// every post is a batch of the frame's actions, each numbered once — live check
+// 7, R12); the render never calls `setState` (the one
 // init aside) — what must survive between renders without a redraw lives in
 // `state.inst`, a record mutated in place (the model, the mode's rank, the
 // search text); `setState` is called only from events (a pointer, a key). The
@@ -117,10 +119,19 @@ import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch
 import type { DrawerLine } from './office-chrome'
 import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
-import type { OfficeMessage, OfficeProps } from './office-props'
+import type { OfficeBatch, OfficeItem, OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
 
 export const SEARCH_DEBOUNCE_MS = 150
+/**
+ * THE OUTBOX (live check 7, R12): the engine delivers one post per frame — a later post in the same frame replaces an
+ * undelivered one, so two clicks a few ms apart (or a click and the search's debounce) lost the first. Every post is
+ * therefore a batch, `{ t: 'batch', i, items }`: the instance's id and the actions of the outbox, each numbered once, so a
+ * later post carries the earlier actions too and the hooks apply each number once (ui.tsx applyOfficeMessage). A one-shot
+ * clock clears the outbox on the next frame (OUTBOX_FLUSH_MS); it never holds more than OUTBOX_MAX actions.
+ */
+export const OUTBOX_FLUSH_MS = 1
+export const OUTBOX_MAX = 8
 /** The toolbar's gap between its Buttons (the probe's). */
 export const TOOLBAR_GAP = 2
 /** The search field on the toolbar's line (from ONE_LINE_FROM): its width in cells, between these, after the toolbar's cells. */
@@ -165,14 +176,31 @@ export type OfficeInst = {
   propsSearch: string
   posted: string | null
   debounce: (() => void) | null
+  /** THE OUTBOX: this instance's id (the hooks number its actions apart from another instance's), the last number given, the actions not yet cleared, the clock that clears them. */
+  id: string
+  seq: number
+  outbox: OfficeItem[]
+  flush: (() => void) | null
 }
 /** The local state: what a redraw reads (`setState` only from events). `hoverRoom` is the room whose title line is under the pointer. */
 export type OfficeState = { hoverRoom: string | null; focus: string | null; inst: OfficeInst }
 
 type Surface = ClientSurface<OfficeState>
 
-function send(surface: Surface, m: OfficeMessage): void {
-  surface.post(m)
+/** Posts `m` through THE OUTBOX: numbered, added to the frame's actions, the whole outbox posted (a later post in the same frame carries this one); the outbox cleared on the next frame. */
+function send(surface: Surface, inst: OfficeInst, m: OfficeMessage): void {
+  inst.seq += 1
+  inst.outbox.push({ ...m, n: inst.seq })
+  if (inst.outbox.length > OUTBOX_MAX) inst.outbox.splice(0, inst.outbox.length - OUTBOX_MAX)
+  const batch: OfficeBatch = { t: 'batch', i: inst.id, items: [...inst.outbox] }
+  surface.post(batch)
+  if (inst.flush) return
+  const stop = surface.every(OUTBOX_FLUSH_MS, () => {
+    stop()
+    inst.flush = null
+    inst.outbox = []
+  })
+  inst.flush = stop
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +238,7 @@ function newInst(p: OfficeProps): OfficeInst {
     props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null }, lastMode: null,
     rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
     query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
+    id: Math.random().toString(36).slice(2, 10) || 'office', seq: 0, outbox: [], flush: null,
   }
   setModel(inst, p, NO_DECOR)
   return inst
@@ -229,7 +258,7 @@ function queueSearch(surface: Surface, inst: OfficeInst, q: string, now: boolean
 
 function postSearch(surface: Surface, inst: OfficeInst, q: string): void {
   inst.posted = q
-  send(surface, { t: 'search', q })
+  send(surface, inst, { t: 'search', q })
 }
 
 function listen(surface: Surface): void {
@@ -252,13 +281,13 @@ function listen(surface: Surface): void {
         if (ev.button !== 'left' || !hit) return
         if (hit.kind === 'agent') {
           if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
-          send(surface, { t: 'open', id: hit.id })
+          send(surface, inst, { t: 'open', id: hit.id })
         } else if (hit.kind === 'pin') {
           // the click reorders the rooms (the pinned first): the head hover goes with it, so a dim 📌 cannot ride the room to its
           // new card — the next move sets it on whatever head is then under the pointer
           if (cur.hoverRoom !== null) surface.setState({ ...cur, hoverRoom: null })
-          send(surface, { t: 'pin', room: hit.id })
-        } else send(surface, { t: 'roomDone', room: hit.id })   // the title's ✅ counts and the "more / hide finished" line: the room's toggle
+          send(surface, inst, { t: 'pin', room: hit.id })
+        } else send(surface, inst, { t: 'roomDone', room: hit.id })   // the title's ✅ counts and the "more / hide finished" line: the room's toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
         // the unpinned room whose title line is under the pointer (its dim 📌): one setState when it changes; a pointer in a
         // centring margin (off the column's cells, as for a click) hovers nothing
@@ -296,10 +325,10 @@ function listen(surface: Surface): void {
       } else if (k === 'o' || k === 'return') {
         // only a focus whose row is drawn (in the window): one scrolled away would open a drawer for a row the person cannot see
         const y = cur.focus ? inst.rowAt.get(cur.focus) : undefined
-        if (cur.focus && y !== undefined && y >= inst.win.from && y < inst.win.from + inst.win.count) send(surface, { t: 'open', id: cur.focus })
+        if (cur.focus && y !== undefined && y >= inst.win.from && y < inst.win.from + inst.win.count) send(surface, inst, { t: 'open', id: cur.focus })
       } else {
         const m = KEY_MESSAGES[k]
-        if (m) send(surface, m)
+        if (m) send(surface, inst, m)
       }
     } catch {
       // see above
@@ -432,7 +461,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const d = demoLine(props)
       kids.push(Box({ key: 'demoLine', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
         Text({ color: DEMO_FG, children: [nb(d.note)] }),
-        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => send(surface, { t: 'demo' }) }),
+        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => send(surface, inst, { t: 'demo' }) }),
       ] }))
     }
 
@@ -444,9 +473,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const worded = icons.map((icon, i) => iconLabel(icon, lbl(['tbDone', 'tbSound', 'tbSettings'][i]!), rtl))
     const tb = labelsFit(worded, geo.W, TOOLBAR_GAP) ? worded : icons
     const buttons = [
-      Button({ key: 'showDone', ...hk('f'), plain: true, label: tb[0]!, onPress: () => send(surface, { t: 'showDone' }) }),
-      Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, { t: 'mute' }) }),
-      Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, { t: 'help' }) }),
+      Button({ key: 'showDone', ...hk('f'), plain: true, label: tb[0]!, onPress: () => send(surface, inst, { t: 'showDone' }) }),
+      Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, inst, { t: 'mute' }) }),
+      Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, inst, { t: 'help' }) }),
     ]
     // --- search (only while the office shows more than SEARCH_FROM agents, or a search is active — in the props or typed): the
     //     typed text is the module's; the post waits SEARCH_DEBOUNCE_MS, except the first keystroke of a search, posted at once
@@ -515,11 +544,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, children: rows.map(([, keys]) => Text({ dimColor: true, children: [nb(keys)] })) }),
       ] })
       overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, height: helpH, marginBottom: OVERLAY_GAP, width: '100%', overflow: 'hidden', children: [
-        line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 3))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, { t: 'help' }) })], { justifyContent: 'space-between', width: '100%' }),
+        line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 3))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, inst, { t: 'help' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
-          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, { t: 'demo' }) }),
-          Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, { t: 'still' }) }),
-          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, { t: 'lang' }) }),
+          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, inst, { t: 'demo' }) }),
+          Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, inst, { t: 'still' }) }),
+          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, inst, { t: 'lang' }) }),
         ]),
         Box({ flexDirection: row, columnGap: PAIRS_GAP, width: '100%', children: pairs.map(pair) }),
         // THE TOO-LONG CONVERSATIONS NOTE (live check 6): one dim line under the shortcuts, cut to the popover's inner width by
@@ -532,7 +561,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         // the name line: the persona (bold) at the reading edge, the close Button (read ✕ THEN the word: iconLabel) at the other
         if (l.kind === 'name') return line([
           Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: edge, children: [Text({ bold: true, children: [l.text] })] }),
-          Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, { t: 'close' }) }),
+          Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) }),
         ], { justifyContent: 'space-between', width: '100%' })
         // ONE status line: the mark in the status's colour, then the dim text (`עובד · זמן 12 דק׳ · Explore`); then the blank line
         if (l.kind === 'status') return line([Text({ color: l.color, children: [l.mark ?? ''] }), Text({ dimColor: true, children: [l.text] })], { key: `d${i}` })
@@ -557,7 +586,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Text({ children: ['🏢'] }),
         ...e.msg.map(t => Text({ bold: true, children: [t] })),
         ...e.sub.map(t => Text({ dimColor: true, children: [t] })),
-        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, { t: 'demo' }) })] : []),
+        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, inst, { t: 'demo' }) })] : []),
       ] }))
     } else {
       // --- the cards: the settings | drawer, a spacer, then every card the window touches, its rows windowed by line. THE

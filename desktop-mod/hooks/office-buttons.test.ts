@@ -122,3 +122,27 @@ test('Q10 · the demo\'s newcomer walks in as the last of its room\'s working ro
   expect(p3.agents.map(a => a.id).indexOf(NEWCOMER)).toBe(statuses.lastIndexOf('running'))
   expect(roomOf(buildOfficeProps({ payload: p3, prefs: { ...DEFAULT_PREFS }, view: { ...DEFAULT_VIEW, demo: true }, roomDone: {}, offset: 0, columns: COLUMNS, rows: ROWS, now: T0, usage: null }), S1).agents.map(a => a.id)).not.toContain(NEWCOMER)
 })
+
+// ---------------------------------------------------------------------------
+// R12: two posts in one frame — the outbox carries both
+// ---------------------------------------------------------------------------
+
+test('R12 · two presses in one frame both land (one post per frame: the later post carries the earlier action, THE OUTBOX); an action is applied once, however many posts carry it', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  expect([p0.prefs.showDone, p0.prefs.muted]).toEqual([false, false])
+  await Promise.all([ui.press({ key: 'showDone' }), ui.press({ key: 'mute' })])
+  const p1 = await officeProps(ui)
+  expect(p1.prefs.muted, 'mute').toBe(true)
+  expect(p1.prefs.showDone, 'show finished, pressed in the same frame').toBe(true)
+  expect(captured.store.prefs).toMatchObject({ showDone: true, muted: true })
+  // the next act's post (a new frame here: the kit moves no frame clock between acts) carries the earlier actions again —
+  // applied once: the flips stay flipped
+  await ui.press({ key: 'help' })
+  const p2 = await officeProps(ui)
+  expect([p2.prefs.showDone, p2.prefs.muted, p2.helpOpen]).toEqual([true, true, true])
+  // an old single post (no batch) is still applied
+  await ui.post({ t: 'help' }, { in: OFFICE_KEY })
+  expect((await officeProps(ui)).helpOpen).toBe(false)
+  await ui.unmount()
+})

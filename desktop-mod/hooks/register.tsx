@@ -630,7 +630,7 @@ async function takeUsage($: EngineInterface, u: FiveHour | null, first: boolean,
     USAGE.fiveHour = u
     if (!same) {
       try {
-        $.ui.invalidate('ui.render') // (ui.tsx's requestRedraw latch takes a `$`, which may not cross the import; one change is one call)
+        $.ui.invalidate('ui.render') // (one change is one call; the engine folds a burst to its redraw rate)
       } catch {
         // nothing draws the pane now: its next draw reads USAGE
       }

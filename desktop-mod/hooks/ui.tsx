@@ -115,7 +115,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
-import { DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, REDRAW_LATCH_MS, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
+import { DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
 import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
@@ -123,6 +123,7 @@ import { UNKNOWN_MODEL_PILL } from './office-svg'
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
 import { cutWords, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
+import type { OfficeProps } from './office-props'
 import { personaFeminine, personaName } from './personas'
 import { demoPayload } from './scanner'
 import { usageShort } from './usage'
@@ -591,15 +592,16 @@ async function savePrefs($: EngineInterface, fn: (p: Prefs) => Prefs): Promise<P
 }
 
 /** PAGE setLang(): prefs + the pane's title (with the working count, as the poll keeps it). */
-async function setLang($: EngineInterface, lang: Lang): Promise<void> {
-  await savePrefs($, p => ({ ...p, lang }))
+async function setLang($: EngineInterface, lang: Lang): Promise<Prefs> {
+  const saved = await savePrefs($, p => ({ ...p, lang }))
   const payload = await read($, payloadAtom)
   await $.ui.open({ id: PANE_ID, title: paneTitle(lang, workingCount(payload)) }).catch(() => undefined)
+  return saved
 }
 
 /** PAGE setDemo(): toggles the demo (its cast obeys "show finished" as the office does: live check 5). */
-async function setDemo($: EngineInterface, on: boolean): Promise<void> {
-  await update($, viewAtom, v => ({ ...v, demo: on, selected: null, focusIndex: -1 }))
+async function setDemo($: EngineInterface, on: boolean): Promise<View> {
+  return update($, viewAtom, v => ({ ...v, demo: on, selected: null, focusIndex: -1 }))
 }
 
 // ---------------------------------------------------------------------------
@@ -614,49 +616,42 @@ const flipMuted = (p: Prefs): Prefs => ({ ...p, muted: !p.muted })
 const flipStill = (p: Prefs): Prefs => ({ ...p, still: !p.still })
 const flipPin = (room: string) => (p: Prefs): Prefs => ({ ...p, pins: p.pins.includes(room) ? p.pins.filter(x => x !== room) : [...p.pins, room] })
 const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen })
-/** The drawer on `id`; `focusIndex` is the card's place in the text cards' walk (officeView().order). */
+/**
+ * The text cards' focus ON THE SELECTED CARD (live check 7, R2): what an `open` post of the office Client writes as
+ * view.focusIndex — the selection written at once, the card's place in the text cards' walk derived when they draw (the
+ * post no longer reads the office first: four reads before the write).
+ */
+export const FOCUS_ON_SELECTED = -2
+/** The drawer on `id`; `focusIndex` is the card's place in the text cards' walk (officeView().order), or FOCUS_ON_SELECTED. */
 const openedOn = (id: string, focusIndex: number) => (v: View): View => ({ ...v, selected: id, helpOpen: false, focusIndex })
 const drawerClosed = (v: View): View => ({ ...v, selected: null, helpOpen: false })
 /** The search set to `q`, cleaned (office-chrome.ts cleanSearch: SEARCH_MAX code points, the bidi controls removed, every other control character a space — an Input value holding either is refused, the text cards' as the Client's). */
 const searchedFor = (q: string) => (v: View): View => ({ ...v, search: cleanSearch(q), focusIndex: -1 })
 const otherLang = (lang: Lang): Lang => (lang === 'he' ? 'en' : 'he')
 
-/** THE REDRAW LATCH (model.ts REDRAW_LATCH_MS): true while a redraw is scheduled. */
-let redrawPending = false
-
 /**
- * Redraws the pane for a change that is not a $.state write (a room's "show
- * finished" override lives in $.store): one `$.ui.invalidate` REDRAW_LATCH_MS
- * after the first ask, whoever asks meanwhile — a burst of clicks is ONE
- * redraw (on the desktop every redraw of the pane blinks). Never throws.
+ * Redraws the pane for a change that is not a $.state write (a room's "show finished" override lives in $.store): at once
+ * (live check 7, R3 — the redraw latch of 100 ms, once a burst's one redraw, is gone: the engine folds a burst of invalidates
+ * itself, ten redraws a second at most, and the press is drawn by the message's answer anyway). Never throws.
  */
-function requestRedraw($: EngineInterface): void {
-  if (redrawPending) return
+function redraw($: EngineInterface): void {
   try {
-    $.clock.after(REDRAW_LATCH_MS, () => {
-      redrawPending = false
-      try {
-        $.ui.invalidate('ui.render')
-      } catch {
-        // nothing draws the pane
-      }
-    })
-    redrawPending = true
+    $.ui.invalidate('ui.render')
   } catch {
-    // no timer: the next state write redraws it
+    // nothing draws the pane
   }
 }
 
-/** The text cards' walk order, as the render computes it: an `open` post keeps `view.focusIndex` on the opened card for the text fallback. */
-async function officeOrder($: EngineInterface): Promise<Agent[]> {
-  const prefs = await read($, prefsAtom)
-  const payload = await read($, payloadAtom)
-  const view = await read($, viewAtom)
-  const roomDone = await loadRoomDone($)
-  const now = await $.clock.now().catch(() => payload.scanned_ms)
-  const office = effectivePayload(payload, view, now)
-  return officeView(office.agents, view.search, prefs.lang, prefs.showDone, roomDone, prefs.pins).order
-}
+/**
+ * THE LAST FRAME (live check 7, R2): the geometry and the footer of the office Client as the render last drew it — what the
+ * `ui.message` hook builds its `{ props }` answer with (a message carries no geometry). Module memory, set by the desktop
+ * render; null before the first one (then the hook answers `{}` and the redraw draws the press).
+ */
+let officeFrame: { columns: number; rows: number; offset: number; footer: string } | null = null
+
+/** What an office action wrote: the prefs or the view it wrote (the answer is built from them), and whether anything changed. */
+type Applied = { prefs?: Prefs; view?: View; changed: boolean }
+const NOTHING: Applied = { changed: false }
 
 /** The outbox's last number applied, and whose (the posting instance's id): module memory (THE OUTBOX). */
 let appliedBatch = { i: '', n: 0 }
@@ -677,7 +672,8 @@ const BATCH_MAX = 16
  *   help / close / open {id} / search {q} / demo → view (search: cleaned and
  *     capped, cleanSearch; only when it differs, so an echo or a repeated Enter
  *     redraws nothing)
- *   roomDone {room} → the $.store override, the pane redrawn by the latch
+ *   roomDone {room} → the $.store override (the render's copy set at once), the
+ *     pane redrawn at once (no latch: live check 7, R3)
  * Anything else changes nothing: `focus` (no longer posted — j / k move the
  * module's own keyboard focus, and a post per key could displace a click's
  * `open` in the same frame; mirrored into view.focusIndex it would also redraw
@@ -685,74 +681,89 @@ const BATCH_MAX = 16
  * scroll, spec §2 item 11), an unknown `t`, a missing or mistyped field, a
  * non-object.
  */
-async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<void> {
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) return
+async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<Applied> {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return NOTHING
   const b = data as { t?: unknown; i?: unknown; items?: unknown }
   if (b.t !== 'batch') return applyOfficeAction($, data)
   // THE OUTBOX (office-client.tsx, live check 7 R12): the frame's actions, each numbered once per instance — a number this
   // instance already sent is skipped (a later post carries the earlier actions too); at most BATCH_MAX are read
-  if (typeof b.i !== 'string' || !Array.isArray(b.items)) return
+  if (typeof b.i !== 'string' || !Array.isArray(b.items)) return NOTHING
   const fresh = (b.items as unknown[]).slice(-BATCH_MAX).filter((it): it is { n: number } =>
     it !== null && typeof it === 'object' && typeof (it as { n?: unknown }).n === 'number' && (b.i !== appliedBatch.i || (it as { n: number }).n > appliedBatch.n))
+  let all = NOTHING
   for (const it of fresh) {
     appliedBatch = { i: b.i, n: it.n }
-    await applyOfficeAction($, it)
+    const one = await applyOfficeAction($, it)
+    // (what the batch wrote last wins: the answer is built from it)
+    if (one.changed) all = { prefs: one.prefs ?? all.prefs, view: one.view ?? all.view, changed: true }
   }
+  return all
 }
 
 
-/** One action of the office (an item of a batch, or an old single post). */
-async function applyOfficeAction($: EngineInterface, data: unknown): Promise<void> {
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) return
+/** One action of the office (an item of a batch, or an old single post): what it wrote. */
+async function applyOfficeAction($: EngineInterface, data: unknown): Promise<Applied> {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return NOTHING
   const m = data as { t?: unknown; id?: unknown; room?: unknown; q?: unknown }
+  const wrote = (prefs: Prefs): Applied => ({ prefs, changed: true })
+  const shown = (view: View): Applied => ({ view, changed: true })
   switch (m.t) {
     case 'showDone':
-      await savePrefs($, flipShowDone)
-      return
+      return wrote(await savePrefs($, flipShowDone))
     case 'mute':
-      await savePrefs($, flipMuted)
-      return
+      return wrote(await savePrefs($, flipMuted))
     case 'still':
-      await savePrefs($, flipStill)
-      return
+      return wrote(await savePrefs($, flipStill))
     case 'pin':
-      if (typeof m.room === 'string') await savePrefs($, flipPin(m.room))
-      return
+      return typeof m.room === 'string' ? wrote(await savePrefs($, flipPin(m.room))) : NOTHING
     case 'lang':
-      await setLang($, otherLang((await read($, prefsAtom)).lang))
-      return
+      return wrote(await setLang($, otherLang((await read($, prefsAtom)).lang)))
     case 'help':
-      await update($, viewAtom, flipHelp)
-      return
+      return shown(await update($, viewAtom, flipHelp))
     case 'close':
-      await update($, viewAtom, drawerClosed)
-      return
+      return shown(await update($, viewAtom, drawerClosed))
     case 'demo':
-      await setDemo($, !(await read($, viewAtom)).demo)
-      return
-    case 'open': {
-      if (typeof m.id !== 'string') return
-      const id = m.id
-      const order = await officeOrder($)
-      await update($, viewAtom, openedOn(id, order.findIndex(a => a.id === id)))
-      return
-    }
+      return shown(await setDemo($, !(await read($, viewAtom)).demo))
+    case 'open':
+      // the selection written FIRST (R2): the text cards' focus follows it, derived when they draw (FOCUS_ON_SELECTED)
+      return typeof m.id === 'string' ? shown(await update($, viewAtom, openedOn(m.id, FOCUS_ON_SELECTED))) : NOTHING
     case 'search': {
-      if (typeof m.q !== 'string') return
+      if (typeof m.q !== 'string') return NOTHING
       const q = cleanSearch(m.q) // (by code point: never half a surrogate pair; bidi controls removed, other control characters as spaces)
-      if ((await read($, viewAtom)).search !== q) await update($, viewAtom, searchedFor(q))
-      return
+      return (await read($, viewAtom)).search !== q ? shown(await update($, viewAtom, searchedFor(q))) : NOTHING
     }
     case 'roomDone': {
-      if (typeof m.room !== 'string') return
-      const prefs = await read($, prefsAtom)
-      await saveRoomDone($, toggledRoomDone(await loadRoomDone($), prefs.showDone, m.room))
-      requestRedraw($)
-      return
+      if (typeof m.room !== 'string') return NOTHING
+      const [prefs, cur] = await Promise.all([read($, prefsAtom), loadRoomDone($)])
+      // R3: the override the render reads is set at once (rememberRoomDone) and the redraw asked BEFORE the store write is
+      // awaited (the write redraws nothing: the override lives in $.store); the answer carries it (no latch, no wait)
+      const next = toggledRoomDone(cur, prefs.showDone, m.room)
+      rememberRoomDone(next)
+      redraw($)
+      await saveRoomDone($, next)
+      return { prefs, changed: true }
     }
     default:
-      return
+      return NOTHING
   }
+}
+
+/**
+ * THE ANSWER (live check 7, R2): the office Client's next props, built by the render's own buildOfficeProps from the values
+ * the message just wrote (`applied`) and the rest read at once (one round of concurrent reads), at the geometry and the
+ * footer of THE LAST FRAME — so the press is drawn without waiting for the redraw its write causes (the engine folds that
+ * to its redraw rate, behind every other bump of the plugin); the redraw follows with equal props (no second call of the
+ * module) and sizes the Client to the new content (`height` is the render's alone). Null when no frame was drawn yet, or
+ * the office Client is down (the text cards draw).
+ */
+async function officeAnswer($: EngineInterface, applied: Applied): Promise<OfficeProps | null> {
+  const frame = officeFrame
+  if (frame === null || DESKTOP.clientFailed) return null
+  const [prefs, payload, view, roomDone, clock] = await Promise.all([
+    applied.prefs ?? read($, prefsAtom), read($, payloadAtom), applied.view ?? read($, viewAtom), loadRoomDone($), $.clock.now().catch(() => null),
+  ])
+  const now = clock ?? Math.max(clockSeen, payload.scanned_ms)
+  return buildOfficeProps({ payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: frame.footer, columns: frame.columns, rows: frame.rows, offset: frame.offset })
 }
 
 // ---------------------------------------------------------------------------
@@ -762,33 +773,37 @@ async function applyOfficeAction($: EngineInterface, data: unknown): Promise<voi
 /** Adds the pane's render hook and its office Client's message hook. Called once from register(). */
 export function registerUi(on: On): void {
   // The desktop office Client's posts (only this plugin's hooks see them): applied as the text cards' presses
-  // (applyOfficeMessage). Core answers `{}` — the module keeps its local state and gets the new props from the
-  // redraw the write causes; a post never fails the surface.
+  // (applyOfficeMessage), then ANSWERED with the Client's next props (officeAnswer, live check 7 R2: `{ props }` hands the
+  // posting instance its props directly, its local state kept, with no ui.render run) — the write's redraw follows with the
+  // same props and the Client's new height. `{}` when nothing changed or nothing can be built (the redraw draws it); a post
+  // never fails the surface.
   on('ui.message', { element: 'office' }, async ($, e) => { // OFFICE_KEY, as a literal: validate reads a matcher statically
     try {
-      await applyOfficeMessage($, e.data)
+      const applied = await applyOfficeMessage($, e.data)
+      if (!applied.changed) return {}
+      const props = await officeAnswer($, applied)
+      return props ? { props } : {}
     } catch {
       // a bad post, or a write refused: the office stays as it was
+      return {}
     }
-    return {}
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
-    const prefs = await read($, prefsAtom)
-    const payload = await read($, payloadAtom)
-    const view = await read($, viewAtom)
-    const scanError = await read($, scanErrorAtom)
     // the desktop draws the office Client (office-client.tsx); every other surface the text cards
     const desktop = e.surface === 'desktop'
-    // the text surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT
-    // (its rows show minutes, and every redraw of it blinks — the tick must never reach it)
-    if (!desktop) await read($, tickAtom)
-    const roomDone = await loadRoomDone($)
-    // the clock is the engine's; a host without one (a bare test) falls back to the last time the clock answered,
-    // or the scan's own time (never the runtime's wall clock: the hooks keep the engine's one clock)
-    const now = await $.clock.now().then(t => (clockSeen = t)).catch(() => Math.max(clockSeen, payload.scanned_ms))
+    // ONE round of reads (live check 7, R2: they ran one after another, a round trip each, before every draw). The text
+    // surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT (its rows show minutes, and every
+    // redraw of it blinks — the tick must never reach it). The clock is the engine's; a host without one (a bare test) falls
+    // back to the last time the clock answered, or the scan's own time (never the runtime's wall clock: the hooks keep the
+    // engine's one clock)
+    const [prefs, payload, view, scanError, roomDone, clock] = await Promise.all([
+      read($, prefsAtom), read($, payloadAtom), read($, viewAtom), read($, scanErrorAtom), loadRoomDone($),
+      $.clock.now().then(t => (clockSeen = t)).catch(() => null), desktop ? undefined : read($, tickAtom),
+    ])
+    const now = clock ?? Math.max(clockSeen, payload.scanned_ms)
     if (!desktop) textSurfaceDrawnAt = now
     const lang = prefs.lang
     const L: Strings = I18N[lang]
@@ -808,10 +823,8 @@ export function registerUi(on: On): void {
       const { Client } = els
       // the footer: the scan error alone (the too-long conversations ride the settings popover: buildOfficeProps `oversized`,
       // live check 6 — `דולגו 1 תמלילים גדולים מדי` on the main screen was unclear)
-      const props = buildOfficeProps({
-        payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: scanError ?? '',
-        columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0,
-      })
+      officeFrame = { columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0, footer: scanError ?? '' }
+      const props = buildOfficeProps({ payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, ...officeFrame })
       const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)
       return <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
     }
@@ -828,7 +841,9 @@ export function registerUi(on: On): void {
     // the ⭐ as the poll published them (the finish beat is the poll's; a render only draws)
     const stars = office.stars
     const counts = headerCounts(all)
-    const focusIndex = order.length === 0 ? -1 : Math.min(view.focusIndex, order.length - 1)
+    // (FOCUS_ON_SELECTED: the office Client's `open` — the selected card's place in this walk, derived here)
+    const focusAt = (v: View): number => (v.focusIndex === FOCUS_ON_SELECTED ? order.findIndex(a => a.id === v.selected) : v.focusIndex)
+    const focusIndex = order.length === 0 ? -1 : Math.min(focusAt(view), order.length - 1)
     const focused = focusIndex >= 0 ? order[focusIndex] : undefined
     const selected = view.selected !== null ? all.find(a => a.id === view.selected) : undefined
     // a narrow pane shows no key-hint chips (the desktop draws one per hotkey: three rows of them at
@@ -846,7 +861,7 @@ export function registerUi(on: On): void {
     const closeDrawer = () => void update($, viewAtom, drawerClosed)
     const moveFocus = (d: number) => void update($, viewAtom, v => {
       if (order.length === 0) return { ...v, focusIndex: -1 }
-      const cur = v.focusIndex < 0 ? (d > 0 ? -1 : order.length) : v.focusIndex
+      const cur = focusAt(v) < 0 ? (d > 0 ? -1 : order.length) : focusAt(v)
       return { ...v, focusIndex: Math.max(0, Math.min(order.length - 1, cur + d)) }
     })
     const openFocused = () => { if (focused) openAgent(focused.id) }

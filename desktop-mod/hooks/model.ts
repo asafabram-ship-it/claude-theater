@@ -213,11 +213,3 @@ export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | nul
  * again); read by ui.tsx's render. Module memory: a hot reload clears it too.
  */
 export const DESKTOP = { clientFailed: false }
-
-/**
- * THE REDRAW LATCH: a change the pane must show that is not a $.state write (a
- * room's "show finished" override lives in $.store) redraws it through
- * `$.ui.invalidate`, at most once per this many ms whoever asks (ui.tsx
- * requestRedraw), so a burst of clicks is one redraw.
- */
-export const REDRAW_LATCH_MS = 100

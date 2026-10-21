@@ -8,7 +8,7 @@
 // (and drawn on mobile/vscode, which lack Input / Client).
 
 import type { Agent } from './model'
-import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS, RUNNING_STALE_SEC } from './model'
+import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
 import { expect, test } from 'claude-code/testing'
 
 import { SETTLE_MS, SETTLE_SLACK_MS, cleanOffice } from './register'
@@ -923,7 +923,6 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   //     the payload write in the same tick; no view write (nothing selected)
   await clickIn(ui, 'pin', QSESS2)
   await clickIn(ui, 'roomDone', QSESS2)
-  await clock.advance(REDRAW_LATCH_MS) // the override lives in $.store: the pane is redrawn by the redraw latch
   expect((await officePropsOf(ui))?.rooms.find(r => r.id === QSESS2)).toMatchObject({ pinned: true, showDone: true })
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS2])
   expect(captured.store.roomDone).toEqual({ [QSESS2]: true })

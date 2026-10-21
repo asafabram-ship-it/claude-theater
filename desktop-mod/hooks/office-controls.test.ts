@@ -51,7 +51,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
 
 import { I18N } from './i18n'
-import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
+import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent, Prefs } from './model'
 import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, DEMO_ROWS, OVERLAY_GAP, REFUSED_RE, SEARCH_FROM, WINDOW_ROWS, chromeRows, demoLine, drawerInner, drawerStatus, fixedRows, helpRows, overlayInWindow, overlayRows, windowOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
@@ -61,7 +61,7 @@ import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaName } from './personas'
 import { T0, beneath } from './test-kit'
-import { RECENT_DONE } from './ui'
+import { FOCUS_ON_SELECTED, RECENT_DONE } from './ui'
 
 const SA = 'sess-aaaa-1111-frontend'
 const SB = 'sess-bbbb-2222-research'
@@ -547,10 +547,8 @@ function suite(COLUMNS: Columns): void {
     // a room's ✅ counts: that room shows its finished (the override in the store), as a real room's do
     await click(ui, 'roomDone', DEMO_S2)
     expect(captured.store.roomDone).toEqual({ [DEMO_S2]: true })
-    await clock.advance(REDRAW_LATCH_MS)
     expect(roomOf(await officeProps(ui), DEMO_S2).showDone).toBe(true)
     await click(ui, 'roomDone', DEMO_S2)
-    await clock.advance(REDRAW_LATCH_MS)
     expect(captured.store.roomDone).toEqual({})
     // ☐ → ☑: every demo room shows its finished; and back
     await ui.press({ key: 'showDone' })
@@ -737,8 +735,7 @@ function suite(COLUMNS: Columns): void {
     await click(ui, 'roomDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
     expect((await officeProps(ui)).prefs.showDone).toBe(false)
-    expect(roomOf(await officeProps(ui), SA).showDone).toBe(false)   // not before the latch
-    await clock.advance(REDRAW_LATCH_MS)
+    expect(roomOf(await officeProps(ui), SA).showDone).toBe(true)   // at once: no latch (live check 7, R3)
     const p1 = await officeProps(ui)
     expect(roomOf(p1, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
     expect(ids(p1, SA)).toEqual(ALL_A)
@@ -748,7 +745,6 @@ function suite(COLUMNS: Columns): void {
     expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
     await rowsOk(ui, p1)
     await click(ui, 'roomDone', SA)
-    await clock.advance(REDRAW_LATCH_MS)
     const p2 = await officeProps(ui)
     expect(captured.store.roomDone).toEqual({})
     expect(roomOf(p2, SA)).toMatchObject({ showDone: false, moreDone: 1, moreLabel: MORE_LABEL })
@@ -765,7 +761,6 @@ function suite(COLUMNS: Columns): void {
     expect(officeModel(p0).hits.some(h => h.kind === 'moreDone' && h.id === SB)).toBe(false)   // room B holds no finished: no such line
     await click(ui, 'moreDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
-    await clock.advance(REDRAW_LATCH_MS)
     const p1 = await officeProps(ui)
     expect(ids(p1, SA)).toEqual(ALL_A)
     expect(roomOf(p1, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
@@ -773,7 +768,6 @@ function suite(COLUMNS: Columns): void {
     expect(hide.y).toBe(more.y + 1)   // one line lower: the held-back writer is drawn above it
     expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
     await click(ui, 'moreDone', SA)
-    await clock.advance(REDRAW_LATCH_MS)
     const p2 = await officeProps(ui)
     expect(captured.store.roomDone).toEqual({})
     expect(ids(p2, SA)).toEqual(DRAWN_A)
@@ -795,7 +789,7 @@ function suite(COLUMNS: Columns): void {
     expect(p1.selected).toBe('a1')
     expect(p1.drawer).toMatchObject({ id: 'a1', sub: 'map session-token validation', status: 'running', type: 'Explore', task: 'Task of a1.' })
     expect(p1.drawer?.name).toContain(personaName(7, 'he'))
-    expect(captured.view).toMatchObject({ selected: 'a1', helpOpen: false, focusIndex: 1 })
+    expect(captured.view).toMatchObject({ selected: 'a1', helpOpen: false, focusIndex: FOCUS_ON_SELECTED })   // (the text cards' focus follows the selection: R2)
     const drawer = await overlay(ui)
     expect(drawer).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER, paddingY: 1, height: overlayRows(p1) - OVERLAY_GAP, marginBottom: OVERLAY_GAP } })
     expect(textOf(drawer!)).toMatch(/משימה/)
@@ -1180,7 +1174,6 @@ function suite(COLUMNS: Columns): void {
     expect((await headOf(ui, p1, SA)).more).toBe(MORE_LINE)
     await click(ui, 'moreDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
-    await clock.advance(REDRAW_LATCH_MS)
     const p2 = await officeProps(ui)
     expect(roomOf(p2, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
     expect(ids(p2, SA)).toEqual([...ids(p1, SA), DONE[RECENT_DONE]])
@@ -1189,7 +1182,6 @@ function suite(COLUMNS: Columns): void {
     expect((await headOf(ui, p2, SA)).more).toBe(HIDE_LINE)
     await rowsOk(ui, p2)
     await click(ui, 'moreDone', SA)
-    await clock.advance(REDRAW_LATCH_MS)
     const p3 = await officeProps(ui)
     expect(captured.store.roomDone).toEqual({})
     expect(ids(p3, SA)).toEqual(ids(p1, SA))
@@ -1202,7 +1194,6 @@ function suite(COLUMNS: Columns): void {
     expect(roomOf(p3, SB).moreLabel).toBe('')
     await click(ui, 'roomDone', SB)
     expect(captured.store.roomDone).toEqual({ [SB]: true })
-    await clock.advance(REDRAW_LATCH_MS)
     const p4 = await officeProps(ui)
     expect(roomOf(p4, SB)).toMatchObject({ showDone: true, moreLabel: HIDE_LABEL })
     expect(ids(p4, SB)).toEqual(['b1', 'bd'])
@@ -1212,7 +1203,6 @@ function suite(COLUMNS: Columns): void {
     expect(officeModel(p4).rooms[1]!.height).toBe(roomB.height + 2)
     await rowsOk(ui, p4)
     await click(ui, 'roomDone', SB)
-    await clock.advance(REDRAW_LATCH_MS)
     const p5 = await officeProps(ui)
     expect(captured.store.roomDone).toEqual({})
     expect((await headOf(ui, p5, SB)).more).toBe('')
@@ -1274,14 +1264,12 @@ function suite(COLUMNS: Columns): void {
     expect(p4.rooms.map(r => r.id)).toEqual([SA, SB])
     await click(ui, 'roomDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
-    await clock.advance(REDRAW_LATCH_MS)
     const p5 = await officeProps(ui)
     expect(p5.helpOpen).toBe(true)
     expect(ids(p5, SA)).toEqual(ALL_A)
     expect((await headOf(ui, p5, SA)).more).toBe(HIDE_LINE)
     await rowsOk(ui, p5)
     await click(ui, 'roomDone', SA)
-    await clock.advance(REDRAW_LATCH_MS)
     expect(captured.store.roomDone).toEqual({})
     expect(ids(await officeProps(ui), SA)).toEqual(DRAWN_A)
     await ui.press({ key: 'closeHelp' })
@@ -1302,14 +1290,12 @@ function suite(COLUMNS: Columns): void {
     expect((await officeProps(ui)).rooms.map(r => r.id)).toEqual([SA, SB])
     await click(ui, 'moreDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
-    await clock.advance(REDRAW_LATCH_MS)
     const p8 = await officeProps(ui)
     expect(p8.drawer?.id).toBe('a1')
     expect(ids(p8, SA)).toEqual(ALL_A)
     expect((await headOf(ui, p8, SA)).more).toBe(HIDE_LINE)
     expect(await focused(ui, p8)).toEqual([whoOf(p8, 'a1')])
     await click(ui, 'moreDone', SA)
-    await clock.advance(REDRAW_LATCH_MS)
     expect(captured.store.roomDone).toEqual({})
     expect(ids(await officeProps(ui), SA)).toEqual(DRAWN_A)
     await ui.unmount()

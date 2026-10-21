@@ -69,8 +69,9 @@ function agent(id: string, over: Partial<Agent> = {}): Agent {
  * demo phase 1 (scanner.ts demoPayload: T0 is phase 8, the poll's first tick POLL_MS later phase 1) — then the clock moved
  * on to `phase` without a poll in between when `phase` lies before the next tick (phase 6).
  */
-async function demoAt($: Engine, on: On, phase = 1, prefs = PREFS()) {
+async function demoAt($: Engine, on: On, phase = 1, prefs = PREFS(), extra?: (on: On, clock: ReturnType<typeof beneath>['clock'], writes: ReturnType<typeof beneath>['captured']['writes']) => void) {
   const { captured, clock } = beneath(on, () => [agent('real-1')], prefs)
+  extra?.(on, clock, captured.writes)   // (the test's own hooks beneath: registered before the first call on $)
   on('ui.status', () => ({ value: undefined }))
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -144,5 +145,49 @@ test('R12 · two presses in one frame both land (one post per frame: the later p
   // an old single post (no batch) is still applied
   await ui.post({ t: 'help' }, { in: OFFICE_KEY })
   expect((await officeProps(ui)).helpOpen).toBe(false)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// R2 + R3: a press is drawn from the ui.message hook's answer, not from a redraw
+// ---------------------------------------------------------------------------
+
+test('R2 · a press reaches the module in the ui.message hook answer ({ props }, built from the values just written), not in a redraw: with every redraw the plugin asks for swallowed beneath ($.ui.invalidate answered, never passed on), a room finished toggle — a $.store write, which redraws nothing by itself — is still drawn', { timeoutMs: 30_000 }, async ($, on) => {
+  const swallow = { on: false, n: 0 }
+  const { ui, captured } = await demoAt($, on, 1, PREFS(), o => {
+    o('ui.invalidate', ($, e, next) => {
+      if (!swallow.on) return next(e)
+      swallow.n += 1
+      return { value: undefined }
+    })
+  })
+  const p0 = await officeProps(ui)
+  expect(roomOf(p0, S2).showDone).toBe(false)
+  swallow.on = true
+  await down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  expect(captured.store.roomDone).toEqual({ [S2]: true })
+  expect(swallow.n, 'the redraw was asked for').toBeGreaterThanOrEqual(1)
+  // (the Client element's props are the render's — no render ran; what the MODULE draws came from the answer: the room's
+  // line now hides its finished, and every finished row of it is drawn)
+  expect((await officeProps(ui)).rooms.find(r => r.id === S2)?.showDone, 'no render ran').toBe(false)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /הסתר/ }), 'drawn from the answer').toBeDefined()
+  for (const id of ['demo-dedupe-kk', 'demo-label-ll']) {
+    const who = officeModel(buildOfficeProps({ payload: demoPayload(T0, 1), prefs: { ...DEFAULT_PREFS }, view: { ...DEFAULT_VIEW, demo: true }, roomDone: { [S2]: true }, offset: 0, columns: COLUMNS, rows: ROWS, now: T0, usage: null })).rooms.flatMap(r => r.rows).find(r => r.id === id)!.who
+    expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: who }), id).toBeDefined()
+  }
+  await ui.unmount()
+})
+
+test('R3 · a room\'s finished toggle is drawn at once — no latch to wait for: the more line clicked, the room shows every finished in the next props, the clock not moved; clicked again, hidden again', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  expect(roomOf(p0, S2).showDone).toBe(false)
+  await down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  expect(captured.store.roomDone).toEqual({ [S2]: true })
+  const p1 = await officeProps(ui)
+  expect(roomOf(p1, S2).showDone, 'drawn without the clock moving').toBe(true)
+  await down(ui, cellOf(p1, hitOf(p1, 'moreDone', S2)))
+  expect(roomOf(await officeProps(ui), S2).showDone).toBe(false)
+  expect(captured.store.roomDone).toEqual({})
   await ui.unmount()
 })

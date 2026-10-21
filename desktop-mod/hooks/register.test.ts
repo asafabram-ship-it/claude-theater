@@ -15,12 +15,13 @@ import { expect, test } from 'claude-code/testing'
 import type { JsonValue } from 'claude-code'
 
 import type { Agent } from './model'
-import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
+import { PERSONA_EMOJI, POLL_MS } from './model'
 import { SEARCH_MAX, chromeRows } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { geometry, officeModel, type Hit } from './office-layout'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { T0, beneath } from './test-kit'
+import { FOCUS_ON_SELECTED } from './ui'
 
 const SA = 'sess-aaaa-1111-frontend'
 const SB = 'sess-bbbb-2222-research'
@@ -126,7 +127,7 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
 
   // a click on a1's tile opens its drawer (selected, the help closed, the text cards' focus on its card); ✕ closes it
   expect(await writesOf(captured, () => click(ui, 'agent', 'a1'))).toEqual({ view: 1 })
-  expect(captured.view).toMatchObject({ selected: 'a1', helpOpen: false, focusIndex: 1 })
+  expect(captured.view).toMatchObject({ selected: 'a1', helpOpen: false, focusIndex: FOCUS_ON_SELECTED })
   expect((await propsOf(ui)).drawer?.id).toBe('a1')
   expect(await writesOf(captured, () => ui.press({ key: 'close' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).selected).toBeNull()
@@ -139,18 +140,13 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   await click(ui, 'pin', SB)
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([])
 
-  // room A's ✅ counts: the override lives in $.store, not $.state — no state write; the pane is redrawn ONCE by the
-  // redraw latch REDRAW_LATCH_MS later (three toggles inside the latch: one redraw)
+  // room A's ✅ counts: the override lives in $.store, not $.state — no state write; drawn at once (the message's answer, and
+  // the redraw asked before the store write: no latch — live check 7, R3; the engine folds a burst of redraws itself)
   expect(await writesOf(captured, async () => { await click(ui, 'roomDone', SA); await click(ui, 'roomDone', SA); await click(ui, 'roomDone', SA) })).toEqual({ 'store:roomDone': 3 })
   expect(captured.store.roomDone).toEqual({ [SA]: true })
-  expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.showDone).toBe(false) // not drawn yet
-  const reads1 = captured.prefsReads
-  await clock.advance(REDRAW_LATCH_MS)
-  expect(captured.prefsReads).toBe(reads1 + 1) // one redraw (the render's one prefs read)
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)).toMatchObject({ showDone: true })
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.agents.map(a => a.id)).toEqual(['lead-a', 'a1', 'a2'])
   await click(ui, 'roomDone', SA)
-  await clock.advance(REDRAW_LATCH_MS)
   expect(captured.store.roomDone).toEqual({})
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.showDone).toBe(false)
 
@@ -225,7 +221,6 @@ test('ui.message: what is not an office message is ignored — content / pull (d
     'showDone', 42, null, [{ t: 'showDone' }],
   ]
   expect(await writesOf(captured, async () => { for (const d of junk) await ui.post(d, { in: OFFICE_KEY }) })).toEqual({})
-  await clock.advance(REDRAW_LATCH_MS)
   expect(captured.prefsReads).toBe(reads0) // nothing read, nothing redrawn
   expect(JSON.stringify(await propsOf(ui))).toBe(before)
   // a well-formed post through the same door does land (the kit's post is the module's surface.post)

@@ -685,7 +685,7 @@ test('THE DEMO LINE (live check 5): while the demo runs, the first line under th
   expect(exit).toMatchObject({ type: 'Button', props: { key: 'exitDemo', plain: true, label: 'יציאה' } })
   expect(exit!.props.hotkey).toBeUndefined()                     // (d is the settings' demo Button's letter)
   ;(exit!.props.onPress as () => void)()
-  expect(f.posts).toEqual([{ t: 'demo' }])
+  expect(f.posts).toEqual([{ t: 'demo', on: false }])   // (the exit's TARGET, never a flip: live check 7, R7)
   // the chrome: a row taller than without the demo, as the hooks size it (chromeRows) and as drawn
   expect(chromeOf(tree)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
   expect(chromeRows(p)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
@@ -1067,7 +1067,8 @@ test('keys after a click: j/k walk the rows with no post (the keyboard focus is 
   expect(f.posts[1]).toEqual({ t: 'open', id: 'a1' })
   for (const [k, t] of [['x', 'close'], ['f', 'showDone'], ['m', 'mute'], ['l', 'lang'], ['h', 'help'], ['d', 'demo'], ['s', 'still']] as const) {
     f.key({ key: k })
-    expect(f.posts[f.posts.length - 1]).toEqual({ t })
+    // (d posts the demo's target: on, from an office not in the demo — live check 7, R7)
+    expect(f.posts[f.posts.length - 1]).toEqual(t === 'demo' ? { t, on: true } : { t })
   }
   f.key({ key: 'q' })
   f.key({ key: 'f', ctrl: true })
@@ -1466,7 +1467,7 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   for (const [key, t2] of [['showDone', 'showDone'], ['mute', 'mute'], ['help', 'help'], ['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
     const b = nodes(tree).find(n => n.type === 'Button' && n.props.key === key)!
     ;(b.props.onPress as () => void)()
-    expect(f.posts[f.posts.length - 1]).toEqual({ t: t2 })
+    expect(f.posts[f.posts.length - 1]).toEqual(t2 === 'demo' ? { t: t2, on: true } : { t: t2 })   // (the demo's target: R7)
   }
   // the show-finished box: ☑ while the finished are shown — the pref alone, in the demo too (live check 5: the demo's cast obeys
   // it, where it once forced it on and the box seemed dead); its press flips the pref. (The icon trails the Hebrew word.)
@@ -1567,7 +1568,7 @@ test('settings: the popover holds the demo, motion and language Buttons in words
   // their presses post
   for (const [k, t] of [['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
     ;(btn(k)!.props.onPress as () => void)()
-    expect(f.posts[f.posts.length - 1]).toEqual({ t })
+    expect(f.posts[f.posts.length - 1]).toEqual(t === 'demo' ? { t, on: true } : { t })   // (the demo's target: R7)
   }
   // the states: the demo on → ✕ יציאה with the clapper; the motion frozen → 🖼; English: the icon leads, the language Button names Hebrew
   expect(btn('demo', Office(open({ demo: true }), fake().surface))?.props.label).toBe('יציאה ✕ 🎬')
@@ -1590,7 +1591,7 @@ test('settings: the popover holds the demo, motion and language Buttons in words
   for (const k of ['demo', 'still', 'lang']) expect(btn(k)).toBeUndefined()
   for (const [k, t] of [['d', 'demo'], ['s', 'still'], ['l', 'lang']] as const) {
     g.key({ key: k })
-    expect(g.posts[g.posts.length - 1]).toEqual({ t })
+    expect(g.posts[g.posts.length - 1]).toEqual(t === 'demo' ? { t, on: true } : { t })   // (the demo's target: R7)
   }
   expect(g.posts).toHaveLength(3)
 })

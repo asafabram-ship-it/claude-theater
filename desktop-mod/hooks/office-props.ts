@@ -94,7 +94,7 @@ export type OfficeProps = {
 /** One action of the office (what a click, a key or the search does). */
 export type OfficeMessage =
   | { t: 'open'; id: string } | { t: 'close' } | { t: 'pin'; room: string } | { t: 'roomDone'; room: string }
-  | { t: 'showDone' } | { t: 'mute' } | { t: 'lang' } | { t: 'help' } | { t: 'demo' } | { t: 'still' }
+  | { t: 'showDone' } | { t: 'mute' } | { t: 'lang' } | { t: 'help' } | { t: 'demo'; on?: boolean } | { t: 'still' }
   | { t: 'search'; q: string } | { t: 'content'; rows: number } | { t: 'pull'; seq: number }
 /** An action as THE OUTBOX numbers it (office-client.tsx: each number is applied once per instance). */
 export type OfficeItem = OfficeMessage & { n: number }
@@ -104,6 +104,8 @@ export type OfficeBatch = { t: 'batch'; i: string; items: OfficeItem[] }
 /** What the builder reads: the office's state at `now` (ms), and the pane's geometry. */
 export type OfficePropsInput = {
   payload: Payload
+  /** THE OFFICE AS IT WAS (live check 7, R7): the last scanned payload the pane drew — drawn on leaving the demo until the switch's scan lands (ui.tsx effectivePayload). */
+  real?: Payload | null
   prefs: Prefs
   view: View
   /** The per-room "show finished" overrides (parseRoomDone). */
@@ -172,7 +174,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   const lang = prefs.lang
   const L = I18N[lang]
   const rtl = dirOf(lang) === 'rtl'
-  const office = effectivePayload(input.payload, view, now)
+  const office = effectivePayload(input.payload, view, now, input.real ?? null)
   // (the demo's cast obeys the pref as the office does: live check 5 — the demo once forced it on, so the toggle did nothing)
   const showDone = prefs.showDone
   const stars = office.stars

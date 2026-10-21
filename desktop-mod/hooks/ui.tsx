@@ -515,11 +515,24 @@ export function minuteClock(now: number): number {
  * The office the pane draws: while `view.demo`, THE PUBLISHED CAST (live check 7, R6) — the demo cast the poll published,
  * with its ⭐, so a click's redraw draws what the last publish drew (once re-drawn from the clock on every redraw, a mute
  * press walked the newcomer in and moved the rows); only the switch's first frames, before the poll published the demo,
- * draw demoPayload(now). Else the scanned payload.
+ * draw demoPayload(now). Else the scanned payload — and on LEAVING the demo, while state still holds the demo cast (the
+ * switch's scan not landed yet), THE OFFICE AS IT WAS (live check 7, R7 / Q5): `real`, the last scanned payload the pane drew
+ * (ui.tsx module memory), else an empty office — never the demo cast without its banner, taken for the office.
  */
-export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number): Payload {
-  if (!view.demo) return payload
+export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number, real: Payload | null = null): Payload {
+  if (!view.demo) return payload.demo ? (real ?? { ...EMPTY_PAYLOAD, scanned_ms: payload.scanned_ms }) : payload
   return payload.demo ? payload : { ...demoPayload(now), stars: payload.stars }
+}
+
+/**
+ * THE OFFICE AS IT WAS (live check 7, R7): the last scanned (not demo) payload the pane drew — what leaving the demo draws at
+ * once, until the switch's scan lands (effectivePayload). Module memory: a hot reload in the demo leaves it null.
+ */
+let lastRealPayload: Payload | null = null
+/** The payload `seen` remembered as THE OFFICE AS IT WAS when it is a scanned one; `real` for effectivePayload either way. */
+function rememberReal(seen: Payload): Payload | null {
+  if (!seen.demo) lastRealPayload = seen
+  return lastRealPayload
 }
 
 /**
@@ -745,8 +758,13 @@ async function applyOfficeAction($: EngineInterface, data: unknown): Promise<App
       return shown(await update($, viewAtom, flipHelp))
     case 'close':
       return shown(await update($, viewAtom, drawerClosed))
-    case 'demo':
-      return shown(await setDemo($, !(await read($, viewAtom)).demo))
+    case 'demo': {
+      // the demo's switch to a TARGET (live check 7, R7: `on`, so a double press of the exit leaves it off — the old flip
+      // re-entered the demo); an old post without one flips it. Already there: nothing written
+      const v = await read($, viewAtom)
+      const target = typeof (m as { on?: unknown }).on === 'boolean' ? (m as { on: boolean }).on : !v.demo
+      return target === v.demo ? NOTHING : shown(await setDemo($, target))
+    }
     case 'open':
       // the selection written FIRST (R2): the text cards' focus follows it, derived when they draw (FOCUS_ON_SELECTED)
       return typeof m.id === 'string' ? shown(await update($, viewAtom, openedOn(m.id, FOCUS_ON_SELECTED))) : NOTHING
@@ -786,7 +804,7 @@ async function officeAnswer($: EngineInterface, applied: Applied): Promise<Offic
     applied.prefs ?? read($, prefsAtom), read($, payloadAtom), applied.view ?? read($, viewAtom), loadRoomDone($), $.clock.now().catch(() => null),
   ])
   const now = clock ?? Math.max(clockSeen, payload.scanned_ms)
-  return buildOfficeProps({ payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: frame.footer, columns: frame.columns, rows: frame.rows, offset: frame.offset })
+  return buildOfficeProps({ payload, real: rememberReal(payload), prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: frame.footer, columns: frame.columns, rows: frame.rows, offset: frame.offset })
 }
 
 // ---------------------------------------------------------------------------
@@ -832,7 +850,8 @@ export function registerUi(on: On): void {
     const L: Strings = I18N[lang]
     const rtl = dirOf(lang) === 'rtl'
     const width = Math.max(MIN_WIDTH, e.props.bodyColumns || 80)
-    const office = effectivePayload(payload, view, now)
+    const real = rememberReal(payload)
+    const office = effectivePayload(payload, view, now, real)
     const all = office.agents
 
     // --- DESKTOP: the office is ONE Client. The hooks build its props from state (buildOfficeProps: pure,
@@ -847,7 +866,7 @@ export function registerUi(on: On): void {
       // the footer: the scan error alone (the too-long conversations ride the settings popover: buildOfficeProps `oversized`,
       // live check 6 — `דולגו 1 תמלילים גדולים מדי` on the main screen was unclear)
       officeFrame = { columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0, footer: scanError ?? '' }
-      const props = buildOfficeProps({ payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, ...officeFrame })
+      const props = buildOfficeProps({ payload, real, prefs, view, roomDone, now, usage: USAGE.fiveHour, ...officeFrame })
       const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)
       return <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
     }

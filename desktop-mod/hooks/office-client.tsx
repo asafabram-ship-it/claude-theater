@@ -144,9 +144,9 @@ export const PAIRS_GAP = 4
 /** The demo line's note colour: amber, so the demo is never taken for the office (the status column's waiting amber, DOT_FG.stale). */
 export const DEMO_FG = '#d29922'
 
-/** The letter keys (spec §6.4): the toolbar's f / m / h, the settings' d / s / l (its Buttons' letters, live with the popover closed too) and the drawer's x. */
+/** The letter keys (spec §6.4): the toolbar's f / m / h, the settings' s / l (its Buttons' letters, live with the popover closed too) and the drawer's x; `d` — the demo, to its target — is onKey's own. */
 const KEY_MESSAGES: Record<string, OfficeMessage> = {
-  x: { t: 'close' }, f: { t: 'showDone' }, m: { t: 'mute' }, l: { t: 'lang' }, h: { t: 'help' }, d: { t: 'demo' }, s: { t: 'still' },
+  x: { t: 'close' }, f: { t: 'showDone' }, m: { t: 'mute' }, l: { t: 'lang' }, h: { t: 'help' }, s: { t: 'still' },
 }
 
 /** What survives between renders without a redraw: mutated in place, never replaced. */
@@ -349,6 +349,9 @@ function listen(surface: Surface): void {
         if (id === cur.focus) return
         // local only: one post per frame, so a `focus` post could displace a meaningful one (a click's `open`)
         surface.setState({ ...cur, focus: id })
+      } else if (k === 'd') {
+        // the demo's switch to its target (live check 7, R7: never a flip — a double press lands where the person aimed)
+        send(surface, inst, { t: 'demo', on: !inst.props.demo })
       } else if (k === 'o' || k === 'return') {
         // only a focus whose row is drawn (in the window): one scrolled away would open a drawer for a row the person cannot see
         const y = cur.focus ? inst.rowAt.get(cur.focus) : undefined
@@ -489,7 +492,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const d = demoLine(props)
       kids.push(Box({ key: 'demoLine', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
         Text({ color: DEMO_FG, children: [nb(d.note)] }),
-        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => send(surface, inst, { t: 'demo' }) }),
+        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => send(surface, inst, { t: 'demo', on: false }) }),
       ] }))
     }
 
@@ -575,7 +578,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         // (its close as the drawer's — live check 7, R9: the native close role, the ✕ then the word, x; a close, never a flip)
         line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
-          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, inst, { t: 'demo' }) }),
+          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, inst, { t: 'demo', on: !props.demo }) }),
           Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, inst, { t: 'still' }) }),
           Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, inst, { t: 'lang' }) }),
         ]),
@@ -616,7 +619,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Text({ children: ['🏢'] }),
         ...e.msg.map(t => Text({ bold: true, children: [t] })),
         ...e.sub.map(t => Text({ dimColor: true, children: [t] })),
-        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, inst, { t: 'demo' }) })] : []),
+        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, inst, { t: 'demo', on: true }) })] : []),
       ] }))
     } else {
       // --- the cards: the settings | drawer, a spacer, then every card the window touches, its rows windowed by line. THE

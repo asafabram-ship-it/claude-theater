@@ -457,7 +457,8 @@ export async function poll($: EngineInterface): Promise<void> {
     // (settled within SETTLE_SLACK_MS: the poll after a publish comes about SETTLE_MS later, a few ms either side)
     const settled = since >= SETTLE_MS - SETTLE_SLACK_MS
     // THE DEMO SWITCH publishes at once, whatever SETTLE_MS / CALM_MS say: the render draws the demo from the flag
-    // (effectivePayload), so on leaving it the stored payload — the demo cast, frozen — would be drawn until a later publish
+    // (effectivePayload) — and on leaving it the office as it was before the demo (ui.tsx's memory, live check 7) until this
+    // publish brings the fresh scan
     const switched = published.demo !== office.demo
     const due = (coarse !== lastCoarse && settled) || since >= CALM_MS || switched
     // (the second test, held to the same SETTLE_MS: what is IN state differs in substance — a reload, a hook beneath)

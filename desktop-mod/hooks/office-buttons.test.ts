@@ -462,3 +462,29 @@ test('Q2 · the drawer is ONE height at a width, whoever it shows (a result or n
   expect([p4.helpOpen, p4.selected, p4.drawer]).toEqual([false, null, null])
   await ui.unmount()
 })
+
+// ---------------------------------------------------------------------------
+// R7 (Q5): leaving the demo draws the office as it was before it, at once
+// ---------------------------------------------------------------------------
+
+test('R7 · the demo exit draws the office as it was before the demo AT ONCE (the last real office the pane drew — never the demo cast without its banner while the scan runs), refreshed when the scan lands; the exit posts its target, so a double press leaves the demo off', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, clock } = await demoAt($, on, 1)
+  expect((await officeProps(ui)).rooms.map(r => r.id).sort()).toEqual([S1, S2])
+  await ui.press({ key: 'exitDemo' })
+  const p1 = await officeProps(ui)          // (before the kick's scan has settled)
+  expect(p1.demo).toBe(false)
+  expect(p1.rooms.map(r => r.id), 'the demo cast drawn as the office').toEqual(['sess-aaaa-1111'])
+  expect(await ui.find({ in: OFFICE_KEY, key: 'exitDemo' })).toBeUndefined()
+  await clock.settle()
+  expect((await officeProps(ui)).rooms.map(r => r.id)).toEqual(['sess-aaaa-1111'])
+  // in again, then the exit pressed twice in one frame: the demo stays off
+  await ui.key({ in: OFFICE_KEY, key: 'd' })
+  await clock.settle()
+  expect((await officeProps(ui)).demo).toBe(true)
+  await Promise.all([ui.press({ key: 'exitDemo' }), ui.press({ key: 'exitDemo' })])
+  await clock.settle()
+  const p2 = await officeProps(ui)
+  expect(p2.demo, 'a double press re-entered the demo').toBe(false)
+  expect(p2.rooms.map(r => r.id)).toEqual(['sess-aaaa-1111'])
+  await ui.unmount()
+})

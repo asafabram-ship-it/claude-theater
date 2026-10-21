@@ -91,6 +91,15 @@
 // answers nothing. The keyboard walk (j / k) keeps to the agent rows drawn, and
 // `o` opens the focus only while its row is among them.
 //
+// The clicks (live check 7, "the buttons are not smooth"): a row's click opens
+// its drawer and a second click on the open one closes it; a row's and the more
+// line's hit is the card's inside, the dim 📌 lights over the pin's zone alone;
+// a pin click keeps the cards in the order drawn until the pointer leaves the
+// office (THE PIN'S PLACE, `inst.frozen`: the bright 📌 at once, the card to the
+// top then — never a jump under the pointer); the demo's switches post their
+// target; an Enter that follows typing in the search is the field's
+// (`inst.typing`), o and an Enter after a click or a walk key open the focus.
+//
 // Discipline (spec §7.3-7.4, Phase 0): no clock runs but the search's debounce
 // and THE OUTBOX's clearing (`surface.every`, one-shots started from events:
 // every post is a batch of the frame's actions, each numbered once — live check

@@ -92,10 +92,11 @@
 // demo once forced it on, and the toggle seemed broken) and is never toasted.
 //
 // Demo mode (PAGE ?demo=1): `view.demo` → the pane draws scanner's
-// demoPayload(now), the ONE port of Python demo_payload (the poll publishes the
-// same cast): a 12 s scripted loop (phase 3: a newcomer walks in, phases 6-9:
-// the finisher completes → the beat). The poll keeps writing `payload` every
-// POLL_MS, so the office redraws and the clock advances.
+// demoPayload, the ONE port of Python demo_payload, AS THE POLL PUBLISHED IT
+// (effectivePayload, live check 7: never re-drawn from the clock on a click's
+// redraw): a 12 s scripted loop (phase 3: a newcomer walks in at the end of its
+// room's working rows, phases 6-9: the finisher completes → the beat). The poll
+// publishes the cast as it moves, so the office redraws on its publishes alone.
 //
 // Pane title (PAGE document.title): "🟢 N · " + the app title while N agents
 // work — paneTitle(lang, run); the poll retitles when N changes, setLang on a
@@ -500,9 +501,15 @@ export function minuteClock(now: number): number {
   return Math.floor(now / 60_000) * 60_000
 }
 
-/** The office the pane draws: the demo while `view.demo` (with the ⭐ the poll published for it), else the scanned payload. */
+/**
+ * The office the pane draws: while `view.demo`, THE PUBLISHED CAST (live check 7, R6) — the demo cast the poll published,
+ * with its ⭐, so a click's redraw draws what the last publish drew (once re-drawn from the clock on every redraw, a mute
+ * press walked the newcomer in and moved the rows); only the switch's first frames, before the poll published the demo,
+ * draw demoPayload(now). Else the scanned payload.
+ */
 export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number): Payload {
-  return view.demo ? { ...demoPayload(now), stars: payload.stars } : payload
+  if (!view.demo) return payload
+  return payload.demo ? payload : { ...demoPayload(now), stars: payload.stars }
 }
 
 /**

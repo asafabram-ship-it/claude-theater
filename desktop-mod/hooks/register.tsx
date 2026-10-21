@@ -60,8 +60,11 @@
 //                   the panel was visible — only the live map is aged so the
 //                   engine's statuses keep landing; openPane polls at once.
 //                   In demo mode the payload is scanner's demoPayload — the one
-//                   demo cast (ui.tsx draws demoPayload(now) on every redraw so
-//                   the demo clock advances between polls).
+//                   demo cast; ui.tsx draws the cast published here (live check
+//                   7: a click's redraw once re-drew demoPayload(now), so the
+//                   cast moved under the pointer), so the demo moves on these
+//                   publishes alone (demoPayload(now) only for the switch's
+//                   first frames, before this poll publishes it).
 //   reload safety   a hot reload runs `register` again in a fresh environment and
 //                   drops the old one's timers; session.start fires again on that
 //                   fresh load (once per process, then once per fresh load of a

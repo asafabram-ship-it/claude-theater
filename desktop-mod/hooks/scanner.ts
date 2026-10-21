@@ -1896,7 +1896,8 @@ function demoAgent(
  * populated office — two rooms led by their topics, personas, a just-finished
  * ⭐ agent, a stale one, an MCP tool. Pure: builds in memory, never reads
  * files. `phase` cycles the scene so the demo animates (Python: phase=None
- * picks by time): a ~12 s loop where phase 3 walks a new agent in and phase 6
+ * picks by time): a ~12 s loop where phase 3 walks a new agent in (the last of
+ * its room's working rows: live check 7, Q10) and phase 6
  * finishes the finisher (its ⭐ and confetti; the demo is never toasted or
  * chimed: register.tsx). Python's agents and offsets, and four earlier
  * finishes in the research room (pre-check 6): it holds RECENT_DONE + 2
@@ -1981,6 +1982,14 @@ export function demoPayload(now: number, phase?: number): Payload {
     { start_offset: 300, is_session: true, mtime_offset: 14, model: 'claude-opus-5-5' }))
   resolvePersonas(agents)
   sortAgents(agents)
+  // THE WALK-IN AT THE END (live check 7, Q10): the newcomer is the LAST of the running block — so the last of its room's
+  // working rows, under every row that was there (sorted by its start, newest first, it led the room's rows and pushed them
+  // all down a line under the pointer); the payload stays sorted running / stale / done
+  const at = agents.findIndex(a => a.id === 'demo-newcomer-hh')
+  if (at >= 0) {
+    const [newcomer] = agents.splice(at, 1)
+    agents.splice(agents.map(a => a.status).lastIndexOf('running') + 1, 0, newcomer!)
+  }
   return { agents, versions: ['2.1.0'], skipped: 0, oversized: 0, scanned_ms: now, demo: true, stars: {} }
 }
 

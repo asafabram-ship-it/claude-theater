@@ -668,7 +668,7 @@ test('THE TOO-LONG CONVERSATIONS NOTE (live check 6): the note rides the setting
   expect(none.props.height).toBe(helpRows(45))
 })
 
-test('THE DEMO LINE (live check 5): while the demo runs, the first line under the header says so — `🎬 זו הדגמה - הסוכנים לא אמיתיים` (amber, one no-break value) at the reading edge, the exit Button (`יציאה` / `Exit demo`, posting the demo toggle) at the other, a blank line under it; the chrome a row taller (DEMO_ROWS), so a click on a row still opens that row; none without the demo', () => {
+test('THE DEMO LINE (live check 5): while the demo runs, the first line under the header says so — `🎬 זו הדגמה - הסוכנים לא אמיתיים` (amber, one no-break value) at the reading edge, the exit Button (`יציאה` / `Exit demo`, posting the demo\'s target (off)) at the other, a blank line under it; the chrome a row taller (DEMO_ROWS), so a click on a row still opens that row; none without the demo', () => {
   expect(DEMO_ROWS).toBe(1)
   const f = fake(51, 0)
   const p = props({ demo: true, columns: 51 })

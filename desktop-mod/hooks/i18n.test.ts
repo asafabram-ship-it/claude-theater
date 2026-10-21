@@ -62,7 +62,7 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   expect(I18N.en.tbDone).toBe('Show finished')
   expect(I18N.en.tbSound).toBe('Sound')
   expect(I18N.en.tbSettings).toBe('Settings')
-  // the popover is titled הגדרות (it hosts the language, demo and motion controls and the shortcuts); the text cards keep their help
+  // the popover is titled הגדרות (it hosts the language and demo controls and the shortcuts); the text cards keep their help
   expect(L.settingsTitle).toBe('הגדרות')
   expect(I18N.en.settingsTitle).toBe('Settings')
   expect(L.helpTitle).toBe('עזרה')

@@ -457,7 +457,7 @@ test('iconLabel: a labelled control reads icon-then-word as the probe writes it 
   expect(iconLabel('', 'שסיימו', true)).toBe('שסיימו')
   expect(iconLabel('☐', '', true)).toBe('☐')
   // the word alone obeys THE HEBREW RULE (i18n.test.ts walks the labels)
-  for (const w of ['הצג שסיימו', 'צליל', 'הגדרות', 'דמו', 'תנועה', 'יציאה']) expect(hebrewRuleOk(w)).toBe(true)
+  for (const w of ['הצג שסיימו', 'צליל', 'הגדרות', 'דמו', 'יציאה']) expect(hebrewRuleOk(w)).toBe(true)
 })
 
 /** The UBA's European terminators a value could hold (bidi class ET): # $ %, ¢ £ ¤ ¥, °, ±, ‰ ‱ ′ ″ ‴, the currency signs, the minus sign. */

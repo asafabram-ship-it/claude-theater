@@ -147,7 +147,7 @@ export type TheaterPrefs = {
   showDone: boolean
   /** Pinned rooms (session_full ids), drawn first. */
   pins: string[]
-  /** DESKTOP: the office Client draws no walk-in / finish / status effects (its frame clock stays off). */
+  /** Unused: kept so stored prefs stay compatible (the desktop's motion toggle was removed in live check 7, Q9). */
   still?: boolean
 }
 

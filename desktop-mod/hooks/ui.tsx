@@ -796,9 +796,10 @@ async function applyOfficeAction($: EngineInterface, data: unknown): Promise<App
       if (typeof m.room !== 'string') return NOTHING
       const [prefs, cur] = await Promise.all([read($, prefsAtom), loadRoomDone($)])
       // R3: the override the render reads is set at once (rememberRoomDone) and the redraw asked BEFORE the store write is
-      // awaited (the write redraws nothing: the override lives in $.store); the answer carries it (no latch, no wait). The
-      // prefs read here are not handed on as written (live check 7 review): read before the store write, they would stand
-      // over a newer prefs write of the same batch
+      // awaited (the write redraws nothing: the override lives in $.store), so that redraw draws it at once (no latch); the
+      // answer follows the store write, and is dropped once the redraw has started (THE NEWEST ANSWER). The prefs read here
+      // are not handed on as written (live check 7 review): read before the store write, they would stand over a newer prefs
+      // write of the same batch
       const next = toggledRoomDone(cur, prefs.showDone, m.room)
       rememberRoomDone(next)
       redraw($)

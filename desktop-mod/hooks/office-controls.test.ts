@@ -512,7 +512,7 @@ function suite(COLUMNS: Columns): void {
   // the settings popover's Buttons (and their letters with the popover closed)
   // ---------------------------------------------------------------------------
 
-  t('🎬 demo: the settings\' Button starts the demo (view.demo): the demo cast\'s two rooms fill the office and THE DEMO LINE under the header says so (live check 5: the chrome a row taller, every click still on its row); the cast obeys show finished as the office does — ☐ and the finished held back while the pref is off, ☑ and all of them with it on, a room\'s ✅ toggling that room — prefs.showDone never touched by the demo itself; the line\'s exit Button and the settings\' Button end it, the fixture back; closed, d does the same', async ($, on) => {
+  t('🎬 demo: the settings\' Button starts the demo (view.demo): the demo cast\'s two rooms fill the office and THE DEMO LINE under the header says so (live check 5: the chrome a row taller, every click still on its row); the cast obeys show finished as the office does — ☐ and the finished held back while the pref is off, ☑ and all of them with it on, a room\'s more line toggling that room — prefs.showDone never touched by the demo itself; the line\'s exit Button and the settings\' Button end it, the fixture back; closed, d does the same', async ($, on) => {
     const { ui, captured, clock } = await mountOffice($, on)
     const p0 = await officeProps(ui)
     expect(p0.demo).toBe(false)

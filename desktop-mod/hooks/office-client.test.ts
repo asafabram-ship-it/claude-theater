@@ -835,6 +835,31 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   expect(f.posts[f.posts.length - 1]).toEqual({ t: 'pin', room: 'A' })
 })
 
+test('THE STALE OFFSET (live check 7, R13): a click that shortens the office while the pane is scrolled to its end hands the module the old offset until the engine asks again — the module clamps it to the content (offset ≤ chrome + lines - rows), so the window it draws and hit-tests is the one the engine shows: no blank rows, no dead clicks', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => ag(`g${i}`))
+  const tall = props({ rows: 25, rooms: [room('A', rows(40))] })
+  const short = props({ rows: 25, rooms: [room('A', rows(20))] })
+  const C = chromeRows(short)
+  const linesTall = officeModel(tall).lines.length
+  const linesShort = officeModel(short).lines.length
+  const endTall = C + linesTall - 25          // the engine's offset at the tall office's end
+  const endShort = C + linesShort - 25        // ... and the most it can be once the office is short
+  expect(endTall).toBeGreaterThan(endShort)
+  const f = fake(45, 0)
+  Office({ ...tall, offset: endTall }, f.surface)
+  // the office shortens (a "hide finished" click), the offset still the old one: the window is the clamped one
+  const tree = Office({ ...short, offset: endTall }, f.surface)
+  expect(f.surface.state!.inst.win).toEqual(windowOf(C, endShort, 25, linesShort))
+  expect(rowsOf(cards(tree)[0]!).length).toBeGreaterThan(0)
+  // the last row of the office, at the bottom of the viewport the engine shows, answers
+  const last = officeModel(short).rooms[0]!.rows.at(-1)!
+  f.pointer({ type: 'down', x: 10, y: C + last.y, button: 'left' })
+  expect(f.posts).toEqual([{ t: 'open', id: last.id }])
+  // an offset inside the content is never touched
+  Office({ ...short, offset: 3 }, f.surface)
+  expect(f.surface.state!.inst.win).toEqual(windowOf(C, 3, 25, linesShort))
+})
+
 test('window: the cards the window touches are drawn whole, their rows only where they lie in the window (ONE spacer above and one below the table for the rest, not one per column); the cards above are one spacer; only the window\'s lines answer the pointer; the row budget leaves the lowest rows blank', () => {
   // 30 agents at 45 columns: one card of 37 lines, its rows on lines 4..33
   const many = withAgents(props(), Array.from({ length: 30 }, (_, i) => ag(`a${i}`)))
@@ -995,7 +1020,8 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   // its height the lines from `from` to B's bottom border (the gap its margin; the gap alone a one-row spacer), the rows drawn the
   // window's row lines
   const mB = officeModel(two)
-  for (let from = 37; from <= 73; from++) {
+  // (to the last offset the engine can hand — the Client's height less the window: a later one is clamped, live check 7 R13)
+  for (let from = 37; from <= 73 && 6 + from <= C2 + mB.lines.length - 25; from++) {
     const q = { ...two, offset: 6 + from }
     const fq = fake(45, 0)
     const tq = Office(q, fq.surface)

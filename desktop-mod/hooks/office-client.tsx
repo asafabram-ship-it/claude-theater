@@ -66,7 +66,9 @@
 //
 // Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
 // Client as tall as the content (`officeHeight`); `props.offset` is the
-// engine's window offset and `props.rows` the pane's body height. The module
+// engine's window offset — clamped to the content (live check 7: a click that
+// shortened the office hands the old offset until the engine asks again) —
+// and `props.rows` the pane's body height. The module
 // draws the fixed chrome, then ONE spacer Box for the lines above the window's
 // first card, then only the cards the window touches: every card drawn whole
 // (its frame, title, more line, blank line), its agent rows only where they lie
@@ -631,7 +633,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       //     viewport. (A window past the content — an offset the engine never hands a Client of this height — draws its spacer
       //     alone.) ---
       const body = props.rows > 0 ? props.rows : 30
-      const w0 = windowOf(inst.chrome, props.offset, body, model.lines.length, overlayRows)
+      // THE STALE OFFSET (live check 7, R13): a click that shortened the office (a "hide finished") hands the module the offset
+      // the engine had before it — past the new end until the engine asks again; clamped to the content, the window drawn and
+      // hit-tested is the one the engine shows once it clamps its own (no blank rows, no dead clicks meanwhile)
+      const offset = Math.min(props.offset, Math.max(0, inst.chrome + model.lines.length - body))
+      const w0 = windowOf(inst.chrome, offset, body, model.lines.length, overlayRows)
       const { from, count } = trimWindow(model, w0.from, w0.count, WINDOW_ROWS)
       inst.win = { from, count }
       inst.view = w0.count

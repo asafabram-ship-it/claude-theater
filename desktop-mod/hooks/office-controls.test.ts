@@ -230,7 +230,9 @@ const isFragment = (card: Drawn) => propsOf(card).key === 'fragment'
 /** The window of layout lines the module drew for `p` — what the pointer answers on (office-chrome.ts windowOf, office-layout.ts trimWindow). */
 function windowNow(p: OfficeProps): { from: number; count: number } {
   const m = officeModel(p)
-  const w = windowOf(chromeRows(p), p.offset, p.rows, m.lines.length, overlayRows(p))
+  // (a stale offset clamped to the content, as the module does: live check 7, R13)
+  const offset = Math.min(p.offset, Math.max(0, chromeRows(p) + m.lines.length - p.rows))
+  const w = windowOf(chromeRows(p), offset, p.rows, m.lines.length, overlayRows(p))
   return trimWindow(m, w.from, w.count, WINDOW_ROWS)
 }
 /** The rooms whose card the window touches, in the props' order: the cards drawn (a card per room, the first a fragment under an overlay at the window's top). */
@@ -1161,8 +1163,9 @@ function suite(COLUMNS: Columns): void {
     await click(ui, 'moreDone', SA)
     expect(captured.store.roomDone).toEqual({})
     expect(ids(await officeProps(ui), SA)).toEqual(ids(p0, SA))
-    // the window from A's last rows: its frame, and B whole
-    const FROM = roomA.top + roomA.height - 9
+    // the window at the office's end (the furthest the engine scrolls: the Client's height less the window): A's last rows, its
+    // frame, and B whole
+    const FROM = m0.lines.length - BODY
     await scrollTo(ui, fixedRows(p0) + FROM, BODY)
     const p1 = await officeProps(ui)
     const w1 = windowNow(p1)

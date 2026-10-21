@@ -41,14 +41,14 @@ export function drawerLimits(columns: number): DrawerLimits {
   return columns < DRAWER_NARROW_BELOW ? { task: TASK_LINES_NARROW, result: RESULT_LINES_NARROW } : { task: TASK_LINES, result: RESULT_LINES }
 }
 /**
- * The help rows: a label key and the keys shown beside it (spec §6.4; the still toggle's `s` since Task 2.8b-3). The close
+ * The help rows: a label key and the keys shown beside it (spec §6.4; no `s`: the motion toggle is gone — live check 7, Q9). The close
  * row promises `x` alone: Escape never reaches a Client — it hands the keyboard back to the prompt (engine types,
  * ClientKeyEvent) — so the help must not offer it.
  */
 export const HELP: ReadonlyArray<readonly [string, string]> = [
-  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scStill', 's'], ['scSettings', 'h'],
+  ['scFinished', 'f'], ['scMove', 'k / j'], ['scOpen', 'o · Enter'], ['scClose', 'x'], ['scMute', 'm'], ['scLang', 'l'], ['scDemo', 'd'], ['scSettings', 'h'],
 ]
-/** The settings popover's row of Buttons (demo, motion, language): the rare controls, moved off the toolbar (Task 2.8b-3). */
+/** The settings popover's row of Buttons (demo, language): the rare controls, moved off the toolbar (Task 2.8b-3; the motion toggle gone since live check 7). */
 export const HELP_BUTTON_ROWS = 1
 /** The rows of the first pair when the shortcuts are drawn in two column pairs (from WIDE_FROM: the probe's). */
 export const HELP_PAIR_ROWS = 5

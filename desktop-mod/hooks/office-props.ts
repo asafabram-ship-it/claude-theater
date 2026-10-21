@@ -75,7 +75,8 @@ export type OfficeProps = {
   offset: number
   nowMin: number
   counts: { run: number; idle: number; done: number }
-  prefs: { showDone: boolean; muted: boolean; still: boolean }
+  /** (no `still`: the motion toggle is gone — live check 7, Q9; the stored prefs keep the field) */
+  prefs: { showDone: boolean; muted: boolean }
   search: string; selected: string | null; helpOpen: boolean; demo: boolean
   rooms: OfficeRoom[]
   drawer: OfficeDrawer | null
@@ -147,7 +148,7 @@ const wholeMinutes = (el: number | null): number | null => el === null ? null : 
  * `Elapsed 3′`, office-chrome.ts drawerLines): a key missing here draws as '' on the real mount — office-controls.test.ts
  * reads the chip through the mounted Client, where the fake-surface tests (handed every string) could not see it.
  */
-export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'settingsTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scStill', 'scSettings', 'tbDone', 'tbSound', 'tbSettings', 'hbMotion', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dMinutes', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone', 'demoNote', 'demoNoteMid', 'demoNoteShort', 'demoExit'] as const
+export const LABEL_KEYS = ['showDone', 'switchTo', 'demoLabel', 'exitDemo', 'close', 'settingsTitle', 'scFinished', 'scMove', 'scOpen', 'scClose', 'scMute', 'scLang', 'scDemo', 'scSettings', 'tbDone', 'tbSound', 'tbSettings', 'searchPlaceholder', 'working', 'idleN', 'finished', 'dWorking', 'dDone', 'dStale', 'dFailed', 'dDuration', 'dElapsed', 'dMinutes', 'dAction', 'dTask', 'dResult', 'dModel', 'taskUnavailable', 'resultTruncated', 'watchDemo', 'hideDone', 'demoNote', 'demoNoteMid', 'demoNoteShort', 'demoExit'] as const
 
 /**
  * Throws `undefined at <path>` for the first `undefined` anywhere in `v`
@@ -253,7 +254,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
     return {
       v: 1, lang, rtl, columns: input.columns, rows: input.rows, offset: Math.max(0, input.offset), nowMin,
       counts: headerCounts(office.agents),
-      prefs: { showDone: prefs.showDone, muted: prefs.muted, still: prefs.still === true },
+      prefs: { showDone: prefs.showDone, muted: prefs.muted },
       search: view.search, selected: view.selected, helpOpen: view.helpOpen, demo: view.demo,
       rooms: outRooms, drawer, footer, usage: input.usage,
       oversized: (office.oversized ?? 0) > 0 ? L.oversizedN(office.oversized) : '',

@@ -648,7 +648,6 @@ async function setDemo($: EngineInterface, on: boolean): Promise<View> {
 
 const flipShowDone = (p: Prefs): Prefs => ({ ...p, showDone: !p.showDone })
 const flipMuted = (p: Prefs): Prefs => ({ ...p, muted: !p.muted })
-const flipStill = (p: Prefs): Prefs => ({ ...p, still: !p.still })
 const flipPin = (room: string) => (p: Prefs): Prefs => ({ ...p, pins: p.pins.includes(room) ? p.pins.filter(x => x !== room) : [...p.pins, room] })
 /** The settings popover opened or closed — and an open drawer closed with it (live check 7, Q2: the settings replace the drawer, and closing them brings no old drawer back). */
 const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen, selected: null })
@@ -703,7 +702,7 @@ const BATCH_MAX = 16
  * one) — `{ t: 'batch', i, items }`, the module's outbox: each item numbered
  * once per instance `i`, applied in order and only once (a later post carries
  * the earlier actions too); an old single action is still applied as one:
- *   showDone / mute / still / pin {room} → prefs (+ the $.store mirror)
+ *   showDone / mute / pin {room} → prefs (+ the $.store mirror)
  *   lang → prefs (+ mirror) and the pane retitled (setLang)
  *   help / close / open {id} / search {q} / demo → view (search: cleaned and
  *     capped, cleanSearch; only when it differs, so an echo or a repeated Enter
@@ -748,8 +747,6 @@ async function applyOfficeAction($: EngineInterface, data: unknown): Promise<App
       return wrote(await showDoneEverywhere($))
     case 'mute':
       return wrote(await savePrefs($, flipMuted))
-    case 'still':
-      return wrote(await savePrefs($, flipStill))
     case 'pin':
       return typeof m.room === 'string' ? wrote(await savePrefs($, flipPin(m.room))) : NOTHING
     case 'lang':

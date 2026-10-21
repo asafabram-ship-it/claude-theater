@@ -23,7 +23,7 @@ function room(over: Partial<OfficeRoom> = {}): OfficeRoom {
 function props(over: Partial<OfficeProps> = {}): OfficeProps {
   return {
     v: 1, lang: 'he', rtl: true, columns: 45, rows: 30, offset: 0, nowMin: 0,
-    counts: { run: 2, idle: 0, done: 0 }, prefs: { showDone: false, muted: false, still: false },
+    counts: { run: 2, idle: 0, done: 0 }, prefs: { showDone: false, muted: false },
     search: '', selected: null, helpOpen: false, demo: false,
     rooms: [room()],
     drawer: null, footer: '', oversized: '', usage: null, empty: null, labels: {}, ...over,

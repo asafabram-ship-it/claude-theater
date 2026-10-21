@@ -90,8 +90,8 @@ const HIDE_LINE = nb(`▾ ${HIDE_LABEL}`)   // (the arrow follows the state: liv
  *                    frozen 100 centred by 10 at 120 — the pointer's x counts the margin);
  *   toolbar / settings  the three labels of each, in Hebrew and in English: their words when the set fits the line by
  *                    LINE_FIT (office-chrome.ts labelsFit, the whole column: the probe's L), else the icons alone — a 34-cell
- *                    column holds the settings' set (26 ≤ 28) but not the toolbar's, 51 and 100 both; `exitDemo` the demo Button
- *                    while the demo runs (`יציאה ✕ 🎬`, which at 34 cells no longer fits beside the other two: the icons alone, `✕ 🎬`);
+ *                    column holds the settings' two (17 ≤ 28) but not the toolbar's, 51 and 100 both; `exitDemo` the demo Button
+ *                    while the demo runs (`יציאה ✕ 🎬`: beside the language at every one of the three);
  *   hotkeys          whether the Buttons carry their letters as hotkeys (from COMPACT_BELOW: the desktop draws a chip per hotkey);
  *   searchRows       the chrome's rows while the search field is drawn: 6 with the field on its own line, 4 beside the
  *                    toolbar from ONE_LINE_FROM;
@@ -104,10 +104,11 @@ const HIDE_LINE = nb(`▾ ${HIDE_LABEL}`)   // (the arrow follows the state: liv
  *                    is cut to the card's inner width by FIT, which 34 columns' 22 cells do not hold.
  */
 type Labels = readonly [string, string, string]
+type Settings = readonly [string, string]
 type Width = {
   column: number; margin: number
   toolbar: Labels; toolbarEn: Labels
-  settings: Labels; settingsEn: Labels; exitDemo: string; frozen: string
+  settings: Settings; settingsEn: Settings; exitDemo: string
   /** The demo line's note at this width (office-chrome.ts demoLine: the longest that fits beside the exit Button by LINE_FIT). */
   demoNote: string
   hotkeys: boolean; searchRows: number; helpRows: number
@@ -117,8 +118,9 @@ type Width = {
 const WORDS_HE: Labels = ['הצג שסיימו ☐', 'צליל 🔔', 'הגדרות ⚙️']
 const WORDS_EN: Labels = ['☐ Show finished', '🔔 Sound', '⚙️ Settings']
 const ICONS: Labels = ['☐', '🔔', '⚙️']
-const SETTINGS_HE: Labels = ['דמו 🎬', 'תנועה 🎞', '🌐 English']
-const SETTINGS_EN: Labels = ['🎬 Demo', '🎞 Motion', '🌐 עברית']
+/** The settings' two Buttons (the motion toggle gone: live check 7, Q9). */
+const SETTINGS_HE: Settings = ['דמו 🎬', '🌐 English']
+const SETTINGS_EN: Settings = ['🎬 Demo', '🌐 עברית']
 /** The demo line's notes (live check 5): the whole sentence, and the middle form a narrow pane draws. */
 const DEMO_NOTE = '🎬 זו הדגמה - הסוכנים לא אמיתיים'
 const DEMO_NOTE_MID = '🎬 הדגמה - לא אמיתיים'
@@ -129,9 +131,9 @@ const DEMO_ROOMS = ['demo-session-frontend-1111', DEMO_S2]
 const DEMO_DONE = ['demo-writer-ff', 'demo-survey-ii', 'demo-bench-jj', 'demo-dedupe-kk', 'demo-label-ll']
 const DEMO_HELD = DEMO_DONE.slice(RECENT_DONE)
 const WIDTHS: Record<36 | 53 | 120, Width> = {
-  36: { column: 34, margin: 1, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
-  53: { column: 51, margin: 1, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
-  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+  36: { column: 34, margin: 1, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 14, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
+  53: { column: 51, margin: 1, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 14, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE, hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
 }
 type Columns = keyof typeof WIDTHS
 
@@ -415,8 +417,9 @@ function suite(COLUMNS: Columns): void {
     // the settings' labels, hotkeys and rows
     expect(helpRows(COLUMNS)).toBe(W.helpRows)
     await ui.press({ key: 'help' })
-    expect([await label(ui, 'demo'), await label(ui, 'still'), await label(ui, 'lang')]).toEqual(W.settings)
-    expect([await hotkeyOf(ui, 'demo'), await hotkeyOf(ui, 'still'), await hotkeyOf(ui, 'lang')]).toEqual(W.hotkeys ? ['d', 's', 'l'] : [undefined, undefined, undefined])
+    expect([await label(ui, 'demo'), await label(ui, 'lang')]).toEqual(W.settings)
+    expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' })).toBeUndefined()   // (no motion toggle: live check 7, Q9)
+    expect([await hotkeyOf(ui, 'demo'), await hotkeyOf(ui, 'lang')]).toEqual(W.hotkeys ? ['d', 'l'] : [undefined, undefined])
     expect(propsOf((await overlay(ui))!).height).toBe(W.helpRows)
     expect(await hotkeyOf(ui, 'closeHelp')).toBe('x')   // (as the drawer's close: live check 7, R9)
     await ui.unmount()
@@ -471,7 +474,7 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('⚙️ settings: the Button opens the settings popover (view.helpOpen: the framed Box titled הגדרות with the demo / still / lang Buttons and the shortcut rows, the chrome taller by its rows and the gap, the cards under it as they were); its ✕ closes it; h opens and closes it too', async ($, on) => {
+  t('⚙️ settings: the Button opens the settings popover (view.helpOpen: the framed Box titled הגדרות with the demo / lang Buttons and the shortcut rows, the chrome taller by its rows and the gap, the cards under it as they were); its ✕ closes it; h opens and closes it too', async ($, on) => {
     // (a pane tall enough for room A's whole card under the popover — its padding lines make it helpRows tall — so the rows compare whole)
     const { ui } = await mountOffice($, on, fixture, { offset: 0, bodyRows: 40 })
     const p0 = await officeProps(ui)
@@ -488,12 +491,12 @@ function suite(COLUMNS: Columns): void {
     expect(textOf(help!)).toMatch(/הגדרות/)
     expect(textOf(help!)).toContain(nb('k / j'))   // (the shortcuts' column-major table: no plain space in a row)
     expect(textOf(help!)).not.toMatch(/עזרה|קיצורי מקלדת|Esc/)
-    for (const k of ['demo', 'still', 'lang', 'closeHelp']) expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: k }), k).toBeDefined()
+    for (const k of ['demo', 'lang', 'closeHelp']) expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: k }), k).toBeDefined()
     expect(rowsOf(await cardOf(ui, p1, SA))).toEqual(rowsA)
     await ui.press({ key: 'closeHelp' })
     expect((await officeProps(ui)).helpOpen).toBe(false)
     expect(await overlay(ui)).toBeUndefined()
-    for (const k of ['demo', 'still', 'lang', 'closeHelp']) expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: k }), k).toBeUndefined()
+    for (const k of ['demo', 'lang', 'closeHelp']) expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: k }), k).toBeUndefined()
     await ui.key({ in: OFFICE_KEY, key: 'h' })
     expect((await officeProps(ui)).helpOpen).toBe(true)
     expect(await overlay(ui)).toBeDefined()
@@ -602,25 +605,16 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('🎞 still: the settings\' Button flips prefs.still (mirrored to $.store) and reads 🖼; pressed again, 🎞; closed, s does the same', async ($, on) => {
+  t('🎞 still is GONE (live check 7, Q9: nothing read it): no still Button in the settings, and s changes nothing (no write, the props as they were)', async ($, on) => {
     const { ui, captured } = await mountOffice($, on)
-    expect((await officeProps(ui)).prefs.still).toBe(false)
     await ui.press({ key: 'help' })
-    expect(await label(ui, 'still')).toBe(W.settings[1])
-    await ui.press({ key: 'still' })
-    expect((await officeProps(ui)).prefs.still).toBe(true)
-    expect((captured.store.prefs as Prefs & { still?: boolean }).still).toBe(true)
-    expect(await label(ui, 'still')).toBe(W.frozen)
-    expect((await officeProps(ui)).helpOpen).toBe(true)
-    await ui.press({ key: 'still' })
-    expect((await officeProps(ui)).prefs.still).toBe(false)
-    expect(await label(ui, 'still')).toBe(W.settings[1])
-    await ui.press({ key: 'closeHelp' })
     expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' })).toBeUndefined()
+    await ui.press({ key: 'closeHelp' })
+    const before = JSON.stringify(await officeProps(ui))
+    const writes = { ...captured.writes }
     await ui.key({ in: OFFICE_KEY, key: 's' })
-    expect((await officeProps(ui)).prefs.still).toBe(true)
-    await ui.key({ in: OFFICE_KEY, key: 's' })
-    expect((await officeProps(ui)).prefs.still).toBe(false)
+    expect(JSON.stringify(await officeProps(ui))).toBe(before)
+    expect(captured.writes).toEqual(writes)
     await ui.unmount()
   })
 
@@ -630,14 +624,14 @@ function suite(COLUMNS: Columns): void {
     expect([p0.lang, p0.rtl]).toEqual(['he', true])
     expect(hitOf(p0, 'pin', SA).x).toBe(GEO.W - PIN_ZONE)
     await ui.press({ key: 'help' })
-    expect(await label(ui, 'lang')).toBe(W.settings[2])
+    expect(await label(ui, 'lang')).toBe(W.settings[1])
     await ui.press({ key: 'lang' })
     const p1 = await officeProps(ui)
     expect([p1.lang, p1.rtl]).toEqual(['en', false])
     expect((captured.store.prefs as Prefs).lang).toBe('en')
     expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 Theater')
     expect(p1.helpOpen).toBe(true)
-    expect([await label(ui, 'demo'), await label(ui, 'still'), await label(ui, 'lang')]).toEqual(W.settingsEn)
+    expect([await label(ui, 'demo'), await label(ui, 'lang')]).toEqual(W.settingsEn)
     expect([await label(ui, 'showDone'), await label(ui, 'mute'), await label(ui, 'help')]).toEqual(W.toolbarEn)
     expect(p1.labels.settingsTitle).toBe('Settings')
     expect(roomOf(p1, SA).moreLabel).toBe('1 more finished')
@@ -662,7 +656,7 @@ function suite(COLUMNS: Columns): void {
     expect([p2.lang, p2.rtl]).toEqual(['he', true])
     expect((captured.store.prefs as Prefs).lang).toBe('he')
     expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 התיאטרון')
-    expect(await label(ui, 'lang')).toBe(W.settings[2])
+    expect(await label(ui, 'lang')).toBe(W.settings[1])
     expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
     expect(roomOf(p2, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'he'))
     // THE HYSTERESIS is about the width (office-layout.ts ModeToken): the names moved the widest values again, so the Hebrew
@@ -982,7 +976,7 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('hotkeys f / m / h / d / s / l: each flips its control from the keyboard with the settings closed — showDone, muted, helpOpen, demo, still, the language — and back; a letter with ctrl held does nothing', async ($, on) => {
+  t('hotkeys f / m / h / d / l: each flips its control from the keyboard with the settings closed — showDone, muted, helpOpen, demo, the language — and back; a letter with ctrl held does nothing, nor s (no motion toggle: live check 7)', async ($, on) => {
     const { ui } = await mountOffice($, on)
     const p = () => officeProps(ui)
     const flip = async (key: string, read: (p: OfficeProps) => unknown, off: unknown, on: unknown) => {
@@ -996,11 +990,12 @@ function suite(COLUMNS: Columns): void {
     await flip('m', q => q.prefs.muted, false, true)
     await flip('h', q => q.helpOpen, false, true)
     await flip('d', q => q.demo, false, true)
-    await flip('s', q => q.prefs.still, false, true)
+    // (no s: the motion toggle is gone — live check 7, Q9; the last lines check that it changes nothing)
     await flip('l', q => q.lang, 'he', 'en')
     const before = JSON.stringify(await p())
     await ui.key({ in: OFFICE_KEY, key: 'f', ctrl: true })
     await ui.key({ in: OFFICE_KEY, key: 'q' })
+    await ui.key({ in: OFFICE_KEY, key: 's' })
     expect(JSON.stringify(await p())).toBe(before)
     await ui.unmount()
   })

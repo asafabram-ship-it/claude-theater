@@ -49,7 +49,7 @@ export type Strings = {
   emptyOffice: string; emptySub: string; watchDemo: string; demoLabel: string; exitDemo: string
   langHint: string; close: string; loading: string; helpTitle: string; helpHint: string
   scSearch: string; scFinished: string; scMove: string; scOpen: string; scClose: string
-  scMute: string; scLang: string; scDemo: string; scStill: string; scHelp: string; scPrev: string; scNext: string
+  scMute: string; scLang: string; scDemo: string; scHelp: string; scPrev: string; scNext: string
   /**
    * The office toolbar's words (the cards design, refinement 7): `הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️` — the word alone
    * here, the icon laid by the Client (office-layout.ts iconLabel: after a Hebrew word in the string, before any other).
@@ -57,8 +57,6 @@ export type Strings = {
   tbDone: string; tbSound: string; tbSettings: string
   /** The settings popover's title (the office Client's; the text cards keep helpTitle) and its row in the shortcuts. */
   settingsTitle: string; scSettings: string
-  /** The settings popover's motion toggle word (🎞 motion on, 🖼 frozen); the demo and language Buttons use demoLabel / exitDemo and switchTo. */
-  hbMotion: string
   /**
    * THE DEMO LINE (live check 5: Asaf looked at the demo without knowing it): the line under the office's header while the
    * demo runs — the note (the whole sentence, a middle form, a short one: office-chrome.ts demoLine picks the longest that
@@ -105,9 +103,9 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     loading: 'Loading…', helpTitle: 'Help', helpHint: 'Keyboard shortcuts',
     scSearch: 'Search', scFinished: 'Show / hide finished', scMove: 'Move between agents',
     scOpen: 'Open details', scClose: 'Close panel',
-    scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scStill: 'Freeze / release the motion', scHelp: 'This help',
+    scMute: 'Mute / unmute chime', scLang: 'Switch language', scDemo: 'Demo on / off', scHelp: 'This help',
     scPrev: 'Previous agent', scNext: 'Next agent',
-    tbDone: 'Show finished', tbSound: 'Sound', tbSettings: 'Settings', settingsTitle: 'Settings', scSettings: 'Settings', hbMotion: 'Motion',
+    tbDone: 'Show finished', tbSound: 'Sound', tbSettings: 'Settings', settingsTitle: 'Settings', scSettings: 'Settings',
     demoNote: 'Demo - these agents are not real', demoNoteMid: 'Demo - not real', demoNoteShort: 'Demo', demoExit: 'Exit demo',
     resultTruncated: 'Result shortened — open the terminal for the full output',
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
@@ -139,9 +137,9 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     loading: 'טוען…', helpTitle: 'עזרה', helpHint: 'קיצורי מקלדת',
     scSearch: 'חיפוש', scFinished: 'הצג / הסתר שהושלמו', scMove: 'מעבר בין סוכנים',
     scOpen: 'פתיחת פרטים', scClose: 'סגירת החלונית',
-    scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scStill: 'תנועה: הקפאה / שחרור', scHelp: 'העזרה הזו',
+    scMute: 'השתקה / ביטול השתקה', scLang: 'החלפת שפה', scDemo: 'דמו: הפעלה / יציאה', scHelp: 'העזרה הזו',
     scPrev: 'הסוכן הקודם', scNext: 'הסוכן הבא',
-    tbDone: 'הצג שסיימו', tbSound: 'צליל', tbSettings: 'הגדרות', settingsTitle: 'הגדרות', scSettings: 'הגדרות', hbMotion: 'תנועה',
+    tbDone: 'הצג שסיימו', tbSound: 'צליל', tbSettings: 'הגדרות', settingsTitle: 'הגדרות', scSettings: 'הגדרות',
     demoNote: 'זו הדגמה - הסוכנים לא אמיתיים', demoNoteMid: 'הדגמה - לא אמיתיים', demoNoteShort: 'זו הדגמה', demoExit: 'יציאה',
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש',

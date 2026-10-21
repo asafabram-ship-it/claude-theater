@@ -96,7 +96,7 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.resize({ in: OFFICE_KEY, columns: 90, rows: 40 })
   const p0 = await propsOf(ui)
-  expect(p0.prefs).toEqual({ showDone: false, muted: false, still: false })
+  expect(p0.prefs).toEqual({ showDone: false, muted: false })
   expect(p0.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1', 'a2'], ['b1']])   // (a2, finished, is among room A's recent finished)
 
   // showDone (the toolbar Button): the pref and its store mirror, nothing else; the finished writer is drawn
@@ -108,22 +108,19 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   expect(await writesOf(captured, () => ui.key({ in: OFFICE_KEY, key: 'f' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
   expect((await propsOf(ui)).prefs.showDone).toBe(false)
 
-  // mute / still: one pref each
+  // mute: one pref
   expect(await writesOf(captured, () => ui.press({ key: 'mute' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
   expect((captured.store.prefs as { muted: boolean }).muted).toBe(true)
   expect((await propsOf(ui)).prefs.muted).toBe(true)
-  // (the still Button lives in the help popover since Task 2.8b-3: its letter with the help closed, its Button with it open)
-  expect(await writesOf(captured, () => ui.key({ in: OFFICE_KEY, key: 's' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
-  expect((await propsOf(ui)).prefs.still).toBe(true)
-  expect(await ui.find({ in: OFFICE_KEY, key: 'still' })).toBeUndefined()
+  // (no motion toggle — live check 7, Q9: nothing read it — so `s` writes nothing; an old `still` post neither)
+  expect(await writesOf(captured, () => ui.key({ in: OFFICE_KEY, key: 's' }))).toEqual({})
+  expect(await writesOf(captured, () => ui.post({ t: 'still' }, { in: OFFICE_KEY }))).toEqual({})
 
-  // help: one view write each way; open, it holds the still / demo / language Buttons
+  // help: one view write each way; open, it holds the demo / language Buttons
   expect(await writesOf(captured, () => ui.press({ key: 'help' }))).toEqual({ view: 1 })
   expect((await propsOf(ui)).helpOpen).toBe(true)
-  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('תנועה 🖼')
-  expect(await writesOf(captured, () => ui.press({ key: 'still' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
-  expect((await propsOf(ui)).prefs.still).toBe(false)
-  expect((await ui.find({ in: OFFICE_KEY, key: 'still' }))?.text).toBe('תנועה 🎞')
+  expect(await ui.find({ in: OFFICE_KEY, key: 'still' })).toBeUndefined()
+  expect(await writesOf(captured, () => ui.press({ key: 'mute' }))).toEqual({ prefs: 1, 'store:prefs': 1 })
   expect((await propsOf(ui)).helpOpen).toBe(true)   // a pref flip leaves the help open
   await ui.press({ key: 'help' })
   expect((await propsOf(ui)).helpOpen).toBe(false)

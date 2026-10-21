@@ -51,7 +51,7 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   // empty office's demo Button, the failed chip: the WORD passes on its own; the icon is laid after it in the string so the
   // reader meets it first (office-layout.ts iconLabel, proven by office-layout.test.ts visualRtlReading) — a trailing icon is
   // the one trailing neutral the rule allows for, because it is meant to be read before the word
-  for (const k of ['tbDone', 'tbSound', 'tbSettings', 'hbMotion', 'demoLabel', 'exitDemo', 'scStill', 'close', 'dFailed'] as const) check(k, L[k])
+  for (const k of ['tbDone', 'tbSound', 'tbSettings', 'demoLabel', 'exitDemo', 'close', 'dFailed'] as const) check(k, L[k])
   check('placeholder word', L.searchPlaceholder.replace(/…$/, ''))
   check('watchDemo word', L.watchDemo.replace(/^\S+\s/, ''))
   expect(L.watchDemo).toMatch(/^▶ /)   // (worded mark-first for the text cards; the office Client re-lays it)

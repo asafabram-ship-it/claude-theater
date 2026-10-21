@@ -42,7 +42,7 @@ function props(over: Partial<OfficeProps> = {}): OfficeProps {
   const rooms = over.rooms ?? [room('A', [ag('lead', { emoji: '💼', act: '🧠 חושב' }), ag('a1')])]
   return {
     v: 1, lang: 'he', rtl: true, columns: 45, rows: 30, offset: 0, nowMin: 100,
-    counts: countsOf(rooms), prefs: { showDone: false, muted: true, still: false },
+    counts: countsOf(rooms), prefs: { showDone: false, muted: true },
     search: '', selected: null, helpOpen: false, demo: false,
     rooms, drawer: null, footer: '', oversized: '', usage: null, empty: null, labels: LABELS, ...over,
   }
@@ -352,7 +352,7 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   expect(chromeRows({ ...p, helpOpen: true, drawer: drawer() })).toBe(CHROME_ROWS_MIN + helpRows(p.columns) + OVERLAY_GAP)
   // the settings' shortcuts in two column pairs from WIDE_FROM: the popover is the first pair's rows tall
   expect(helpRows(45)).toBe(2 + 2 + 1 + 1 + HELP.length)
-  expect(helpRows(pane(WIDE_FROM - 1))).toBe(15)
+  expect(helpRows(pane(WIDE_FROM - 1))).toBe(14)   // (eight shortcut rows: no s row since live check 7, Q9)
   expect(helpRows(pane(WIDE_FROM))).toBe(2 + 2 + 1 + 1 + HELP_PAIR_ROWS)
   expect(helpRows(200)).toBe(11)
   expect(helpPairs(false)).toEqual([HELP])
@@ -407,7 +407,7 @@ test('render: the chrome (header with the words and a blank line, the toolbar wi
   expect((header.children[0] as Node).props.bold).toBe(true)
   expect(texts(header)).toBe('🎭 עובדים 2 · סיימו 0')
   const keys = all.filter(n => n.type === 'Button').map(n => n.props.key)
-  expect(keys).toEqual(['showDone', 'mute', 'help'])   // (demo, still and the language live in the settings popover)
+  expect(keys).toEqual(['showDone', 'mute', 'help'])   // (the demo and the language live in the settings popover)
   expect(byKey(tree, 'toolbar')).toMatchObject({ props: { flexDirection: 'row-reverse', gap: TOOLBAR_GAP, height: 1, overflow: 'hidden', marginBottom: 1 } })
   expect(byKey(tree, 'searchLine')).toBeUndefined()
   expect(all.find(n => n.type === 'Input')).toBeUndefined()
@@ -596,7 +596,7 @@ test('THE OUTBOX (live check 7, R12: one post per frame, a later one replacing a
   expect((g.raw[0] as { i: string }).i).not.toBe(first!.i)
 })
 
-test('THE FINISH IS THE ⭐ ALONE (live check 6: the row\'s tint flashed a near-black band on the light theme): a new ⭐ stamp marks the finisher\'s status column and nothing else — no cell tinted, no clock started, no redraw of the module\'s own; the first props, a status change, a newcomer and `still` alike; the module exports no tint', () => {
+test('THE FINISH IS THE ⭐ ALONE (live check 6: the row\'s tint flashed a near-black band on the light theme): a new ⭐ stamp marks the finisher\'s status column and nothing else — no cell tinted, no clock started, no redraw of the module\'s own; the first props, a status change and a newcomer alike; the module exports no tint', () => {
   expect(Object.keys(OfficeClient)).not.toContain('FX_BG')
   expect(Object.keys(OfficeClient)).not.toContain('FX_DONE_MS')
   expect(Object.keys(OfficeClient)).not.toContain('FX_TICK_MS')
@@ -615,11 +615,11 @@ test('THE FINISH IS THE ⭐ ALONE (live check 6: the row\'s tint flashed a near-
   expect(bg(tree)).toEqual([])
   expect(f.timers).toHaveLength(0)
   expect(f.setStates()).toBe(sets)
-  // a status change, a newcomer, a star under still: the same
+  // a status change, a newcomer, a star: the same
   p = withAgents(p, [...p.rooms[0]!.agents.map(a => a.id === 'a1' ? { ...a, status: 'stale' as const } : a), ag('n1')])
   tree = Office(p, f.surface)
   p = withAgents(p, p.rooms[0]!.agents.map(a => a.id === 'n1' ? { ...a, status: 'done' as const, star: 9500, act: '✅ סיים' } : a))
-  tree = Office({ ...p, prefs: { ...p.prefs, still: true } }, f.surface)
+  tree = Office({ ...p }, f.surface)
   expect(bg(tree)).toEqual([])
   tree = Office(p, f.surface)
   expect(bg(tree)).toEqual([])
@@ -1065,19 +1065,20 @@ test('keys after a click: j/k walk the rows with no post (the keyboard focus is 
   expect(f.posts[0]).toEqual({ t: 'open', id: 'a1' })
   f.key({ key: 'o' })
   expect(f.posts[1]).toEqual({ t: 'open', id: 'a1' })
-  for (const [k, t] of [['x', 'close'], ['f', 'showDone'], ['m', 'mute'], ['l', 'lang'], ['h', 'help'], ['d', 'demo'], ['s', 'still']] as const) {
+  for (const [k, t] of [['x', 'close'], ['f', 'showDone'], ['m', 'mute'], ['l', 'lang'], ['h', 'help'], ['d', 'demo']] as const) {
     f.key({ key: k })
     // (d posts the demo's target: on, from an office not in the demo — live check 7, R7)
     expect(f.posts[f.posts.length - 1]).toEqual(t === 'demo' ? { t, on: true } : { t })
   }
   f.key({ key: 'q' })
+  f.key({ key: 's' })   // (no motion toggle: live check 7, Q9)
   f.key({ key: 'f', ctrl: true })
-  expect(f.posts.length).toBe(9)
+  expect(f.posts.length).toBe(8)
   expect(f.posts.some(m => (m as { t: string }).t === 'focus')).toBe(false)
   // a focused agent that leaves the office: the focus is dropped, no stale post
   Office(withAgents(p, [ag('lead')]), f.surface)
   f.key({ key: 'o' })
-  expect(f.posts.length).toBe(9)
+  expect(f.posts.length).toBe(8)
 })
 
 test('keys: j / k keep to the rows drawn — from no focus, j lands on the window\'s first row and stops at its last; a focus scrolled out of the window restarts from the window\'s first (j) or last (k) row; o opens the focus', () => {
@@ -1335,31 +1336,31 @@ test('THE HYSTERESIS is about the width (office-layout.ts ModeToken): a transien
   expect(g.surface.state!.inst.lastMode).toEqual(officeModel(at(44, renamed)).token)
 })
 
-test('the settings popover on a narrow pane (the probe\'s): the three Buttons in words whenever they fit the line by LINE_FIT of the whole column (`דמו 🎬 · תנועה 🎞 · 🌐 English` at 32: 26 = L), else the icons alone; the shortcut labels cut (by LINE_FIT, as the title is) to what the popover\'s inner width leaves after the widest key and the padding cell, so the keys are never clipped — at 32 a cut label beside a whole `o · Enter`, at 45, 51 and 80 nothing cut', () => {
+test('the settings popover on a narrow pane (the probe\'s): the two Buttons (no motion toggle since live check 7, Q9) in words whenever they fit the line by LINE_FIT of the whole column (`דמו 🎬 · 🌐 English`: 17 cells, from a 21-cell column), else the icons alone; the shortcut labels cut (by LINE_FIT, as the title is) to what the popover\'s inner width leaves after the widest key and the padding cell, so the keys are never clipped — at 32 a cut label beside a whole `o · Enter`, at 45, 51 and 80 nothing cut', () => {
   const table = (tree: unknown, i = 0) => (((byKey(tree, 'help')!.children as Node[])[2]!.children as Node[])[i]!.children as Node[])
   const labelsOf = (tree: unknown, i = 0) => cellsOf(table(tree, i)[0]!).map(n => texts(n))
   const keysOf = (tree: unknown, i = 0) => cellsOf(table(tree, i)[1]!).map(n => texts(n))
-  const buttons = (tree: unknown) => ['demo', 'still', 'lang'].map(k => nodes(tree).find(n => n.type === 'Button' && n.props.key === k)!.props.label)
+  const buttons = (tree: unknown) => ['demo', 'lang'].map(k => nodes(tree).find(n => n.type === 'Button' && n.props.key === k)!.props.label)
   const t32 = Office(props({ columns: pane(32), helpOpen: true }), fake(pane(32)).surface)
-  expect(buttons(t32)).toEqual(['דמו 🎬', 'תנועה 🎞', '🌐 English'])
-  expect(labelsFit(['דמו 🎬', 'תנועה 🎞', '🌐 English'], 32)).toBe(true)
-  expect(labelsFit(['דמו 🎬', 'תנועה 🎞', '🌐 English'], 31)).toBe(false)
-  expect(buttons(Office(props({ columns: pane(31), helpOpen: true }), fake(pane(31)).surface))).toEqual(['🎬', '🎞', 'EN'])
-  // while the demo runs the first is `יציאה ✕ 🎬` (10): the three (30) no longer fit 32..36 — the icons, the demo's keeping its ✕
-  expect(buttons(Office(props({ columns: pane(32), helpOpen: true, demo: true }), fake(pane(32)).surface))).toEqual(['✕ 🎬', '🎞', 'EN'])
-  expect(buttons(Office(props({ columns: pane(36), helpOpen: true, demo: true }), fake(pane(36)).surface))).toEqual(['✕ 🎬', '🎞', 'EN'])   // 30 > 29 = L(36)
-  expect(buttons(Office(props({ columns: pane(37), helpOpen: true, demo: true }), fake(pane(37)).surface))).toEqual(['יציאה ✕ 🎬', 'תנועה 🎞', '🌐 English'])
+  expect(buttons(t32)).toEqual(['דמו 🎬', '🌐 English'])
+  expect(nodes(t32).some(n => n.type === 'Button' && n.props.key === 'still')).toBe(false)
+  expect(labelsFit(['דמו 🎬', '🌐 English'], 21)).toBe(true)
+  expect(labelsFit(['דמו 🎬', '🌐 English'], 20)).toBe(false)
+  expect(buttons(Office(props({ columns: pane(20), helpOpen: true }), fake(pane(20)).surface))).toEqual(['🎬', 'EN'])
+  // while the demo runs the first is `יציאה ✕ 🎬` (10): the two (21) fit from a 26-cell column — under it the icons, the demo's keeping its ✕
+  expect(buttons(Office(props({ columns: pane(25), helpOpen: true, demo: true }), fake(pane(25)).surface))).toEqual(['✕ 🎬', 'EN'])
+  expect(buttons(Office(props({ columns: pane(26), helpOpen: true, demo: true }), fake(pane(26)).surface))).toEqual(['יציאה ✕ 🎬', '🌐 English'])
   // the shortcuts at 32: the room fitLine(28) = 23 cells, the keys 9 (`o · Enter`), the padding 1 — the labels 13 at most, cut with an ellipsis; the keys whole
   expect(fitLine(geometry(pane(32)).inner) - textWidth('o · Enter') - 1).toBe(13)
   const labels32 = labelsOf(t32)
   expect(labels32).toHaveLength(HELP.length)
   for (const l of labels32) expect(textWidth(l)).toBeLessThanOrEqual(13)
-  expect(labels32[7]).toBe(nb(cut(LABELS.scStill!, 13)))
-  expect(labels32[7]).toMatch(/…$/)
+  expect(labels32[0]).toBe(nb(cut(LABELS.scFinished!, 13)))
+  expect(labels32[0]).toMatch(/…$/)
   expect(labels32[3]).toBe(nb(LABELS.scClose!))   // 13 cells: whole
   expect(keysOf(t32)).toEqual(HELP.map(([, k]) => nb(k)))
   for (const l of [...labels32, ...keysOf(t32)]) expect(l).not.toContain(' ')
-  // wider: nothing cut — the probe's labels whole (at 80 the two pairs' 51 cells within fitLine(74) - PAIRS_GAP = 57)
+  // wider: nothing cut — the probe's labels whole (at 80 the two pairs within fitLine(74) - PAIRS_GAP = 57)
   for (const columns of [45, 51, 79, 80, 120]) {
     const t = Office(props({ columns: pane(columns), helpOpen: true }), fake(pane(columns)).surface)
     helpPairs(geometry(pane(columns)).wide).forEach((pair, i) => {
@@ -1367,10 +1368,10 @@ test('the settings popover on a narrow pane (the probe\'s): the three Buttons in
       expect(keysOf(t, i), `${columns} pair ${i}`).toEqual(pair.map(([, k]) => nb(k)))
     })
   }
-  // English at 45: the longest label (`Freeze / release the motion`, 27) is cut beside the 9-cell key (fitLine(41) = 34 - 10 = 24); at 51 whole
-  const en45 = labelsOf(Office(props({ columns: pane(45), helpOpen: true, lang: 'en', rtl: false, labels: LABELS_EN }), fake(pane(45)).surface))
-  expect(en45[7]).toBe(nb(cut(LABELS_EN.scStill!, 24)))
-  expect(labelsOf(Office(props({ columns: pane(51), helpOpen: true, lang: 'en', rtl: false, labels: LABELS_EN }), fake(pane(51)).surface))[7]).toBe(nb(LABELS_EN.scStill!))
+  // English at 32: the longest label (`Show / hide finished`, 20) cut beside the 9-cell key; at 45 whole (fitLine(41) = 34 - 10 = 24)
+  const en32 = labelsOf(Office(props({ columns: pane(32), helpOpen: true, lang: 'en', rtl: false, labels: LABELS_EN }), fake(pane(32)).surface))
+  expect(en32[0]).toBe(nb(cut(LABELS_EN.scFinished!, 13)))
+  expect(labelsOf(Office(props({ columns: pane(45), helpOpen: true, lang: 'en', rtl: false, labels: LABELS_EN }), fake(pane(45)).surface))).toEqual(HELP.map(([k]) => nb(LABELS_EN[k]!)))
 })
 
 test('the drawer under DRAWER_NARROW_BELOW columns (the probe\'s): the task wraps to TASK_LINES_NARROW lines and the result to RESULT_LINES_NARROW — one fewer each — so the card is two rows shorter at 32 than at 34; the module\'s drawer, overlayRows and chromeRows agree', () => {
@@ -1464,7 +1465,7 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   expect(f.posts[1]).toEqual({ t: 'close' })   // (a close, never a flip — as the drawer's: live check 7, R9)
   expect(closeHelp.props).toMatchObject({ role: 'dismiss', hotkey: 'x', label: 'סגירה ✕' })
   // the toolbar, and the settings' own Buttons (the popover is open here)
-  for (const [key, t2] of [['showDone', 'showDone'], ['mute', 'mute'], ['help', 'help'], ['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
+  for (const [key, t2] of [['showDone', 'showDone'], ['mute', 'mute'], ['help', 'help'], ['demo', 'demo'], ['lang', 'lang']] as const) {
     const b = nodes(tree).find(n => n.type === 'Button' && n.props.key === key)!
     ;(b.props.onPress as () => void)()
     expect(f.posts[f.posts.length - 1]).toEqual(t2 === 'demo' ? { t: t2, on: true } : { t: t2 })   // (the demo's target: R7)
@@ -1473,9 +1474,9 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   // it, where it once forced it on and the box seemed dead); its press flips the pref. (The icon trails the Hebrew word.)
   const doneBox = (q: OfficeProps) => nodes(Office(q, fake().surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!
   expect(doneBox(props()).props.label).toBe('הצג שסיימו ☐')
-  expect(doneBox(props({ prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('הצג שסיימו ☑')
+  expect(doneBox(props({ prefs: { showDone: true, muted: true } })).props.label).toBe('הצג שסיימו ☑')
   expect(doneBox(props({ demo: true })).props.label).toBe('הצג שסיימו ☐')
-  expect(doneBox(props({ demo: true, prefs: { showDone: true, muted: true, still: false } })).props.label).toBe('הצג שסיימו ☑')
+  expect(doneBox(props({ demo: true, prefs: { showDone: true, muted: true } })).props.label).toBe('הצג שסיימו ☑')
   const g = fake()
   ;(nodes(Office(props({ demo: true }), g.surface)).find(n => n.type === 'Button' && n.props.key === 'showDone')!.props.onPress as () => void)()
   expect(g.posts).toEqual([{ t: 'showDone' }])
@@ -1504,10 +1505,10 @@ test('toolbar: three plain Buttons in words — הצג שסיימו ☐ / צלי
   const en = (over: Partial<OfficeProps> = {}) => props({ rtl: false, lang: 'en', labels: LABELS_EN, ...over })
   // (props() is muted; the chime on → 🔔)
   expect(labelsOf(props())).toEqual(['הצג שסיימו ☐', 'צליל 🔕', 'הגדרות ⚙️'])
-  expect(labelsOf(props({ prefs: { showDone: true, muted: false, still: false } }))).toEqual(['הצג שסיימו ☑', 'צליל 🔔', 'הגדרות ⚙️'])
+  expect(labelsOf(props({ prefs: { showDone: true, muted: false } }))).toEqual(['הצג שסיימו ☑', 'צליל 🔔', 'הגדרות ⚙️'])
   expect(labelsOf(props({ demo: true }))).toEqual(['הצג שסיימו ☐', 'צליל 🔕', 'הגדרות ⚙️'])   // (the demo obeys the pref: live check 5)
   expect(labelsOf(en({ columns: pane(51) }))).toEqual(['☐ Show finished', '🔕 Sound', '⚙️ Settings'])
-  expect(labelsOf(en({ columns: pane(51), prefs: { showDone: true, muted: false, still: false } }))).toEqual(['☑ Show finished', '🔔 Sound', '⚙️ Settings'])
+  expect(labelsOf(en({ columns: pane(51), prefs: { showDone: true, muted: false } }))).toEqual(['☑ Show finished', '🔔 Sound', '⚙️ Settings'])
   // the words are the labels of i18n (LABEL_KEYS: tbDone, tbSound, tbSettings), each passing THE HEBREW RULE on its own
   for (const k of ['tbDone', 'tbSound', 'tbSettings']) { expect(LABELS[k]).toBeTruthy(); expect(hebrewRuleOk(LABELS[k]!)).toBe(true); expect(LABELS_EN[k]).toBeTruthy() }
   expect(labelsOf(props()).every(l => !REFUSED_RE.test(l))).toBe(true)
@@ -1529,28 +1530,27 @@ test('toolbar: three plain Buttons in words — הצג שסיימו ☐ / צלי
   expect(labelsOf(en({ columns: pane(46) }))).toEqual(wordsEn)
 })
 
-test('settings: the popover holds the demo, motion and language Buttons in words (🎬 דמו / 🎞 תנועה / 🌐 English; ✕ יציאה and 🖼 for the states), their hotkeys d / s / l from COMPACT_BELOW, then the shortcut rows with an s row and the h row naming the settings; HELP_ROWS counts the Buttons row; closed, no such Button is drawn but d / s / l still post', () => {
+test('settings: the popover holds the demo and language Buttons in words (🎬 דמו / 🌐 English; ✕ יציאה while the demo runs) — no motion toggle (live check 7, Q9: nothing read it) — their hotkeys d / l from COMPACT_BELOW, then the shortcut rows (no s row) and the h row naming the settings; HELP_ROWS counts the Buttons row; closed, no such Button is drawn but d / l still post, s nothing', () => {
   const f = fake()
   const open = (over: Partial<OfficeProps> = {}) => props({ helpOpen: true, ...over })
   let tree = Office(open(), f.surface)
   const btn = (k: string, t: unknown = tree) => nodes(t).find(n => n.type === 'Button' && n.props.key === k)
   expect(btn('demo')?.props.label).toBe('דמו 🎬')
-  expect(btn('still')?.props.label).toBe('תנועה 🎞')
+  expect(btn('still')).toBeUndefined()
   expect(btn('lang')?.props.label).toBe('🌐 English')
   // the Buttons row sits right under the title, inside the popover; the hotkeys only when wide (the desktop draws a chip per hotkey)
   const box = byKey(tree, 'help')!
   expect(box.props.height).toBe(helpRows(pane(45)))
   expect(helpRows(pane(45))).toBe(2 + 2 + 1 + 1 + HELP.length)   // the border, the padding line above and below, the title, the Buttons row, the shortcuts (one pair under WIDE_FROM)
-  expect(HELP.map(([, keys]) => keys)).toContain('s')
-  expect(HELP.map(([k]) => k)).toContain('scStill')
+  expect(HELP.map(([, keys]) => keys)).not.toContain('s')
+  expect(HELP.map(([k]) => k)).not.toContain('scStill')
   expect(HELP.map(([k]) => k)).toContain('scSettings')
-  expect(LABELS.scStill).toBeTruthy()
   expect(LABELS.scSettings).toBe('הגדרות')
-  expect(texts(tree)).toMatch(/^s$/m)
+  expect(texts(tree)).not.toMatch(/^s$/m)
   // the popover's children: the title line, the Buttons line, the shortcuts (one column-major pair here: a column of the labels, a column of the dim keys)
   const rows = box.children as Node[]
   expect(rows.length).toBe(3)
-  expect(nodes(rows[1]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['demo', 'still', 'lang'])
+  expect(nodes(rows[1]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['demo', 'lang'])
   expect(nodes(rows[0]).filter(n => n.type === 'Button').map(n => n.props.key)).toEqual(['closeHelp'])
   const pairs = rows[2]!.children as Node[]
   expect(pairs).toHaveLength(1)
@@ -1562,38 +1562,38 @@ test('settings: the popover holds the demo, motion and language Buttons in words
   expect(cellsOf(keysCol!).map(n => texts(n))).toEqual(HELP.map(([, keys]) => nb(keys)))
   expect(cellsOf(keysCol!).every(n => n.props.dimColor === true && n.props.color === undefined)).toBe(true)
   expect(cellsOf(labelsCol!).every(n => !texts(n).includes(' '))).toBe(true)
-  for (const k of ['demo', 'still', 'lang']) expect(btn(k)?.props.hotkey).toBeUndefined()
+  for (const k of ['demo', 'lang']) expect(btn(k)?.props.hotkey).toBeUndefined()
   const wide = Office(open({ columns: pane(COMPACT_BELOW) }), fake(pane(COMPACT_BELOW)).surface)
-  expect(['demo', 'still', 'lang'].map(k => btn(k, wide)?.props.hotkey)).toEqual(['d', 's', 'l'])
+  expect(['demo', 'lang'].map(k => btn(k, wide)?.props.hotkey)).toEqual(['d', 'l'])
   // their presses post
-  for (const [k, t] of [['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
+  for (const [k, t] of [['demo', 'demo'], ['lang', 'lang']] as const) {
     ;(btn(k)!.props.onPress as () => void)()
     expect(f.posts[f.posts.length - 1]).toEqual(t === 'demo' ? { t, on: true } : { t })   // (the demo's target: R7)
   }
-  // the states: the demo on → ✕ יציאה with the clapper; the motion frozen → 🖼; English: the icon leads, the language Button names Hebrew
+  // the states: the demo on → ✕ יציאה with the clapper; English: the icon leads, the language Button names Hebrew
   expect(btn('demo', Office(open({ demo: true }), fake().surface))?.props.label).toBe('יציאה ✕ 🎬')
-  expect(btn('still', Office(open({ prefs: { showDone: false, muted: true, still: true } }), fake().surface))?.props.label).toBe('תנועה 🖼')
   const en = Office(open({ rtl: false, lang: 'en', labels: LABELS_EN }), fake().surface)
-  expect(['demo', 'still', 'lang'].map(k => btn(k, en)?.props.label)).toEqual(['🎬 Demo', '🎞 Motion', '🌐 עברית'])
+  expect(['demo', 'lang'].map(k => btn(k, en)?.props.label)).toEqual(['🎬 Demo', '🌐 עברית'])
   expect(btn('demo', Office(open({ rtl: false, lang: 'en', labels: LABELS_EN, demo: true }), fake().surface))?.props.label).toBe('🎬 ✕ Exit')
-  // narrow: when the three words do not fit the popover's inner width by LINE_FIT, the icons alone — the language as EN / עב
-  const narrow = Office(open({ columns: pane(28) }), fake(pane(28)).surface)
-  expect(['demo', 'still', 'lang'].map(k => btn(k, narrow)?.props.label)).toEqual(['🎬', '🎞', 'EN'])
-  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: pane(28), rtl: false, lang: 'en', labels: LABELS_EN }), fake(pane(28)).surface))?.props.label)).toEqual(['🎬', '🎞', 'עב'])
+  // narrow: when the two words do not fit by LINE_FIT, the icons alone — the language as EN / עב
+  const narrow = Office(open({ columns: pane(20) }), fake(pane(20)).surface)
+  expect(['demo', 'lang'].map(k => btn(k, narrow)?.props.label)).toEqual(['🎬', 'EN'])
+  expect(['demo', 'lang'].map(k => btn(k, Office(open({ columns: pane(18), rtl: false, lang: 'en', labels: LABELS_EN }), fake(pane(18)).surface))?.props.label)).toEqual(['🎬', 'עב'])
   // ...and the icons alone keep their states, as the toolbar's ☑ / 🔕 do: the demo running is `🎬 ✕` (the pair reversed for the
-  // Hebrew reader, the 🎬 at the right edge as in the worded label), the motion frozen 🖼
-  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: pane(28), demo: true, prefs: { showDone: false, muted: true, still: true } }), fake(pane(28)).surface))?.props.label)).toEqual(['✕ 🎬', '🖼', 'EN'])
-  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: pane(28), demo: true, rtl: false, lang: 'en', labels: LABELS_EN }), fake(pane(28)).surface))?.props.label)).toEqual(['🎬 ✕', '🎞', 'עב'])
-  expect(['demo', 'still', 'lang'].map(k => btn(k, Office(open({ columns: pane(36) }), fake(pane(36)).surface))?.props.label)).toEqual(['דמו 🎬', 'תנועה 🎞', '🌐 English'])
-  // the popover closed: no demo / still / lang Button anywhere, and the letters still post
+  // Hebrew reader, the 🎬 at the right edge as in the worded label)
+  expect(['demo', 'lang'].map(k => btn(k, Office(open({ columns: pane(20), demo: true }), fake(pane(20)).surface))?.props.label)).toEqual(['✕ 🎬', 'EN'])
+  expect(['demo', 'lang'].map(k => btn(k, Office(open({ columns: pane(18), demo: true, rtl: false, lang: 'en', labels: LABELS_EN }), fake(pane(18)).surface))?.props.label)).toEqual(['🎬 ✕', 'עב'])
+  expect(['demo', 'lang'].map(k => btn(k, Office(open({ columns: pane(36) }), fake(pane(36)).surface))?.props.label)).toEqual(['דמו 🎬', '🌐 English'])
+  // the popover closed: no demo / lang Button anywhere, and the letters still post; s nothing
   const g = fake()
   tree = Office(props(), g.surface)
   for (const k of ['demo', 'still', 'lang']) expect(btn(k)).toBeUndefined()
-  for (const [k, t] of [['d', 'demo'], ['s', 'still'], ['l', 'lang']] as const) {
+  for (const [k, t] of [['d', 'demo'], ['l', 'lang']] as const) {
     g.key({ key: k })
     expect(g.posts[g.posts.length - 1]).toEqual(t === 'demo' ? { t, on: true } : { t })   // (the demo's target: R7)
   }
-  expect(g.posts).toHaveLength(3)
+  g.key({ key: 's' })
+  expect(g.posts).toHaveLength(2)
 })
 
 // (a few thousand renders: a loaded machine stretches the suite tenfold — the 5 s default timeout would fail it with no code change)
@@ -2153,8 +2153,9 @@ test('the settings\' shortcuts from WIDE_FROM: two column pairs side by side (PA
   const keysOf = (pair: Node) => cellsOf((pair.children as Node[])[1]!).map(n => texts(n))
   expect(labelsOf(pairs[0]!)).toEqual(HELP.slice(0, HELP_PAIR_ROWS).map(([k]) => nb(LABELS[k]!)))
   expect(keysOf(pairs[0]!)).toEqual(HELP.slice(0, HELP_PAIR_ROWS).map(([, k]) => nb(k)))
-  expect(labelsOf(pairs[1]!)).toEqual([...HELP.slice(HELP_PAIR_ROWS).map(([k]) => nb(LABELS[k]!)), NBSP])
-  expect(keysOf(pairs[1]!)).toEqual([...HELP.slice(HELP_PAIR_ROWS).map(([, k]) => nb(k)), NBSP])
+  // (eight rows since the motion toggle went — live check 7, Q9: the second pair three, padded with two blank rows)
+  expect(labelsOf(pairs[1]!)).toEqual([...HELP.slice(HELP_PAIR_ROWS).map(([k]) => nb(LABELS[k]!)), NBSP, NBSP])
+  expect(keysOf(pairs[1]!)).toEqual([...HELP.slice(HELP_PAIR_ROWS).map(([, k]) => nb(k)), NBSP, NBSP])
   for (const pair of pairs) for (const col of pair.children as Node[]) for (const cell of cellsOf(col)) expect(texts(cell)).not.toContain(' ')
   expect(byKey(Office(props({ columns: pane(80), selected: 'lead', drawer: drawer() }), fake(pane(80)).surface), 'drawer')!.props.paddingX).toBe(2)
   expect(byKey(Office(props({ columns: pane(79), selected: 'lead', drawer: drawer() }), fake(pane(79)).surface), 'drawer')!.props.paddingX).toBe(1)

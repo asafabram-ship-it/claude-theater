@@ -53,7 +53,8 @@
 // background on anything. The drawer is a card
 // in the same style with ONE dim status line (`● עובד · זמן 12 דק׳ · Explore`)
 // and a blank line before its content; the settings popover (titled הגדרות)
-// holds the demo, motion and language Buttons and the shortcuts as a
+// holds the demo and language Buttons (no motion toggle: nothing read it — live
+// check 7, Q9) and the shortcuts as a
 // column-major label | key table, two pairs side by side from WIDE_FROM — and,
 // while the scan skips a transcript too long to read, THE TOO-LONG
 // CONVERSATIONS NOTE as its last line (live check 6: once the footer's
@@ -144,9 +145,9 @@ export const PAIRS_GAP = 4
 /** The demo line's note colour: amber, so the demo is never taken for the office (the status column's waiting amber, DOT_FG.stale). */
 export const DEMO_FG = '#d29922'
 
-/** The letter keys (spec §6.4): the toolbar's f / m / h, the settings' s / l (its Buttons' letters, live with the popover closed too) and the drawer's x; `d` — the demo, to its target — is onKey's own. */
+/** The letter keys (spec §6.4): the toolbar's f / m / h, the settings' l (its Button's letter, live with the popover closed too) and the drawer's x; `d` — the demo, to its target — is onKey's own; no `s` (the motion toggle is gone: live check 7, Q9). */
 const KEY_MESSAGES: Record<string, OfficeMessage> = {
-  x: { t: 'close' }, f: { t: 'showDone' }, m: { t: 'mute' }, l: { t: 'lang' }, h: { t: 'help' }, s: { t: 'still' },
+  x: { t: 'close' }, f: { t: 'showDone' }, m: { t: 'mute' }, l: { t: 'lang' }, h: { t: 'help' },
 }
 
 /** What survives between renders without a redraw: mutated in place, never replaced. */
@@ -549,16 +550,16 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     top (THE OVERLAY IN VIEW, below), or under the fixed chrome ---
     let overlay: RenderElement | null = null
     if (props.helpOpen) {
-      // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs), the
-      // motion toggle (🎞 running, 🖼 frozen), the language (the other language's name) — their words when the three fit the
-      // line by LINE_FIT (the probe's L: the whole column, gap 1), else the icons alone (the language as EN / עב); their letters
-      // d / s / l are KEY_MESSAGES' either way
-      const hIcons = [props.demo ? '🎬 ✕' : '🎬', props.prefs.still ? '🖼' : '🎞', '🌐']
-      const hWords = [props.demo ? lbl('exitDemo') : lbl('demoLabel'), lbl('hbMotion'), lbl('switchTo')]
+      // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs) and
+      // the language (the other language's name) — the motion toggle is gone (live check 7, Q9: nothing read it) — their words when
+      // the two fit the line by LINE_FIT (the probe's L: the whole column, gap 1), else the icons alone (the language as EN / עב);
+      // their letters d / l are onKey's either way
+      const hIcons = [props.demo ? '🎬 ✕' : '🎬', '🌐']
+      const hWords = [props.demo ? lbl('exitDemo') : lbl('demoLabel'), lbl('switchTo')]
       const hWorded = hIcons.map((icon, i) => iconLabel(icon, hWords[i]!, rtl))
       // (the icons alone keep their states, as the toolbar's ☑ / 🔕 do: `🎬 ✕` while the demo runs — the pair reversed for the Hebrew
-      // reader as in the worded label, iconLabel — 🖼 while frozen)
-      const hb = labelsFit(hWorded, geo.W) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), hIcons[1]!, props.lang === 'he' ? 'EN' : 'עב']
+      // reader as in the worded label, iconLabel)
+      const hb = labelsFit(hWorded, geo.W) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), props.lang === 'he' ? 'EN' : 'עב']
       // the shortcuts as a column-major table (the probe's): a column of the labels and a column of the dim keys, each a one-line
       // Text with no plain space (nb: a wrapped row would push the rows under it out of the popover's fixed height); two pairs side
       // by side from WIDE_FROM, the second padded to the first's rows. The labels are cut (by LINE_FIT, as the title is) to what
@@ -579,8 +580,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
           Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, inst, { t: 'demo', on: !props.demo }) }),
-          Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, inst, { t: 'still' }) }),
-          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, inst, { t: 'lang' }) }),
+          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[1]!, onPress: () => send(surface, inst, { t: 'lang' }) }),
         ]),
         Box({ flexDirection: row, columnGap: PAIRS_GAP, width: '100%', children: pairs.map(pair) }),
         // THE TOO-LONG CONVERSATIONS NOTE (live check 6): one dim line under the shortcuts, cut to the popover's inner width by

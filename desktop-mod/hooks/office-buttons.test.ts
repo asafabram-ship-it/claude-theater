@@ -13,10 +13,10 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import { DEFAULT_PREFS, DEFAULT_VIEW, PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
 import { I18N } from './i18n'
-import { chromeRows } from './office-chrome'
+import { HELP, chromeRows } from './office-chrome'
 import { LESS_MARK, LINK_FG, MORE_MARK, geometry, nb, officeModel, rowCount } from './office-layout'
 import type { Hit } from './office-layout'
-import { OFFICE_KEY, buildOfficeProps } from './office-props'
+import { LABEL_KEYS, OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
 import { demoPayload } from './scanner'
 import { T0, beneath } from './test-kit'
@@ -486,5 +486,29 @@ test('R7 · the demo exit draws the office as it was before the demo AT ONCE (th
   const p2 = await officeProps(ui)
   expect(p2.demo, 'a double press re-entered the demo').toBe(false)
   expect(p2.rooms.map(r => r.id)).toEqual(['sess-aaaa-1111'])
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// R11 (Q9): the dead motion toggle is gone
+// ---------------------------------------------------------------------------
+
+test('R11 · the motion toggle is gone (Q9: nothing read it but its own icon) — the settings draw the demo and the language Buttons alone, no shortcut row promises s, the s key posts nothing; the stored prefs keep their `still` field', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1, { prefs: { lang: 'he', muted: false, showDone: false, pins: [], still: true } as never })
+  await ui.press({ key: 'help' })
+  const buttons = (await ui.findAll({ in: OFFICE_KEY, type: 'Button' })).map(b => b.props.key)
+  expect(buttons).not.toContain('still')
+  expect(buttons).toEqual(expect.arrayContaining(['demo', 'lang', 'closeHelp']))
+  expect(HELP.map(([, keys]) => keys)).not.toContain('s')
+  expect(LABEL_KEYS as readonly string[]).not.toContain('scStill')
+  expect(LABEL_KEYS as readonly string[]).not.toContain('hbMotion')
+  expect('scStill' in I18N.he || 'hbMotion' in I18N.he || 'scStill' in I18N.en || 'hbMotion' in I18N.en).toBe(false)
+  await ui.press({ key: 'closeHelp' })
+  const before = JSON.stringify(await officeProps(ui))
+  const writes = { ...captured.writes }
+  await ui.key({ in: OFFICE_KEY, key: 's' })
+  expect(JSON.stringify(await officeProps(ui))).toBe(before)
+  expect(captured.writes).toEqual(writes)
+  expect((captured.store.prefs as { still?: boolean }).still).toBe(true)
   await ui.unmount()
 })

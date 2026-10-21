@@ -888,6 +888,17 @@ test('THE STALE OFFSET (live check 7, R13): a click that shortens the office whi
   const last = officeModel(short).rooms[0]!.rows.at(-1)!
   f.pointer({ type: 'down', x: 10, y: C + last.y, button: 'left' })
   expect(f.posts).toEqual([{ t: 'open', id: last.id }])
+  // the redraws that follow with the offset still stale (the click's own focus setState, a hover, the next {props} answer —
+  // until the engine asks again) keep the clamped window: the module remembers the taller content while the offset is stale
+  Office({ ...short, offset: endTall }, f.surface)
+  expect(f.surface.state!.inst.win).toEqual(windowOf(C, endShort, 25, linesShort))
+  Office({ ...short, offset: endTall }, f.surface)
+  expect(f.surface.state!.inst.win).toEqual(windowOf(C, endShort, 25, linesShort))
+  f.pointer({ type: 'down', x: 10, y: C + last.y, button: 'left' })
+  expect(f.posts.at(-1)).toEqual({ t: 'open', id: last.id })
+  // the engine asks again with its own clamped offset: drawn as handed (the end of the short office)
+  Office({ ...short, offset: endShort }, f.surface)
+  expect(f.surface.state!.inst.win).toEqual(windowOf(C, endShort, 25, linesShort))
   // an offset inside the content is never touched
   Office({ ...short, offset: 3 }, f.surface)
   expect(f.surface.state!.inst.win).toEqual(windowOf(C, 3, 25, linesShort))

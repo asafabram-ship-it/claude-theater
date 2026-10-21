@@ -67,7 +67,8 @@
 // Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
 // Client as tall as the content (`officeHeight`); `props.offset` is the
 // engine's window offset — clamped to the content (live check 7: a click that
-// shortened the office hands the old offset until the engine asks again) —
+// shortened the office hands the old offset until the engine asks again, and
+// every redraw until then keeps the clamp) —
 // and `props.rows` the pane's body height. The module
 // draws the fixed chrome, then ONE spacer Box for the lines above the window's
 // first card, then only the cards the window touches: every card drawn whole
@@ -196,7 +197,7 @@ export type OfficeInst = {
   propsSearch: string
   posted: string | null
   debounce: (() => void) | null
-  /** The Client rows of the content last drawn (chrome and layout lines): what tells a stale offset (THE STALE OFFSET, R13). */
+  /** The Client rows of the content last drawn under an offset of its own (chrome and layout lines) — kept, the taller, while the offset handed is stale: what tells a stale offset (THE STALE OFFSET, R13). */
   height: number
   /** Text was typed into the search field since the last click or walk key: an Enter onKey sees then is the field's (R14). */
   typing: boolean
@@ -661,11 +662,13 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       // THE STALE OFFSET (live check 7, R13): a click that shortened the office (a "hide finished") hands the module the offset
       // the engine had before it — past the new end until the engine asks again; clamped to the content, the window drawn and
       // hit-tested is the one the engine shows once it clamps its own (no blank rows, no dead clicks meanwhile). Stale = one the
-      // content the module last drew allowed; an offset no content of it ever allowed is no engine's, and is drawn as handed
+      // taller content the module drew before allowed; an offset no content of it ever allowed is no engine's, and is drawn as
+      // handed. The taller height is kept WHILE the offset stays stale — the redraws that follow with it (the click's own focus
+      // setState, a hover, the next {props} answer) clamp alike — and dropped once the engine hands an offset of the content
       const height = inst.chrome + model.lines.length
       const stale = props.offset > height - body && props.offset <= Math.max(height, inst.height) - body
       const offset = stale ? Math.max(0, height - body) : props.offset
-      inst.height = height
+      inst.height = stale ? inst.height : height
       const w0 = windowOf(inst.chrome, offset, body, model.lines.length, overlayRows)
       const { from, count } = trimWindow(model, w0.from, w0.count, WINDOW_ROWS)
       inst.win = { from, count }

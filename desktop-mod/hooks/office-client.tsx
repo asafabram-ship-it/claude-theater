@@ -187,6 +187,10 @@ export type OfficeInst = {
   propsSearch: string
   posted: string | null
   debounce: (() => void) | null
+  /** The Client rows of the content last drawn (chrome and layout lines): what tells a stale offset (THE STALE OFFSET, R13). */
+  height: number
+  /** Text was typed into the search field since the last click or walk key: an Enter onKey sees then is the field's (R14). */
+  typing: boolean
   /** THE OUTBOX: this instance's id (the hooks number its actions apart from another instance's), the last number given, the actions not yet cleared, the clock that clears them. */
   id: string
   seq: number
@@ -260,7 +264,7 @@ function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
     props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null, statusMin: 0 }, lastMode: null, frozen: null,
     rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
-    query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
+    query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null, typing: false, height: 0,
     id: Math.random().toString(36).slice(2, 10) || 'office', seq: 0, outbox: [], flush: null,
   }
   setModel(inst, p, NO_DECOR)
@@ -301,7 +305,9 @@ function listen(surface: Surface): void {
       const drawn = (y >= from && y < from + count) || (y >= from + count && y < from + inst.view && line !== undefined && line.kind !== 'row' && inst.drawn.has(line.room))
       const hit: Hit | undefined = drawn ? hitAt(inst.model, x, y) : undefined
       if (ev.type === 'down') {
-        if (ev.button !== 'left' || !hit) return
+        if (ev.button !== 'left') return
+        inst.typing = false   // (a click: the keyboard's Enter is the office's again)
+        if (!hit) return
         if (hit.kind === 'agent') {
           if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
           // a second click on the agent whose drawer is open closes it (live check 7, Q2) — a close, never a flip in the hooks
@@ -336,6 +342,7 @@ function listen(surface: Surface): void {
       const inst = cur.inst
       const k = ev.key
       if (k === 'j' || k === 'down' || k === 'k' || k === 'up') {
+        inst.typing = false   // (a walk key never reaches onKey while the field has the keys: the Enter is the office's again)
         // the walk keeps to the agent rows drawn (the window): a focus on a row scrolled away would show no marker,
         // and `o` would open a drawer for a row the person cannot see; past the window's last row the person scrolls
         // the pane, and a focus left above or below the window restarts from the window's first (or last) row
@@ -355,7 +362,9 @@ function listen(surface: Surface): void {
       } else if (k === 'd') {
         // the demo's switch to its target (live check 7, R7: never a flip — a double press lands where the person aimed)
         send(surface, inst, { t: 'demo', on: !inst.props.demo })
-      } else if (k === 'o' || k === 'return') {
+      } else if (k === 'o' || (k === 'return' && !inst.typing)) {
+        // (spec §6.4: o and Enter open the focus — but an Enter right after typing in the search field is the field's, its
+        // onSubmit: it never reopens the drawer of a row clicked before the search, live check 7 R14)
         // only a focus whose row is drawn (in the window): one scrolled away would open a drawer for a row the person cannot see
         const y = cur.focus ? inst.rowAt.get(cur.focus) : undefined
         if (cur.focus && y !== undefined && y >= inst.win.from && y < inst.win.from + inst.win.count) send(surface, inst, { t: 'open', id: cur.focus })
@@ -504,8 +513,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     the icons alone (never a cut word) ---
     // (☑ while the finished are shown: the pref — the demo's cast obeys it as the office does, live check 5)
     const icons = [props.prefs.showDone ? '☑' : '☐', props.prefs.muted ? '🔕' : '🔔', '⚙️']
-    const worded = icons.map((icon, i) => iconLabel(icon, lbl(['tbDone', 'tbSound', 'tbSettings'][i]!), rtl))
-    const tb = labelsFit(worded, geo.W, TOOLBAR_GAP) ? worded : icons
+    const words = ['tbDone', 'tbSound', 'tbSettings'].map(lbl)
+    const worded = icons.map((icon, i) => iconLabel(icon, words[i]!, rtl))
+    // (the words or the icons decided on the WIDEST state of each toggle — ☑ is a cell wider than ☐ — so a toggle never switches
+    // the row between words and icons: live check 7, J9; the field's width too)
+    const widest = ['☑', '🔕', '⚙️'].map((icon, i) => iconLabel(icon, words[i]!, rtl))
+    const tb = labelsFit(widest, geo.W, TOOLBAR_GAP) ? worded : icons
     const buttons = [
       Button({ key: 'showDone', ...hk('f'), plain: true, label: tb[0]!, onPress: () => send(surface, inst, { t: 'showDone' }) }),
       Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, inst, { t: 'mute' }) }),
@@ -518,7 +531,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     the field). On the toolbar's line from ONE_LINE_FROM (the Buttons at the reading edge, the field INPUT_MIN..INPUT_MAX
     //     cells at the other), else on a line of its own with a blank line above and below (the probe's), the short meter at
     //     its far edge when the header had no room for one ---
-    const inputW = inputWidth(geo, worded)
+    const inputW = inputWidth(geo, widest)
     const fieldCells = geo.oneLine ? inputW : geo.W - (meterSearch ? textWidth(meterSearch) + 2 : 0)
     const phRoom = fitCells(fieldCells)
     const placeholder = phRoom >= textWidth(phFull) ? phFull : phRoom >= textWidth(phShort) ? phShort : `🔍 ${cut(phWord.split(' ')[0] ?? phWord, Math.max(1, phRoom - 3))}`
@@ -527,8 +540,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       placeholder,
       value: inst.query,
       // (cleaned and capped: a paste of a page or of an escape sequence would make the post or the value unmount the office)
-      onInput: (v: string) => { const was = inst.query; inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, was === '' && inst.query !== '') },
-      onSubmit: (v: string) => { inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, true) },
+      // (inst.typing: an Enter onKey sees after typing here is the field's, never an open — live check 7, R14)
+      onInput: (v: string) => { const was = inst.query; inst.typing = true; inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, was === '' && inst.query !== '') },
+      onSubmit: (v: string) => { inst.typing = true; inst.query = cleanSearch(v); queueSearch(surface, inst, inst.query, true) },
     })
     if (geo.oneLine) {
       kids.push(Box({ key: 'toolbar', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
@@ -561,7 +575,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const hWorded = hIcons.map((icon, i) => iconLabel(icon, hWords[i]!, rtl))
       // (the icons alone keep their states, as the toolbar's ☑ / 🔕 do: `🎬 ✕` while the demo runs — the pair reversed for the Hebrew
       // reader as in the worded label, iconLabel)
-      const hb = labelsFit(hWorded, geo.W) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), props.lang === 'he' ? 'EN' : 'עב']
+      // (decided on the demo Button's WIDEST state, `✕ יציאה 🎬`: the demo's switch never switches the row's form — J9)
+      const hWidest = [iconLabel('🎬 ✕', lbl('exitDemo'), rtl), hWorded[1]!]
+      const hb = labelsFit(hWidest, geo.W) ? hWorded : [iconLabel(hIcons[0]!, '', rtl), props.lang === 'he' ? 'EN' : 'עב']
       // the shortcuts as a column-major table (the probe's): a column of the labels and a column of the dim keys, each a one-line
       // Text with no plain space (nb: a wrapped row would push the rows under it out of the popover's fixed height); two pairs side
       // by side from WIDE_FROM, the second padded to the first's rows. The labels are cut (by LINE_FIT, as the title is) to what
@@ -635,8 +651,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const body = props.rows > 0 ? props.rows : 30
       // THE STALE OFFSET (live check 7, R13): a click that shortened the office (a "hide finished") hands the module the offset
       // the engine had before it — past the new end until the engine asks again; clamped to the content, the window drawn and
-      // hit-tested is the one the engine shows once it clamps its own (no blank rows, no dead clicks meanwhile)
-      const offset = Math.min(props.offset, Math.max(0, inst.chrome + model.lines.length - body))
+      // hit-tested is the one the engine shows once it clamps its own (no blank rows, no dead clicks meanwhile). Stale = one the
+      // content the module last drew allowed; an offset no content of it ever allowed is no engine's, and is drawn as handed
+      const height = inst.chrome + model.lines.length
+      const stale = props.offset > height - body && props.offset <= Math.max(height, inst.height) - body
+      const offset = stale ? Math.max(0, height - body) : props.offset
+      inst.height = height
       const w0 = windowOf(inst.chrome, offset, body, model.lines.length, overlayRows)
       const { from, count } = trimWindow(model, w0.from, w0.count, WINDOW_ROWS)
       inst.win = { from, count }
@@ -700,8 +720,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (above === 0 && below === 0) return tbl
         return Box({ flexDirection: 'column', width: '100%', children: [...(above > 0 ? [Box({ height: above })] : []), tbl, ...(below > 0 ? [Box({ height: below })] : [])] })
       }
-      /** A whole card: the frame, the title line, the more line under it, the blank line, the table (every row of the room a cell or a spacer line). */
-      const card = (room: RoomView): RenderElement => Box({ flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden', children: [
+      /** A whole card, keyed by its room (live check 7, R14: a line inserted before it never repaints it as another): the frame, the title line, the more line under it, the blank line, the table (every row of the room a cell or a spacer line). */
+      const card = (room: RoomView): RenderElement => Box({ key: `room:${room.id}`, flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden', children: [
         titleLine(room),
         ...(room.more ? [moreLine(room)] : []),
         blank(),

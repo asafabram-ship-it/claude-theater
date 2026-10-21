@@ -626,12 +626,15 @@ async function savePrefs($: EngineInterface, fn: (p: Prefs) => Prefs): Promise<P
   return saved
 }
 
-/** PAGE setLang(): prefs + the pane's title (with the working count, as the poll keeps it). */
+/**
+ * PAGE setLang(): the pane's title (with the working count, as the poll keeps it), THEN the prefs — the retitle first, as the
+ * poll does (live check 7, R14): the engine draws the writes of one tick once, so the switch is one redraw, never the title a
+ * step behind the office.
+ */
 async function setLang($: EngineInterface, lang: Lang): Promise<Prefs> {
-  const saved = await savePrefs($, p => ({ ...p, lang }))
   const payload = await read($, payloadAtom)
   await $.ui.open({ id: PANE_ID, title: paneTitle(lang, workingCount(payload)) }).catch(() => undefined)
-  return saved
+  return savePrefs($, p => ({ ...p, lang }))
 }
 
 /** PAGE setDemo(): toggles the demo (its cast obeys "show finished" as the office does: live check 5). */

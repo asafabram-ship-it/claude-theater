@@ -60,10 +60,10 @@ function textOf(n: Drawn | string): string {
   return typeof n === 'string' ? n : (n.children ?? []).map(textOf).join('')
 }
 /** The settings popover | the drawer: the module's keyed framed Boxes. */
-const isOverlay = (k: Drawn) => k.type === 'Box' && propsOf(k).borderStyle !== undefined && propsOf(k).key !== undefined
+const isOverlay = (k: Drawn) => k.type === 'Box' && propsOf(k).borderStyle !== undefined && (propsOf(k).key === 'help' || propsOf(k).key === 'drawer')
 /** The room cards of the drawn tree: the framed Boxes in the cards' style without a key, and the frameless fragment of the window's first card under an overlay (THE OVERLAY IN VIEW). */
 async function cardsOf(ui: Finder): Promise<Drawn[]> {
-  return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined) || propsOf(k).key === 'fragment'))
+  return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && String(propsOf(k).key ?? '').startsWith('room:')) || propsOf(k).key === 'fragment'))
 }
 const nodesOf = (n: Drawn | string): Drawn[] => (typeof n === 'string' ? [] : [n, ...(n.children ?? []).flatMap(nodesOf)])
 /** The table of a card or of the fragment: the Box of column Boxes, wherever it sits in the card (undefined when no row of it is in the window). */
@@ -278,7 +278,7 @@ test('DESKTOP (2.4): the window — the card drawn whole with its rows windowed 
   expect(count).toBe(10)
   // the one card starts at line 0: no spacer before it; its rows in the window (lines 6..15 → a2..a11), the rest spacered
   const kids = await kidsOf(ui)
-  expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  expect(kids.map(k => (String(propsOf(k).key ?? '').startsWith('room:') ? 'round' : propsOf(k).key ?? propsOf(k).borderStyle))).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   const card = (await cardsOf(ui))[0]!
   expect(rowsOf(card).map(r => r[1])).toEqual(Array.from({ length: 10 }, (_, i) => whoOf(p, `a${i + 2}`)))
   // the table block: a column Box of the spacer for a0, a1 (above the window), the table, the spacer for a12..a39 — no spacer inside a column
@@ -331,7 +331,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   // engine's offset, so it opens in the viewport's first rows — then the card's FRAGMENT from line 34: no frame, no rows above
   // the window, its rows from a30 (the same layout line 34), the clicked row drawn and focused
   const kids = await kidsOf(ui)
-  expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
+  expect(kids.map(k => (String(propsOf(k).key ?? '').startsWith('room:') ? 'round' : propsOf(k).key ?? propsOf(k).borderStyle))).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'drawer', 'fragment'])
   expect(propsOf(kids[3]).height).toBe(34)
   expect(CHROME_ROWS_SEARCH + 34).toBe(p1.offset)
   expect(kids[4]).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER, height: H - 1, marginBottom: 1 } })
@@ -358,7 +358,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   const p2 = await officeProps(ui)
   expect(p2.helpOpen).toBe(true)
   const help = await kidsOf(ui)
-  expect(help.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
+  expect(help.map(k => (String(propsOf(k).key ?? '').startsWith('room:') ? 'round' : propsOf(k).key ?? propsOf(k).borderStyle))).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'help', 'fragment'])
   expect(propsOf(help[3]).height).toBe(34)
   expect(textOf(help[4]!)).toContain(nb('k / j'))
   expect(textOf(help[4]!)).toMatch(/הגדרות/)
@@ -369,7 +369,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   expect(p3.drawer).toBeNull()
   const closed = await kidsOf(ui)
   expect(closed.some(isOverlay)).toBe(false)
-  expect(closed.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  expect(closed.map(k => (String(propsOf(k).key ?? '').startsWith('room:') ? 'round' : propsOf(k).key ?? propsOf(k).borderStyle))).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   expect(rowsOf((await cardsOf(ui))[0]!).map(r => r.slice(1))).toEqual(before.map(r => r.slice(1)))   // (the focus marker stays on a30's row)
   expect(await focused(ui, p3)).toEqual([whoOf(p3, 'a30')])
   await ui.unmount()

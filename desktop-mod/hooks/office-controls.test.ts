@@ -211,7 +211,7 @@ async function kidsOf(ui: Ui): Promise<Drawn[]> {
   return elements((await ui.drawn({ in: OFFICE_KEY })) as unknown as Drawn)
 }
 /** The settings popover | the drawer: the module's keyed framed Boxes. */
-const isOverlay = (k: Drawn) => k.type === 'Box' && propsOf(k).borderStyle !== undefined && propsOf(k).key !== undefined
+const isOverlay = (k: Drawn) => k.type === 'Box' && propsOf(k).borderStyle !== undefined && (propsOf(k).key === 'help' || propsOf(k).key === 'drawer')
 async function overlay(ui: Ui): Promise<Drawn | undefined> {
   return (await kidsOf(ui)).find(isOverlay)
 }
@@ -224,7 +224,7 @@ const nodesOf = (n: unknown): Drawn[] => (isNode(n) ? [n, ...(n.children ?? []).
 const elements = (n: Drawn | undefined): Drawn[] => (n?.children ?? []).filter(isNode)
 /** The room cards drawn, in order: the framed Boxes in the cards' style without a key, and the frameless FRAGMENT of the window's first card under an overlay at the window's top (THE OVERLAY IN VIEW). */
 async function cardsOf(ui: Ui): Promise<Drawn[]> {
-  return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && propsOf(k).key === undefined) || propsOf(k).key === 'fragment'))
+  return (await kidsOf(ui)).filter(k => k.type === 'Box' && ((propsOf(k).borderStyle === 'round' && propsOf(k).borderColor === CARD_BORDER && String(propsOf(k).key ?? '').startsWith('room:')) || propsOf(k).key === 'fragment'))
 }
 const isFragment = (card: Drawn) => propsOf(card).key === 'fragment'
 /** The window of layout lines the module drew for `p` — what the pointer answers on (office-chrome.ts windowOf, office-layout.ts trimWindow). */
@@ -1103,7 +1103,7 @@ function suite(COLUMNS: Columns): void {
     await rowsOk(ui, pd)
     // the module's tree now: the chrome, a spacer of the FROM lines above the window, the drawer at Client row `offset`, A's fragment
     const kids = await kidsOf(ui)
-    expect(kids.map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual([...CHROME_KEYS, 'spacer', 'drawer', 'fragment'])
+    expect(kids.map(k => (String(propsOf(k).key ?? '').startsWith('room:') ? 'round' : propsOf(k).key ?? propsOf(k).borderStyle))).toEqual([...CHROME_KEYS, 'spacer', 'drawer', 'fragment'])
     expect(propsOf(kids[CHROME_KEYS.length]).height).toBe(FROM)
     expect(FIXED + FROM).toBe(pd.offset)
     expect(chromeRows(pd) + FROM).toBe(pd.offset + H)   // the first row under the drawer: the viewport's row H
@@ -1128,7 +1128,7 @@ function suite(COLUMNS: Columns): void {
     const Hh = overlayRows(ph)
     expect(Hh).toBe(W.helpRows + OVERLAY_GAP)
     expect(windowNow(ph)).toEqual({ from: FROM, count: BODY - Hh })
-    expect((await kidsOf(ui)).map(k => propsOf(k).key ?? propsOf(k).borderStyle)).toEqual([...CHROME_KEYS, 'spacer', 'help', 'fragment'])
+    expect((await kidsOf(ui)).map(k => (String(propsOf(k).key ?? '').startsWith('room:') ? 'round' : propsOf(k).key ?? propsOf(k).borderStyle))).toEqual([...CHROME_KEYS, 'spacer', 'help', 'fragment'])
     await rowsOk(ui, ph)
     await deadRow(ui, chromeRows(ph) + FROM + BODY - Hh, 'the first row past the settings\' window')
     await deadRow(ui, ph.offset + 2, 'a settings row')

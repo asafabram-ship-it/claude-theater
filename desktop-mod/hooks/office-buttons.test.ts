@@ -512,3 +512,21 @@ test('R11 · the motion toggle is gone (Q9: nothing read it but its own icon) �
   expect((captured.store.prefs as { still?: boolean }).still).toBe(true)
   await ui.unmount()
 })
+
+// ---------------------------------------------------------------------------
+// R14 pre-empts on the mount: the language switch retitles first
+// ---------------------------------------------------------------------------
+
+test('R14 · the language switch retitles the pane BEFORE it writes the prefs (as the poll does: the retitle and the write in one tick are one redraw, the title never a step behind)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  await ui.press({ key: 'help' })
+  const seq0 = captured.seq.length
+  await ui.press({ key: 'lang' })
+  const seq = captured.seq.slice(seq0)
+  expect(seq).toContain('open')
+  expect(seq).toContain('prefs')
+  expect(seq.indexOf('open'), JSON.stringify(seq)).toBeLessThan(seq.indexOf('prefs'))
+  expect((await officeProps(ui)).lang).toBe('en')
+  expect(captured.opens.at(-1)).toMatch(/Theater/)
+  await ui.unmount()
+})

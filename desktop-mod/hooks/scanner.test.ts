@@ -885,7 +885,10 @@ test('demoPayload: the synthetic office, phased', async () => {
   expect(byId(late.agents, 'demo-build-ee').status).toBe('stale')
   expect(byId(late.agents, 'demo-mcp-dd').tool).toBe('mcp__github__search_issues')
   expect(NOW - (byId(late.agents, 'demo-mcp-dd').start_ms ?? NOW)).toBe(63_000) // Python's offset, verbatim
-  expect(late.agents).toHaveLength(10) // 7 + the newcomer + 2 leads: Python's cast, nothing added
+  // 7 + the newcomer + 2 leads (Python's cast) + four earlier finishes in the research room (pre-check 6: it holds
+  // RECENT_DONE + 2 finished, so "show finished" changes what the demo draws)
+  expect(late.agents).toHaveLength(14)
+  expect(late.agents.filter(a => a.session_full === 'demo-session-research-2222' && a.status === 'done')).toHaveLength(5)
   const leads = late.agents.filter(a => a.is_session)
   expect(leads).toHaveLength(2)
   expect(leads[0]?.topic).toBeDefined()

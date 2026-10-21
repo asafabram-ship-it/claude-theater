@@ -19,7 +19,7 @@ import { demoPayload } from './scanner'
 import {
   CARD_MAX_W, COLS2_FROM, COLS3_FROM, LEAD_MARK, MIN_WIDTH, agentElapsed, cardName, cellWidth, clip, emptyKind, fmt, gridFor,
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
-  minuteClock, renderKey, starsOf, FINISH_TOAST_MS, TOAST_TITLE_MAX, finishToast, roomTitle,
+  minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
 import { REFUSED_RE, chromeRows, emptyLines, fixedRows, officeHeight } from './office-chrome'
 import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
@@ -168,6 +168,13 @@ test('THE FINISH TOAST (live check 5): `✅ <persona> סיים · <room title>` 
   expect(finishToast(a, 'בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 'he')).toBe('✅ הבלש סיים · בדיקת תיאטרון הסוכנים בשיחה…')
   expect(finishToast(a, '', 'he')).toBe('✅ הבלש סיים')
   expect(finishToast(a, '   ', 'en')).toBe('✅ The Detective finished')
+  // the Hebrew verb agrees with the persona (pre-check 6): הדבורה and הנמלה — the cast's feminine names — סיימה; English has one form
+  const bee = agent({ id: 'b', persona_id: 12 })
+  expect(finishToast(bee, 'Ship the v2 config migration.', 'he')).toBe('✅ הדבורה סיימה · Ship the v2 config migration.')
+  expect(finishToast(agent({ id: 'n', persona_id: 40 }), '', 'he')).toBe('✅ הנמלה סיימה')
+  expect(finishToast(bee, '', 'en')).toBe('✅ The Bee finished')
+  // the generic name (no persona) is סוכן, masculine
+  expect(finishToast(agent({ id: 'g', persona_id: undefined as unknown as number }), '', 'he')).toBe('✅ סוכן סיים')
   // the title as the card draws it: the lead's topic, else the project's folder, else the session id's head
   const stat = roomStats(fixture())
   expect(roomTitle(stat.get(SA), SA)).toBe('Ship the v2 config migration.')
@@ -187,8 +194,21 @@ test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop
   expect(fin?.result).toMatch(/3 high/)
   expect(p6.agents.find(a => a.id === 'demo-mcp-dd')?.tool).toBe('mcp__github__search_issues')
   expect(activityLabel(p6.agents.find(a => a.id === 'demo-mcp-dd')!, 'he')).toBe('🔌 github')
-  // Python's cast verbatim: 7 agents + the newcomer + 2 leads, the MCP triager 63 s in, no ⏰ subject
-  expect(p6.agents).toHaveLength(10)
+  // Python's cast (7 agents + the newcomer + 2 leads, the MCP triager 63 s in, no ⏰ subject) and four earlier finishes in the
+  // research room (pre-check 6): it holds RECENT_DONE + 2 finished, each finished at its own time and the writer the latest —
+  // so a room that hides its finished holds two of them back, and "show finished" changes what the demo draws
+  expect(p6.agents).toHaveLength(14)
+  const researchDone = p6.agents.filter(a => a.session_full.endsWith('2222') && a.status === 'done')
+  expect(researchDone.map(a => a.id)).toEqual(['demo-writer-ff', 'demo-survey-ii', 'demo-bench-jj', 'demo-dedupe-kk', 'demo-label-ll'])
+  expect(researchDone.length).toBe(RECENT_DONE + 2)
+  const ends = researchDone.map(a => a.end_ms ?? 0)
+  expect([...ends].sort((x, y) => y - x)).toEqual(ends)
+  expect(new Set(ends).size).toBe(ends.length)
+  for (const a of researchDone) expect(a.result, a.id).toMatch(/\S/)
+  const heldBack = officeView(p6.agents, '', 'he', false, {}, [], RECENT_DONE)
+  expect(heldBack.moreDone.get('demo-session-research-2222')).toBe(2)
+  expect(heldBack.visible.some(a => a.id === 'demo-dedupe-kk' || a.id === 'demo-label-ll')).toBe(false)
+  expect(officeView(p6.agents, '', 'he', true, {}, [], RECENT_DONE).visible.filter(a => a.id === 'demo-dedupe-kk' || a.id === 'demo-label-ll')).toHaveLength(2)
   expect(T0 - (p6.agents.find(a => a.id === 'demo-mcp-dd')?.start_ms ?? 0)).toBe(63_000)
   expect(p6.agents.some(a => isLongRunning(a, T0))).toBe(false)
   // by time: phase = floor(now/1000) % 12
@@ -1190,7 +1210,7 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
 })
 
 // (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
-test('demo mode: the empty office offers a demo; it draws the scripted office; its cast obeys "show finished" (live check 5: the demo no longer forces it) and its finishes are never toasted — the chime only for a finish the office shows', { timeoutMs: 30_000 }, async ($, on) => {
+test('demo mode: the empty office offers a demo; it draws the scripted office; its cast obeys "show finished" (live check 5: the demo no longer forces it) and its finishes are never toasted nor chimed (pre-check 6: the demo is silent), shown or not', { timeoutMs: 30_000 }, async ($, on) => {
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'en', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -1213,13 +1233,22 @@ test('demo mode: the empty office offers a demo; it draws the scripted office; i
   expect(captured.plays).toBe(0)
   expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeUndefined()
   expect(await ui.find({ key: 'open:demo-newcomer-hh' })).toBeDefined()
-  // "show finished" on: the demo's finished are drawn, and a later loop's finish is shown — the chime, still no toast (the
-  // finisher finishes every 12 s loop; a finish is celebrated once its last ⭐ left the payload: a poll or a few, a loop or two)
+  // "show finished" on: the demo's finished are drawn, and the later loops' finishes are shown (each ⭐ stamped anew after
+  // the press) — and still SILENT (pre-check 6): a demo finish is neither toasted nor chimed, shown or not (a real finish
+  // keeps both: the finish beat's test). (The finisher finishes every 12 s loop; a finish is celebrated once its last ⭐ left
+  // the payload: a poll or a few, a loop or two — the chime came within these 16 polls before the demo went silent.)
   await ui.press({ key: 'showDone' })
   expect(await ui.find({ key: 'open:demo-writer-ff' })).toBeDefined()
-  for (let i = 0; i < 16 && captured.plays === 0; i++) await clock.advance(POLL_MS)
+  const pressedAt = clock.now()
+  const stamps = new Set<number>()
+  for (let i = 0; i < 16; i++) {
+    await clock.advance(POLL_MS)
+    const at = captured.payload?.stars['demo-finisher-gg']
+    if (at !== undefined && at > pressedAt) stamps.add(at)
+  }
+  expect(stamps.size).toBeGreaterThanOrEqual(3)
   expect(captured.toasts).toEqual([])
-  expect(captured.plays).toBeGreaterThanOrEqual(1)
+  expect(captured.plays).toBe(0)
   expect(await ui.find({ key: 'open:demo-finisher-gg' })).toBeDefined()
   // exit restores the real (empty) office AT ONCE, even right after a demo publish: the redraw after the press polls at
   // once (register.tsx's render kick) and that poll publishes the switch whatever SETTLE_MS / CALM_MS say. (The kit keeps

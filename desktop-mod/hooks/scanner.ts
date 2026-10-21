@@ -1846,6 +1846,8 @@ type DemoOpts = {
   mtime_offset?: number
   /** The model id; the demo's default is the mid-tier model. */
   model?: string
+  /** A finished agent's finish, in seconds before now (default 2: just finished). */
+  end_offset?: number
 }
 
 function demoAgent(
@@ -1874,7 +1876,7 @@ function demoAgent(
     task_short: shortTask(task),
     result: status === 'done' ? (opts.result ?? null) : null,
     start_ms: Math.trunc(now - startOffset * 1000),
-    end_ms: status === 'done' ? Math.trunc(now - 2000) : null,
+    end_ms: status === 'done' ? Math.trunc(now - (opts.end_offset ?? 2) * 1000) : null,
     session: session.slice(0, 8),
     session_full: session,
     cwd,
@@ -1895,7 +1897,12 @@ function demoAgent(
  * ⭐ agent, a stale one, an MCP tool. Pure: builds in memory, never reads
  * files. `phase` cycles the scene so the demo animates (Python: phase=None
  * picks by time): a ~12 s loop where phase 3 walks a new agent in and phase 6
- * finishes the finisher (confetti + chime). Same agents and offsets as Python.
+ * finishes the finisher (its ⭐ and confetti; the demo is never toasted or
+ * chimed: register.tsx). Python's agents and offsets, and four earlier
+ * finishes in the research room (pre-check 6): it holds RECENT_DONE + 2
+ * finished, each at its own time, so a room that hides its finished draws
+ * three and counts two on its more line — "show finished" visibly changes
+ * the demo.
  */
 export function demoPayload(now: number, phase?: number): Payload {
   const cwd = '/home/dev/acme-web'
@@ -1925,6 +1932,31 @@ export function demoPayload(now: number, phase?: number): Payload {
         role: 'draft the v2 migration guide', subagent_type: 'general-purpose', start_offset: 150, model: 'claude-opus-5-5',
         result: 'Done. Wrote migration-v2.md: a step-by-step guide covering the renamed keys, the '
           + 'deprecation timeline, and a codemod snippet. Flagged two breaking changes for manual review.',
+      }),
+    // the research room's earlier finishes (pre-check 6), newest first — the office's order (start) is their finish order too
+    demoAgent(now, 'demo-survey-ii', s2, cwd, 'done', 'WebFetch',
+      'Compare how the three candidate frameworks cache regenerated pages.',
+      {
+        role: 'compare ISR cache strategies', subagent_type: 'general-purpose', start_offset: 160, end_offset: 45, model: 'claude-sonnet-5-5',
+        result: 'Two of the three keep a per-route cache with stale-while-revalidate; the third rebuilds on demand only.',
+      }),
+    demoAgent(now, 'demo-bench-jj', s2, cwd, 'done', 'Bash',
+      'Benchmark the cold build with and without on-demand revalidation.',
+      {
+        role: 'benchmark the cold build', subagent_type: 'general-purpose', start_offset: 230, end_offset: 110, model: 'claude-haiku-4-5-20251001',
+        result: 'Cold build 4m12s without, 1m38s with on-demand revalidation (median of five runs).',
+      }),
+    demoAgent(now, 'demo-dedupe-kk', s2, cwd, 'done', 'mcp__github__search_issues',
+      'Find duplicate bug reports and link each to the oldest issue.',
+      {
+        role: 'dedupe the bug reports', subagent_type: 'general-purpose', start_offset: 260, end_offset: 170, model: 'claude-sonnet-5-5',
+        result: 'Linked 9 duplicates to 4 original issues; closed none.',
+      }),
+    demoAgent(now, 'demo-label-ll', s2, cwd, 'done', 'mcp__github__search_issues',
+      'Label the open issues untouched for ninety days as stale.',
+      {
+        role: 'label the stale issues', subagent_type: 'general-purpose', start_offset: 330, end_offset: 240, model: 'claude-haiku-4-5-20251001',
+        result: 'Labelled 17 issues stale.',
       }),
     demoAgent(now, 'demo-finisher-gg', s1, cwd, finishing ? 'done' : 'running', 'StructuredOutput',
       'Summarize the security review findings into a prioritized list.',

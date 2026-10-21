@@ -120,7 +120,7 @@ import { UNKNOWN_MODEL_PILL } from './office-svg'
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
 import { cutWords, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
-import { personaName } from './personas'
+import { personaFeminine, personaName } from './personas'
 import { demoPayload } from './scanner'
 import { usageShort } from './usage'
 
@@ -414,12 +414,14 @@ export const TOAST_TITLE_MAX = 30
 
 /**
  * THE FINISH TOAST (live check 5): `✅ <persona> סיים · <room title>` / `✅ <persona> finished · <title>` — the persona's
- * name, as the row draws it (never the Agent call's description), then the conversation it finished in, its title (roomTitle)
+ * name, as the row draws it (never the Agent call's description), the Hebrew verb agreeing with it (`הדבורה סיימה`: personas.ts
+ * PERSONAS_HE_FEMININE, pre-check 6), then the conversation it finished in, its title (roomTitle)
  * cut on a word to TOAST_TITLE_MAX cells; without a title the name and the word alone. The poll toasts it for FINISH_TOAST_MS
  * (register.tsx), only for a finish the office shows and never for the demo's cast.
  */
 export function finishToast(a: Agent, title: string, lang: Lang): string {
-  const head = `✅ ${personaName(a.persona_id, lang)} ${I18N[lang].finishedToast}`
+  const L = I18N[lang]
+  const head = `✅ ${personaName(a.persona_id, lang)} ${personaFeminine(a.persona_id) ? L.finishedToastFem : L.finishedToast}`
   const t = title.trim()
   return t ? `${head} · ${cutWords(t, TOAST_TITLE_MAX)}` : head
 }

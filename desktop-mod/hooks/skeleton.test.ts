@@ -6,7 +6,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { liveAgentReturned, liveSpawned, liveToolReturned, liveToolStarted } from './live'
 import { PERSONA_EMOJI, personaIndex, shortTask } from './model'
-import { PERSONAS_EN, PERSONAS_HE } from './personas'
+import { PERSONAS_EN, PERSONAS_HE, PERSONAS_HE_FEMININE, personaFeminine } from './personas'
 
 test('the pane draws its header on the terminal and the desktop', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -48,6 +48,13 @@ test('the cast is 48 wide in every table', async () => {
   expect(PERSONA_EMOJI.length).toBe(48)
   expect(PERSONAS_EN.length).toBe(48)
   expect(PERSONAS_HE.length).toBe(48)
+  // the Hebrew names' grammatical gender (pre-check 6: the finish toast's verb agrees): the bee and the ant are feminine, the rest masculine
+  expect([...PERSONAS_HE_FEMININE].sort((x, y) => x - y)).toEqual([12, 40])
+  expect([...PERSONAS_HE_FEMININE].map(i => PERSONAS_HE[i])).toEqual(['הדבורה', 'הנמלה'])
+  expect(personaFeminine(12)).toBe(true)
+  expect(personaFeminine(40)).toBe(true)
+  expect(personaFeminine(0)).toBe(false)
+  expect(personaFeminine(undefined)).toBe(false)   // the generic סוכן
   expect(personaIndex('agent-1')).toBeLessThan(48)
   expect(shortTask('Read the file. Then summarize it.')).toBe('Read the file.')
   // the 90-place cut is on whole code points (scanner.ts shortTitle shares it): an emoji at the cut is never split into a lone surrogate

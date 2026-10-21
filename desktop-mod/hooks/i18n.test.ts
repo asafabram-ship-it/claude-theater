@@ -31,7 +31,7 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   const bad: string[] = []
   const check = (key: string, s: string) => { if (!hebrewRuleOk(s)) bad.push(`${key}: ${s}`) }
   for (const k of LABEL_KEYS) if (k !== 'searchPlaceholder') check(k, L[k])   // (the placeholder's trailing … is dropped by the Client, which draws it behind the glass)
-  for (const k of ['emptyOffice', 'emptySub', 'emptyNoMatch', 'emptyNoActive', 'emptyNoneInWindow', 'finishedToast', 'srNoMatch', 'srCleared', 'pin', 'unpin', 'roomTitle', 'details', 'helpHint', 'langHint', 'toggleFinished', 'scSearch', 'scPrev', 'scNext', 'mute', 'unmute'] as const) check(k, L[k])
+  for (const k of ['emptyOffice', 'emptySub', 'emptyNoMatch', 'emptyNoActive', 'emptyNoneInWindow', 'finishedToast', 'finishedToastFem', 'srNoMatch', 'srCleared', 'pin', 'unpin', 'roomTitle', 'details', 'helpHint', 'langHint', 'toggleFinished', 'scSearch', 'scPrev', 'scNext', 'mute', 'unmute'] as const) check(k, L[k])
   // the empty-office sub is split at " - " into lines of its own (office-chrome.ts emptyLines): each must pass too
   for (const part of L.emptySub.split(/\s[-—]\s/)) check('emptySub part', part)
   for (const n of [1, 4, 400]) {

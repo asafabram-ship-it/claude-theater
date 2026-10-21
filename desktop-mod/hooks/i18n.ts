@@ -67,6 +67,8 @@ export type Strings = {
   demoNote: string; demoNoteMid: string; demoNoteShort: string; demoExit: string
   resultTruncated: string; searchPlaceholder: string; emptyNoMatch: string
   mute: string; unmute: string; finishedToast: string; officeFailed: string
+  /** The finish toast's verb for a persona whose Hebrew name is feminine (personas.ts PERSONAS_HE_FEMININE): `סיימה`; English has one form. */
+  finishedToastFem: string
   /** The five-hour usage toast (80% / 95%): the rounded percent and the reset's local HH:MM ('' when unknown). One line. */
   usageToast: (pct: number, reset: string) => string
   srResults: (n: number) => string; srNoMatch: string; srCleared: string; pin: string; unpin: string
@@ -104,7 +106,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     demoNote: 'Demo - these agents are not real', demoNoteMid: 'Demo - not real', demoNoteShort: 'Demo', demoExit: 'Exit demo',
     resultTruncated: 'Result shortened — open the terminal for the full output',
     searchPlaceholder: 'Search agents…', emptyNoMatch: 'No agents match your search.',
-    mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished',
+    mute: 'Mute chime', unmute: 'Unmute chime', finishedToast: 'finished', finishedToastFem: 'finished',
     officeFailed: 'the office could not be drawn; showing the cards (/theater to retry)',
     usageToast: (pct, reset) => `5-hour limit: ${pct}%${reset ? ` · resets ${reset}` : ''}`,
     srResults: n => `${n} agent${n === 1 ? '' : 's'} match`, srNoMatch: 'No agents match', srCleared: 'Search cleared',
@@ -138,7 +140,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     demoNote: 'זו הדגמה - הסוכנים לא אמיתיים', demoNoteMid: 'הדגמה - לא אמיתיים', demoNoteShort: 'זו הדגמה', demoExit: 'יציאה',
     resultTruncated: 'התוצאה קוצרה — לפלט המלא פתחו את הטרמינל',
     searchPlaceholder: 'חיפוש סוכנים…', emptyNoMatch: 'אין סוכנים שתואמים לחיפוש',
-    mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים',
+    mute: 'השתק צליל', unmute: 'בטל השתקה', finishedToast: 'סיים', finishedToastFem: 'סיימה',
     officeFailed: 'לא ניתן היה לצייר את המשרד; מוצגים כרטיסים (/theater לניסיון נוסף)',
     usageToast: (pct, reset) => `נוצלו ${pct}% ממכסת 5 השעות${reset ? ` · איפוס ${reset}` : ''}`,
     srResults: n => `נמצאו ${n} סוכנים תואמים`, srNoMatch: 'אין סוכנים תואמים', srCleared: 'החיפוש נוקה',

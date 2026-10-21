@@ -23,6 +23,18 @@ export const PERSONAS_HE: readonly string[] = [
   'הנמלה', 'הזאב', 'הבונה', 'הצב', 'הברווז', 'הדולפין', 'העקרב', 'העטלף',
 ]
 
+/**
+ * The persona indexes whose Hebrew name is grammatically feminine (הדבורה, הנמלה): a Hebrew string that conjugates by the
+ * persona takes the feminine form for them (ui.tsx finishToast: `הדבורה סיימה`). Every other name, and the generic סוכן,
+ * is masculine. English has one form.
+ */
+export const PERSONAS_HE_FEMININE: ReadonlySet<number> = new Set([12, 40])
+
+/** True when the persona's Hebrew name is feminine (PERSONAS_HE_FEMININE); the generic name (no persona) is masculine. */
+export function personaFeminine(personaId: number | undefined): boolean {
+  return typeof personaId === 'number' && PERSONAS_HE_FEMININE.has(personaId)
+}
+
 /** PAGE personaName(): the localized name for a persona index, or the generic "Agent"/"סוכן". */
 export function personaName(personaId: number | undefined, lang: 'he' | 'en'): string {
   const table = lang === 'he' ? PERSONAS_HE : PERSONAS_EN

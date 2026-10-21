@@ -44,8 +44,8 @@
 //                   starsOf (ui.tsx) stamps the ids just finished into the
 //                   payload it publishes (`stars`) and the toast + chime fire
 //                   for the ones the office shows (the toast short and naming
-//                   the room — ui.tsx finishToast — and never for the demo's
-//                   cast: live check 5) — and the "🟢 N · " working
+//                   the room — ui.tsx finishToast — and neither ever for the
+//                   demo's cast: live check 5, pre-check 6) — and the "🟢 N · " working
 //                   count in the pane title (PAGE's document.title, only when N
 //                   changes) goes out in the same tick BEFORE the write, so a
 //                   finish is the one $.state write of the publish (no deferred
@@ -419,8 +419,8 @@ export async function poll($: EngineInterface): Promise<void> {
       const shownView = officeView(merged.agents, view.search, prefs.lang, prefs.showDone, roomDone, prefs.pins)
       const shown = new Set(shownView.visible.map(a => a.id))
       // THE FINISH TOAST (live check 5): short (FINISH_TOAST_MS), naming the persona and the conversation (ui.tsx
-      // finishToast) — and never for the demo's cast (the ids of the demo payload scanned: a live agent of this session merged
-      // into it is real), whose agents finish on a loop
+      // finishToast). THE SILENT DEMO (pre-check 6): the demo's cast — the ids of the demo payload scanned (a live agent of this
+      // session merged into it is real) — finishes on a loop: its finishes keep their ⭐ but are neither toasted nor chimed
       const demoIds = view.demo ? new Set(payload.agents.map(a => a.id)) : null
       let celebrated = false
       for (const id of fresh) {
@@ -429,8 +429,8 @@ export async function poll($: EngineInterface): Promise<void> {
           delete stars[id]
           continue
         }
-        if (!shown.has(id)) continue
-        if (!demoIds?.has(id)) $.ui.toast(finishToast(a, roomTitle(shownView.stat.get(a.session_full), a.session_full), prefs.lang), { timeoutMs: FINISH_TOAST_MS })
+        if (!shown.has(id) || demoIds?.has(id)) continue
+        $.ui.toast(finishToast(a, roomTitle(shownView.stat.get(a.session_full), a.session_full), prefs.lang), { timeoutMs: FINISH_TOAST_MS })
         celebrated = true
       }
       if (celebrated) void ding($, prefs.muted, now)

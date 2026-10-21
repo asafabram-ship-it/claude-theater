@@ -8,7 +8,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
 import { REFUSED_RE, cleanAgentText } from './office-chrome'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -191,35 +191,52 @@ test('nb / NBSP (round 9): every plain space of a one-line value a no-break spac
   expect(restWord('')).toBe('')
 })
 
-/** The line-break classes of UAX #14 that nb() handles (SP the space; GL the no-break forms; BA the breaking hyphens, dashes and spaces; B2 the em dash; HY the hyphen-minus; SY the slash; ZW the zero-width space; NU a digit), XX anything else. */
-function lbClass(c: string): 'SP' | 'GL' | 'BA' | 'B2' | 'HY' | 'SY' | 'ZW' | 'NU' | 'XX' {
+/**
+ * The line-break classes of UAX #14 that nb() handles (SP the space; GL the no-break forms, the combining grapheme joiner
+ * among them; BA the breaking hyphens, dashes and spaces, the vertical bar and the maqaf; B2 the em dash; HY the hyphen-minus;
+ * SY the slash; ZW the zero-width space; EX the exclamation and question marks; CL the closing brace; IN the ellipsis; CP the
+ * closing parenthesis and bracket; PR the plus; NU a digit; AL a letter and the ASCII symbols of that class, the divides sign
+ * U+2223 too — an AI character, which LB1 resolves to AL), XX anything else.
+ */
+type LbClass = 'SP' | 'GL' | 'BA' | 'B2' | 'HY' | 'SY' | 'ZW' | 'EX' | 'CL' | 'IN' | 'CP' | 'PR' | 'NU' | 'AL' | 'XX'
+function lbClass(c: string): LbClass {
   if (c === ' ') return 'SP'
-  if ([NBSP, '\u{2007}', '\u{202F}', '\u{2011}'].includes(c)) return 'GL'
-  if (c === '\t' || ['\u{2010}', '\u{2012}', '\u{2013}', '\u{AD}'].includes(c) || /\p{Zs}/u.test(c)) return 'BA'
+  if ([NBSP, '\u{2007}', '\u{202F}', '\u{2011}', '\u{34F}'].includes(c)) return 'GL'
+  if (c === '\t' || ['\u{2010}', '\u{2012}', '\u{2013}', '\u{AD}', '|', '\u{5BE}'].includes(c) || /\p{Zs}/u.test(c)) return 'BA'
   if (c === '\u{2014}') return 'B2'
   if (c === '-') return 'HY'
   if (c === '/') return 'SY'
   if (c === '\u{200B}') return 'ZW'
+  if (c === '!' || c === '?') return 'EX'
+  if (c === '}') return 'CL'
+  if (c === '\u{2026}') return 'IN'
+  if (c === ')' || c === ']') return 'CP'
+  if (c === '+') return 'PR'
   if (/\p{Nd}/u.test(c)) return 'NU'
+  if (/\p{L}/u.test(c) || '#&*<=>@^_`~\u{2223}'.includes(c)) return 'AL'
   return 'XX'
 }
 /**
- * UAX #14's pair rules over those classes (LB7, LB8, LB12, LB12a, LB13, LB17, LB18, LB21, LB25 and the defaults after HY, BA,
- * B2 and SY): is there a line-break opportunity between `a` and `b`? (A pair of other classes answers no: not nb's business.)
+ * UAX #14's pair rules over those classes (LB7, LB8, LB12, LB12a, LB13, LB17, LB18, LB21, LB22, LB24, LB25, LB30 and the
+ * default, LB31, after HY, BA, B2, SY, EX, CL and IN): is there a line-break opportunity between `a` and `b`? (A pair of
+ * other classes answers no: not nb's business — two letters, LB23 / LB28, hold.)
  */
 function breaksBetween(a: string, b: string): boolean {
   const ca = lbClass(a)
   const cb = lbClass(b)
   if (ca === 'ZW') return true                                       // LB8   ZW ÷
   if (cb === 'SP' || cb === 'ZW') return false                       // LB7   × SP, × ZW
-  if (ca === 'SP') return true                                       // LB18  SP ÷
   if (ca === 'GL') return false                                      // LB12  GL ×
-  if (cb === 'GL') return ca === 'BA' || ca === 'HY'                 // LB12a [^SP BA HY] × GL
-  if (cb === 'SY') return false                                      // LB13  × SY
+  if (cb === 'GL') return ca === 'SP' || ca === 'BA' || ca === 'HY'  // LB12a [^SP BA HY] × GL (SP ÷ GL: LB18)
+  if (['SY', 'EX', 'CL', 'CP'].includes(cb)) return false            // LB13  × SY, × EX, × CL, × CP (after a space too)
+  if (ca === 'SP') return true                                       // LB18  SP ÷
   if (ca === 'B2' && cb === 'B2') return false                       // LB17  B2 × B2
   if (cb === 'BA' || cb === 'HY') return false                       // LB21  × BA, × HY
+  if (cb === 'IN') return false                                      // LB22  × IN
   if (ca === 'HY' || ca === 'SY') return cb !== 'NU'                 // LB25  HY × NU, SY × NU; else a break after
   if (ca === 'BA' || ca === 'B2' || cb === 'B2') return true         // a break after BA and B2, before B2
+  if (ca === 'CP' || ca === 'PR') return false                       // LB30  CP × (AL | NU); LB24, LB25  PR × (AL | NU)
+  if (ca === 'EX' || ca === 'CL' || ca === 'IN') return cb === 'AL' || cb === 'NU'   // LB31: no rule holds them before a letter or a digit
   return false
 }
 /** The places in `s` (between its code points) where a line may break among nb's classes. */
@@ -230,7 +247,7 @@ function breakOpportunities(s: string): number[] {
   return out
 }
 
-test('nb (live check 5): no line-break opportunity left among the spaces, hyphens, dashes and slashes of a one-line value (UAX #14) — the no-break hyphen U+2011, the division slash U+2215, the zero-width space and the soft hyphen gone; a hyphen or a slash before a digit kept (no break there, and a number keeps its bidi run); nothing it writes is a control or a format character, nothing a surface refuses; the width unchanged; idempotent', () => {
+test('nb (live check 5, pre-check 6): no line-break opportunity left among the spaces, hyphens, dashes, slashes, vertical bars and the marks a line breaks after (! ? } …) of a one-line value (UAX #14) — the no-break hyphen U+2011, the division slash U+2215, the divides sign U+2223, the glue U+034F after a mark, the zero-width space and the soft hyphen gone; a hyphen or a slash before a digit kept (no break there, and a number keeps its bidi run); nothing it writes is a control or a format character, nothing a surface refuses; the width unchanged; idempotent', () => {
   expect(NBHY.codePointAt(0)).toBe(0x2011)
   expect(NBSLASH.codePointAt(0)).toBe(0x2215)
   // the classifier itself: the opportunities a plain value holds
@@ -239,6 +256,16 @@ test('nb (live check 5): no line-break opportunity left among the spaces, hyphen
   expect(breakOpportunities(`a${NBSP}-${NBSP}b`)).toEqual([2])          // HY ÷ GL: a spaced hyphen breaks after itself
   expect(breakOpportunities(`a${NBSP}\u{2014}${NBSP}b`)).toEqual([])   // the em dash between no-break spaces holds
   expect(breakOpportunities('a\u{2014}b')).toEqual([0, 1])
+  // pre-check 6: the vertical bar (BA) breaks after itself, before a no-break space too; the exclamation and question marks
+  // (EX), the closing brace (CL) and the ellipsis (IN) break after themselves before a letter or a digit, never before
+  // themselves (not even after a space: LB13, LB22); a closing parenthesis or bracket (CP) and a plus (PR) hold before a
+  // letter or a digit; the divides sign is a letter's class (AL); the maqaf (BA) breaks after itself before a Hebrew letter
+  // (LB21a holds it only before another letter since Unicode 15.1)
+  expect(breakOpportunities(`a|b${NBSP}a${NBSP}|${NBSP}b`)).toEqual([1, 6])
+  expect(breakOpportunities(`a!b${NBSP}?id=3${NBSP}{x}y${NBSP}wait\u{2026}then${NBSP}x!1`)).toEqual([1, 4, 12, 19, 26])
+  expect(breakOpportunities('a !b ?')).toEqual([2])
+  expect(breakOpportunities(`f(x)y${NBSP}[0]1${NBSP}+3${NBSP}+a`)).toEqual([])
+  expect(breakOpportunities(`a\u{2223}b${NBSP}\u{5D0}\u{5BE}\u{5D1}`)).toEqual([5])
   // Asaf's screenshot of 20.10: the title broke at its hyphen although its spaces were no-break
   expect(nb('Plan the static-registry move')).toBe(`Plan${NBSP}the${NBSP}static${NBHY}registry${NBSP}move`)
   expect(nb('claude-in-chrome')).toBe(`claude${NBHY}in${NBHY}chrome`)
@@ -257,9 +284,26 @@ test('nb (live check 5): no line-break opportunity left among the spaces, hyphen
   // a Hebrew value: the spaced hyphen of a sentence a no-break hyphen, the Hebrew rule as before
   expect(nb('זו הדגמה - הסוכנים לא אמיתיים')).toBe(`זו${NBSP}הדגמה${NBSP}${NBHY}${NBSP}הסוכנים${NBSP}לא${NBSP}אמיתיים`)
   expect(hebrewRuleOk(nb('זו הדגמה - הסוכנים לא אמיתיים'))).toBe(true)
+  // pre-check 6: a vertical bar the divides sign U+2223 (∣: bidi ON, as `|` is; an AL character, so no break on either side)
+  // and the maqaf a no-break hyphen — both kept at the end, as the dashes are; an exclamation or a question mark, a closing
+  // brace or an ellipsis glued to what follows it by the combining grapheme joiner U+034F (GL: no break before or after it; a
+  // nonspacing mark, invisible, no cell) — unless the end, a no-break space or a mark that holds already follows (LB12a, LB13,
+  // LB19, LB21, LB22: no glue at `!!`, `?)`, `!'`); a closing parenthesis or bracket and a plus kept (they hold already)
+  expect(NBBAR.codePointAt(0)).toBe(0x2223)
+  expect(GLUE.codePointAt(0)).toBe(0x34f)
+  expect(nb('build | test | ship|')).toBe(`build${NBSP}${NBBAR}${NBSP}test${NBSP}${NBBAR}${NBSP}ship|`)
+  expect(nb('תל\u{5BE}אביב א\u{5BE}')).toBe(`תל${NBHY}אביב${NBSP}א\u{5BE}`)
+  expect(nb('GET /api/users?id=3')).toBe(`GET${NBSP}${NBSLASH}api${NBSLASH}users?${GLUE}id=3`)
+  expect(nb('x!=null wow!! ${dir}s wait\u{2026}then done! ok? end\u{2026}')).toBe(`x!${GLUE}=null${NBSP}wow!!${NBSP}\${dir}${GLUE}s${NBSP}wait\u{2026}${GLUE}then${NBSP}done!${NBSP}ok?${NBSP}end\u{2026}`)
+  expect(nb('Ship it!🚀 ok?) "no!"')).toBe(`Ship${NBSP}it!${GLUE}🚀${NBSP}ok?)${NBSP}"no!"`)
+  expect(nb('f(x)y [0]1 +3 a+b')).toBe(`f(x)y${NBSP}[0]1${NBSP}+3${NBSP}a+b`)
+  expect(hebrewRuleOk(nb('בנייה | בדיקה | שחרור'))).toBe(true)
+  expect(hebrewRuleOk(nb('מה קרה?!סיימנו'))).toBe(true)
   const nasty = [
     'Plan the static-registry move and the v2 config rollout', 'src/hooks/office-layout.ts — the cut', 'a \u{2013} b\u{2014}c / d-e',
     'x\u{200B}y\u{AD}z\u{2003}w\t1-2 3/4 -5', 'בדיקת תיאטרון-הסוכנים / שיחה \u{2013} חדשה', '🔌 claude-in-chrome', '👨‍💻 a-b', '--a//b--', '',
+    'build | test|ship', 'GET /api/users?id=3&x=1', 'x!=null wow!!a ${dir}s wait\u{2026}then 3!4 }1 !/a ?|b', 'תל\u{5BE}אביב | מה?!כן\u{2026}לא',
+    'f(x)y [0]1 +3 a+b ?) "no!"', '|!?}\u{2026}\u{5BE}', 'a|', '!', '\u{2026}\u{2026}x',
   ]
   for (const s of nasty) {
     const v = nb(s)
@@ -748,7 +792,7 @@ test('officeModel: at every width 24..200, both directions, the office of the pr
   }
 })
 
-test('officeModel (live check 5): at every width 24..200, both directions, NO value drawn on one line holds a line-break opportunity among its spaces, hyphens, dashes and slashes (UAX #14: the title, the counts, the more line, the who, the model, the activity word, the task) — a title, a name, an activity, a model or a task with hyphens, slashes and dashes never breaks onto a second line', { timeoutMs: 30_000 }, () => {
+test('officeModel (live check 5): at every width 24..200, both directions, NO value drawn on one line holds a line-break opportunity among its spaces, hyphens, dashes, slashes, vertical bars and the marks a line breaks after (UAX #14: the title, the counts, the more line, the who, the model, the activity word, the task) — a title, a name, an activity, a model or a task with hyphens, slashes and dashes never breaks onto a second line', { timeoutMs: 30_000 }, () => {
   const rooms = [
     room({ id: 'plan', title: 'Plan the static-registry move and the v2 config rollout', run: 2, done: 1, moreLabel: 'עוד 2 שסיימו', agents: [
       ag('p1', 1, { name: 'Mary-Jane O/Neil', act: '🔌 claude-in-chrome', model: 'Sonnet 4.5-beta', task: 'fix the static-registry/config\u{2014}now' }),
@@ -756,6 +800,10 @@ test('officeModel (live check 5): at every width 24..200, both directions, NO va
       ag('p3', 3, { status: 'done', act: '✅ סיים', task: 'א-ב / ג\u{2010}ד 3-4 20/10' }),
     ] }),
     room({ id: 'he', title: 'בדיקת תיאטרון-הסוכנים / שיחה \u{2013} חדשה עם כמה סוכני-משנה', run: 1, agents: [ag('h1', 4, { name: 'זאב-ים', act: '✏️ עורך', task: 'תכנון-המעבר לרישום/הסטטי' })] }),
+    // pre-check 6: the vertical bar, the maqaf and the marks a line breaks after (! ? } …)
+    room({ id: 'bar', title: 'build|test | ship!now?yes wait\u{2026}then ${dir}s', run: 1, agents: [
+      ag('b1', 5, { name: 'תל\u{5BE}אביב|יפו', act: '🔌 a|b!c', model: 'Opus?5', task: 'GET /api/users?id=3 | x!=null }1 wow\u{2026}ok' }),
+    ] }),
   ]
   for (let columns = 24; columns <= 200; columns += columns < 70 ? 1 : 5) {
     for (const rtl of [true, false]) {
@@ -771,6 +819,11 @@ test('officeModel (live check 5): at every width 24..200, both directions, NO va
   expect(wide.rooms[0]!.rows[0]!.actWord).toBe(`claude${NBHY}in${NBHY}chrome`)
   expect(wide.rooms[0]!.rows[2]!.task).toBe(nb(cutTask('א-ב / ג\u{2010}ד 3-4 20/10')))
   expect(wide.rooms[0]!.rows[2]!.task).toContain('3-4')
+  // the bar a divides sign, the maqaf a no-break hyphen, the glue after a mark that a letter or a digit follows
+  const bar = wide.rooms.find(r => r.id === 'bar')!
+  expect(bar.rows[0]!.task).toBe(nb(cutTask('GET /api/users?id=3 | x!=null }1 wow\u{2026}ok')))
+  expect(bar.rows[0]!.task).toContain(`?${GLUE}id=3${NBSP}${NBBAR}`)
+  expect(bar.rows[0]!.who).toContain(`תל${NBHY}אביב${NBBAR}יפו`)
 })
 
 test('trimWindow: the window keeps at most `maxRows` agent rows — the lines past the last row within the budget are dropped; a window inside the budget is returned as it is; count 0 and an empty office tolerated', () => {

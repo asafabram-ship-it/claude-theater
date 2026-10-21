@@ -120,9 +120,12 @@ const SETTINGS_EN: Labels = ['🎬 Demo', '🎞 Motion', '🌐 עברית']
 /** The demo line's notes (live check 5): the whole sentence, and the middle form a narrow pane draws. */
 const DEMO_NOTE = '🎬 זו הדגמה - הסוכנים לא אמיתיים'
 const DEMO_NOTE_MID = '🎬 הדגמה - לא אמיתיים'
-/** The demo cast's two rooms (scanner.ts demoPayload); the research room always holds a finished agent. */
+/** The demo cast's two rooms (scanner.ts demoPayload); the research room always holds RECENT_DONE + 2 finished agents. */
 const DEMO_S2 = 'demo-session-research-2222'
 const DEMO_ROOMS = ['demo-session-frontend-1111', DEMO_S2]
+/** The research room's finished, most recent first (pre-check 6): it draws the RECENT_DONE first while it hides its finished, and counts the rest on its more line. */
+const DEMO_DONE = ['demo-writer-ff', 'demo-survey-ii', 'demo-bench-jj', 'demo-dedupe-kk', 'demo-label-ll']
+const DEMO_HELD = DEMO_DONE.slice(RECENT_DONE)
 const WIDTHS: Record<34 | 51 | 120, Width> = {
   34: { column: 34, margin: 0, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
   51: { column: 51, margin: 0, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
@@ -521,6 +524,18 @@ function suite(COLUMNS: Columns): void {
     expect(await label(ui, 'demo')).toBe(W.exitDemo)
     await rowsOk(ui, p1)
     await ui.press({ key: 'closeHelp' })
+    // THE RECENT FINISHED in the demo (pre-check 6: ☐ → ☑ must change what the demo draws): the research room holds
+    // RECENT_DONE + 2 finished — it draws the RECENT_DONE most recent, its more line counts the other two, which are NOT drawn
+    const pOff = await officeProps(ui)
+    expect(DEMO_HELD.length).toBe(2)
+    expect(roomOf(pOff, DEMO_S2)).toMatchObject({ showDone: false, moreDone: DEMO_HELD.length, moreLabel: I18N.he.moreDoneN(DEMO_HELD.length) })
+    expect(roomOf(pOff, DEMO_S2).agents.filter(a => a.status === 'done').map(a => a.id)).toEqual(DEMO_DONE.slice(0, RECENT_DONE))
+    for (const id of DEMO_HELD) {
+      expect(ids(pOff, DEMO_S2), id).not.toContain(id)
+      expect(officeModel(pOff).hits.some(h => h.kind === 'agent' && h.id === id), id).toBe(false)
+    }
+    expect((await headOf(ui, pOff, DEMO_S2)).more).toBe(nb(`▸ ${I18N.he.moreDoneN(DEMO_HELD.length)}`))
+    await rowsOk(ui, pOff)
     // a click on a demo row opens that row (the line map under the taller chrome)
     await click(ui, 'agent', 'demo-mcp-dd')
     expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
@@ -539,10 +554,16 @@ function suite(COLUMNS: Columns): void {
     expect(p2.prefs.showDone).toBe(true)
     expect(p2.rooms.every(r => r.showDone)).toBe(true)
     expect(p2.rooms.flatMap(r => r.agents).some(a => a.id === 'demo-writer-ff')).toBe(true)
+    // the two the room held back are drawn now, its more line the hide line
+    expect(roomOf(p2, DEMO_S2)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
+    expect(roomOf(p2, DEMO_S2).agents.filter(a => a.status === 'done').map(a => a.id)).toEqual(DEMO_DONE)
+    for (const id of DEMO_HELD) expect(officeModel(p2).hits.some(h => h.kind === 'agent' && h.id === id), id).toBe(true)
+    expect((await headOf(ui, p2, DEMO_S2)).more).toBe(HIDE_LINE)
     expect(await label(ui, 'showDone')).toBe(W.toolbar[0].replace('☐', '☑'))
     await rowsOk(ui, p2)
     await ui.press({ key: 'showDone' })
     expect((await officeProps(ui)).rooms.every(r => !r.showDone)).toBe(true)
+    for (const id of DEMO_HELD) expect(ids(await officeProps(ui), DEMO_S2), id).not.toContain(id)
     // the demo line's exit Button ends the demo: the fixture is back, the line gone (the switch's publish: the render kick's
     // poll, which a tick's poll in flight defers — settled here, as ui.test.ts's demo test does)
     await ui.press({ key: 'exitDemo' })

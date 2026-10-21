@@ -198,6 +198,19 @@ export function cutWords(s: string, max: number): string {
 export const NBHY = '\u{2011}'
 /** The division slash (U+2215, line-break class AL): what a slash of a one-line value becomes (nb). Escaped, as NBSP is. */
 export const NBSLASH = '\u{2215}'
+/**
+ * The divides sign (U+2223 ∣: line-break class AI, which UAX #14 LB1 resolves to AL; bidi ON, as `|` is; one cell): what a
+ * vertical bar of a one-line value becomes (nb). Not U+01C0 ǀ (a letter: a strong left-to-right character, which would move
+ * a Hebrew line's runs and fail THE HEBREW RULE). Escaped, as NBSP is.
+ */
+export const NBBAR = '\u{2223}'
+/**
+ * The combining grapheme joiner (U+034F: line-break class GL — no break before it but after a space, a BA or a hyphen, none
+ * after it; a nonspacing mark, Mn, so no control and no format character; default-ignorable: never drawn, no cell — glyphs()
+ * rides it on the mark before it): the glue nb sets after a mark a line breaks after, which has no no-break look-alike but a
+ * letter. Escaped, as NBSP is.
+ */
+export const GLUE = '\u{34F}'
 /** The no-break spaces (U+00A0, U+2007, U+202F: line-break class GL), which no line is broken at. */
 const NO_BREAK_SPACES: ReadonlySet<string> = new Set([NBSP, '\u{2007}', '\u{202F}'])
 /** The em dash (UAX #14 class B2: a break before and after it, but not beside a no-break space or another em dash). */
@@ -209,40 +222,58 @@ const INVISIBLE_BREAK_RE = /[\u{200B}\u{AD}]/gu
 /**
  * The visible marks a line may break after (UAX #14, as the desktop's line breaker applies it), once the spaces are no-break
  * spaces: a hyphen-minus (HY) unless a digit follows (`HY × NU`: `3-4`, `-5` hold, and the number keeps its bidi run), the
- * hyphen U+2010 and the figure and en dashes U+2012 / U+2013 (BA: even before a no-break space) unless they end the value,
- * the em dash (B2; nb keeps one flanked by no-break spaces, which holds), and a slash (SY) unless a digit, a no-break space or
- * the end follows (`SY × NU`, `SY × GL`).
+ * hyphen U+2010, the figure and en dashes U+2012 / U+2013, the maqaf U+05BE and the vertical bar (BA: even before a no-break
+ * space) unless they end the value, the em dash (B2; nb keeps one flanked by no-break spaces, which holds), and a slash (SY)
+ * unless a digit, a no-break space or the end follows (`SY × NU`, `SY × GL`).
  */
-const BREAK_MARK_RE = /-(?!\p{Nd})|[\u{2010}\u{2012}\u{2013}](?!$)|\u{2014}|\/(?![\p{Nd}\u{A0}\u{2007}\u{202F}]|$)/gu
-/** Anything nb rewrites but a plain space (a breaking space other than U+0020, an invisible break, a hyphen, a dash, a slash): nb's fast path checks for it. */
-const NB_WORK_RE = /[-/\t\u{AD}\u{1680}\u{2000}-\u{200B}\u{2010}-\u{2014}\u{205F}\u{3000}]/u
+const BREAK_MARK_RE = /-(?!\p{Nd})|[|\u{5BE}\u{2010}\u{2012}\u{2013}](?!$)|\u{2014}|\/(?![\p{Nd}\u{A0}\u{2007}\u{202F}]|$)/gu
+/**
+ * The marks a line breaks after before a letter, a digit, an emoji, an opening bracket (UAX #14 LB31: no rule holds them
+ * there) — the exclamation and question marks (EX), the closing brace (CL), the ellipsis (IN) — when something follows them
+ * but the glue itself, a no-break space or the no-break hyphen (`× GL`), or a mark no line breaks before: a closing, terminal
+ * or quote mark (`× EX`, `× CL`, `× CP`, `× IS`, `× IN`, `× QU`), a hyphen-minus or a slash nb kept (`× HY`, `× SY`). Matched
+ * after the other rewrites, so a bar or a slash that became a letter's class (NBBAR, NBSLASH) after one is glued to it.
+ */
+const GLUE_AFTER_RE = /[!?}\u{2026}](?=[^\u{34F}\u{A0}\u{2007}\u{202F}\u{2011}!?)\]}\u{2026},.:;'"\/-])/gu
+/** Anything nb rewrites but a plain space (a breaking space other than U+0020, an invisible break, a hyphen, a dash, a slash, a bar, a mark it glues): nb's fast path checks for it. */
+const NB_WORK_RE = /[-/|!?}\t\u{AD}\u{5BE}\u{1680}\u{2000}-\u{200B}\u{2010}-\u{2014}\u{2026}\u{205F}\u{3000}]/u
 
 /**
- * THE ONE-LINE VALUE (round 9; live check 5): `s` with no line-break opportunity left among its spaces, hyphens, dashes and
- * slashes, so a Text drawn from it can never wrap — a value a little too long for its column is clipped at the card's edge
- * instead of breaking onto a second line (the desktop does not enforce `wrap: 'truncate'`; a wrapped line would shift every
- * line of the line map under it — Asaf's screenshot of 20.10: a title broke at its hyphen, `Plan the static-` over
- * `registry…`, although its spaces were no-break). So: every space a no-break space (U+00A0); a hyphen-minus or a hyphen, a
- * figure or en dash, an em dash between letters a no-break hyphen (U+2011: the same bidi class as the dashes, ON — a
- * hyphen-minus before a digit is kept, as a number range or a sign needs its own class to stay one run in a Hebrew line);
- * a slash before a letter the division slash (U+2215: ON, as `/` is between letters); the zero-width space and the soft
- * hyphen removed. No character it writes is a control or a format character (office-chrome.ts REFUSED_RE, cleanAgentText:
+ * THE ONE-LINE VALUE (round 9; live check 5; pre-check 6): `s` with no line-break opportunity left among its spaces,
+ * hyphens, dashes, slashes, vertical bars and the marks a line breaks after (`! ? } …`), so a Text drawn from it can never
+ * wrap there — a value a little too long for its column is clipped at the card's edge instead of breaking onto a second line
+ * (the desktop does not enforce `wrap: 'truncate'`; a wrapped line would shift every line of the line map under it — Asaf's
+ * screenshot of 20.10: a title broke at its hyphen, `Plan the static-` over `registry…`, although its spaces were
+ * no-break). So: every space a no-break space (U+00A0); a hyphen-minus or a hyphen, a figure or en dash, a maqaf, an em
+ * dash between letters a no-break hyphen (U+2011: the same bidi class as the dashes, ON — a hyphen-minus before a digit is
+ * kept, as a number range or a sign needs its own class to stay one run in a Hebrew line); a slash before a letter the
+ * division slash (U+2215: ON, as `/` is between letters); a vertical bar the divides sign (NBBAR, U+2223: ON, as `|` is;
+ * the bar and the maqaf, like the dashes, kept at the end, where nothing breaks); after an exclamation or a question mark, a
+ * closing brace or an ellipsis that a letter, a digit or another breaking neighbour follows, the glue (GLUE, U+034F: no
+ * break on either side of it; invisible, no cell) — those marks have no no-break look-alike but letters, which would change
+ * the bidi runs and fail THE HEBREW RULE; the zero-width space and the soft hyphen removed. A closing parenthesis or bracket
+ * and a plus hold before a letter or a digit already (UAX #14 LB30, LB24) and are kept. Not every opportunity of UAX #14 is
+ * closed: one before an emoji or an opening bracket after a letter or another mark (`word🎉`, `a.(b`) stays — rare in a
+ * title or a task. No character it writes is a control or a format character (office-chrome.ts REFUSED_RE, cleanAgentText:
  * office-layout.test.ts checks both). Every one-line value of a card goes through it: the who, the model, the activity
  * word, the task, the title, the counts, the more line — and the settings' shortcut table and the demo line
- * (office-client.tsx). The width is the same (each replacement one cell; only the invisible two leave). Idempotent.
+ * (office-client.tsx). The width is the same (each replacement one cell, the glue none; only the invisible two leave).
+ * Idempotent.
  */
 export function nb(s: string): string {
   // the fast path: most values hold nothing but plain spaces to rewrite (a room's rows are rebuilt on every width change)
   if (!NB_WORK_RE.test(s)) return s.replace(/ /g, NBSP)
   const spaced = s.replace(INVISIBLE_BREAK_RE, '').replace(BREAK_SPACE_RE, NBSP)
-  return spaced.replace(BREAK_MARK_RE, (m: string, at: number, all: string) => {
+  const marked = spaced.replace(BREAK_MARK_RE, (m: string, at: number, all: string) => {
     if (m === '/') return NBSLASH
+    if (m === '|') return NBBAR
     if (m === EM_DASH) {
       const holds = (c: string | undefined) => c === undefined || c === EM_DASH || NO_BREAK_SPACES.has(c)
       return holds(all[at - 1]) && holds(all[at + 1]) ? m : NBHY
     }
     return NBHY
   })
+  return marked.replace(GLUE_AFTER_RE, (m: string) => `${m}${GLUE}`)
 }
 
 /**

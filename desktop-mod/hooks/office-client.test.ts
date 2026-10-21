@@ -148,7 +148,9 @@ const cards = (tree: unknown) => nodes(tree).filter(n => n.type === 'Box' && ((n
  * no row is in the window), its more line.
  */
 function partsOf(card: Node): { title: Node; blank: Node; table: Node; more: Node | undefined } {
-  const [title, blank, table, more] = card.children as Node[]
+  // (the more line DIRECTLY UNDER THE TITLE when the card has one: live check 7, Q3)
+  const kids = card.children as Node[]
+  const [title, more, blank, table] = kids.length === 4 ? kids : [kids[0], undefined, kids[1], kids[2]]
   return { title: title!, blank: blank!, table: table!, more }
 }
 /** The texts of a row as the model lays them in the mode's columns: status · who · [model] · emoji · [word] · [task from CENTRE_AT]. */
@@ -736,7 +738,7 @@ test('THE DEMO LINE\'s ladder (demoLine): the longest note that fits beside the 
   }
 })
 
-test('pointer: down → hit → one post (open on a row, pin at the reading edge of the title, roomDone on the counts, the more line too); move over a title → the dim 📌 without a post; the chrome and the frame lines are dead', () => {
+test('pointer: down → hit → one post (open on a row, pin at the reading edge of the title, roomDone on the more line under the title — the counts are read-only: live check 7); move over a title → the dim 📌 without a post; the chrome and the frame lines are dead', () => {
   const f = fake()
   const p = props({ rooms: [room('A', [ag('lead'), ag('a1'), ag('d1', { status: 'done' })], { moreDone: 2, moreLabel: 'עוד 2 שסיימו' })] })
   Office(p, f.surface)
@@ -753,20 +755,21 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   // the second row, at its far end
   f.pointer({ type: 'down', x: X(0), y: C + y('agent', 'a1'), button: 'left' })
   expect(f.posts[1]).toEqual({ t: 'open', id: 'a1' })
-  // the pin zone at the right edge of the title line; the counts (with ✅) at the left edge; the title between them is nothing
+  // the pin zone at the right edge of the title line; the counts at the left edge are read-only (live check 7, Q6), the title
+  // between them is nothing
   f.pointer({ type: 'down', x: X(LAST), y: C + y('pin', 'A'), button: 'left' })
   expect(f.posts[2]).toEqual({ t: 'pin', room: 'A' })
-  f.pointer({ type: 'down', x: X(1), y: C + y('roomDone', 'A'), button: 'left' })
-  expect(f.posts[3]).toEqual({ t: 'roomDone', room: 'A' })
+  f.pointer({ type: 'down', x: X(1), y: C + y('pin', 'A'), button: 'left' })
   f.pointer({ type: 'down', x: X(22), y: C + y('pin', 'A'), button: 'left' })
-  expect(f.posts).toHaveLength(4)
-  // the "more finished" line posts the room's toggle too
+  expect(f.posts).toHaveLength(3)
+  // the "more finished" line, directly under the title, posts the room's toggle
+  expect(y('moreDone', 'A')).toBe(y('pin', 'A') + 1)
   f.pointer({ type: 'down', x: 20, y: C + y('moreDone', 'A'), button: 'left' })
-  expect(f.posts[4]).toEqual({ t: 'roomDone', room: 'A' })
-  // the chrome, the card's border and padding lines, the rule, the blank line, the gap and the rows past the office post nothing; nor does a right click
-  for (const yy of [0, 1, 5, C, C + 1, C + 3, C + 7, C + 9, C + 10, C + 11, C + 12]) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
+  expect(f.posts[3]).toEqual({ t: 'roomDone', room: 'A' })
+  // the chrome, the card's border and padding lines, the blank line, the gap and the rows past the office post nothing; nor does a right click
+  for (const yy of [0, 1, 5, C, C + 1, C + 4, C + 8, C + 9, C + 10, C + 11, C + 12]) f.pointer({ type: 'down', x: 5, y: yy, button: 'left' })
   f.pointer({ type: 'down', x: 5, y: C + y('agent', 'lead'), button: 'right' })
-  expect(f.posts.length).toBe(5)
+  expect(f.posts.length).toBe(4)
   // the head hover: a move over the title line → setState with hoverRoom, the card draws a dim 📌; a second move there changes nothing
   const sets = f.setStates()
   f.pointer({ type: 'move', x: 20, y: C + y('pin', 'A') })
@@ -792,7 +795,7 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   f.pointer({ type: 'leave', x: 0, y: 0 })
   f.pointer({ type: 'leave', x: 0, y: 0 })
   expect(f.setStates()).toBe(sets + 2)
-  expect(f.posts.length).toBe(5)   // no post for any move/leave
+  expect(f.posts.length).toBe(4)   // no post for any move/leave
   // a click on a row also takes the keyboard focus there: the marker on the inner side of its status mark (the mark itself at the edge)
   expect(f.surface.state!.focus).toBe('a1')
   tree = Office(p, f.surface)
@@ -1094,36 +1097,36 @@ test('keys: j / k keep to the rows drawn — from no focus, j lands on the windo
   expect(f.posts).toEqual([{ t: 'open', id: 'g27' }])
 })
 
-test('the row budget\'s cut: the lines of the cut card drawn past it in the viewport (its more line, its frame) are live, its blank rows and the cards past the cut are dead; the j / k walk and o keep to the rows drawn', () => {
-  // 120 agents in A (its more line on line 125, its card to line 128) and B after it (its title on line 131): a 150-row pane at the
-  // top shows lines 0..143, the row budget cuts the rows at g99 (line 103); A is drawn whole (its lines past the cut are in the
-  // viewport), B is not drawn at all (its top is past the cut)
+test('the row budget\'s cut: the cut card is drawn whole in the viewport — its more line under its title (live check 7) live, its frame past the cut no control, its blank rows and the cards past the cut dead; the j / k walk and o keep to the rows drawn', () => {
+  // 120 agents in A (its more line under its title on line 3, its rows from line 5, its card to line 127) and B after it (its
+  // title on line 130): a 150-row pane at the top shows the whole office, the row budget cuts the rows at g99 (line 104); A is
+  // drawn whole (its lines past the cut are in the viewport), B is not drawn at all (its top is past the cut)
   const p = props({ rows: 150, rooms: [room('A', Array.from({ length: 120 }, (_, i) => ag(`g${i}`)), { moreDone: 2, moreLabel: 'עוד 2 שסיימו' }), room('B', [ag('b0'), ag('b1')])] })
   const m = officeModel(p)
-  expect(m.rooms[0]).toMatchObject({ moreAt: 125, height: 129 })
-  expect(m.rooms[1]).toMatchObject({ top: 129, titleAt: 131 })
+  expect(m.rooms[0]).toMatchObject({ moreAt: 3, blankAt: 4, height: 128 })
+  expect(m.rooms[1]).toMatchObject({ top: 128, titleAt: 130 })
   const f = fake(45, 0)
   const tree = Office(p, f.surface)
-  expect(f.surface.state!.inst.win).toEqual({ from: 0, count: 4 + WINDOW_ROWS })
-  expect(f.surface.state!.inst.view).toBe(rowCount(p))   // the viewport (144 lines) holds the whole office (138): every line of it is in view
-  expect(rowCount(p)).toBe(138)
+  expect(f.surface.state!.inst.win).toEqual({ from: 0, count: 5 + WINDOW_ROWS })
+  expect(f.surface.state!.inst.view).toBe(rowCount(p))   // the viewport (144 lines) holds the whole office (137): every line of it is in view
+  expect(rowCount(p)).toBe(137)
   expect(cards(tree)).toHaveLength(1)
   expect(partsOf(cards(tree)[0]!).more).toBeDefined()
   expect(rowsOf(cards(tree)[0]!)).toHaveLength(WINDOW_ROWS)
   const C = chromeRows(p)
-  f.pointer({ type: 'down', x: 20, y: C + 125, button: 'left' })        // A's more line, drawn past the cut: live
+  f.pointer({ type: 'down', x: 20, y: C + 3, button: 'left' })          // A's more line, under its title: live
   expect(f.posts).toEqual([{ t: 'roomDone', room: 'A' }])
-  f.pointer({ type: 'down', x: 5, y: C + 110, button: 'left' })         // g106's row: left blank by the budget — dead
-  f.pointer({ type: 'down', x: 5, y: C + 4 + WINDOW_ROWS, button: 'left' })
-  f.pointer({ type: 'down', x: 44, y: C + 131, button: 'left' })        // B's pin zone: B is not drawn — dead
-  f.pointer({ type: 'down', x: 5, y: C + 133, button: 'left' })         // b0's row: not drawn
-  f.pointer({ type: 'down', x: 5, y: C + 127, button: 'left' })         // A's bottom border: no control
+  f.pointer({ type: 'down', x: 5, y: C + 110, button: 'left' })         // g105's row: left blank by the budget — dead
+  f.pointer({ type: 'down', x: 5, y: C + 5 + WINDOW_ROWS, button: 'left' })
+  f.pointer({ type: 'down', x: 40, y: C + 130, button: 'left' })        // B's pin zone: B is not drawn — dead
+  f.pointer({ type: 'down', x: 5, y: C + 132, button: 'left' })         // b0's row: not drawn
+  f.pointer({ type: 'down', x: 5, y: C + 126, button: 'left' })         // A's bottom border: no control
   expect(f.posts).toHaveLength(1)
-  f.pointer({ type: 'move', x: 20, y: C + 131 })                         // B's title: no head hover (nothing drawn there)
+  f.pointer({ type: 'move', x: 20, y: C + 130 })                         // B's title: no head hover (nothing drawn there)
   expect(f.surface.state!.hoverRoom).toBeNull()
   f.pointer({ type: 'move', x: 20, y: C + 2 })                           // A's title: in the window
   expect(f.surface.state!.hoverRoom).toBe('A')
-  f.pointer({ type: 'down', x: 5, y: C + 103, button: 'left' })         // the last row drawn
+  f.pointer({ type: 'down', x: 5, y: C + 104, button: 'left' })         // the last row drawn
   expect(f.posts[1]).toEqual({ t: 'open', id: 'g99' })
   // the walk ends at the last row drawn; o opens it, never a blank row
   for (let i = 0; i < 130; i++) f.key({ key: 'j' })
@@ -1885,7 +1888,7 @@ test('THE RENDER COST (the regression guard no load can flake): a drawn row cost
 // the width (probe rounds 8-9)
 // ---------------------------------------------------------------------------
 
-test('THE LINE COUNTS (probe rounds 8-9): at every width 24..200, narrowing and then widening on ONE instance (the hysteresis riding in it), both directions, with and without the drawer — the chrome\'s rows add up to chromeRows and the first card starts there, every card is its line map (the title, a text-free blank line, a Text per column per row and no Box, the more line with its blank), NO Text of a card holds a plain space; the mode changes words and columns and never a line\'s position (the same line shape at a width whichever way it was reached); narrowing draws the fresh mode, widening never a richer one', { timeoutMs: 120_000 }, () => {
+test('THE LINE COUNTS (probe rounds 8-9): at every width 24..200, narrowing and then widening on ONE instance (the hysteresis riding in it), both directions, with and without the drawer — the chrome\'s rows add up to chromeRows and the first card starts there, every card is its line map (the title, a text-free blank line, a Text per column per row and no Box, the more line under the title), NO Text of a card holds a plain space; the mode changes words and columns and never a line\'s position (the same line shape at a width whichever way it was reached); narrowing draws the fresh mode, widening never a richer one', { timeoutMs: 120_000 }, () => {
   const rooms = [
     room('A', [ag('lead', { emoji: '💼', act: '🧠 חושב' }), ag('a1', { name: 'הקרטוגרף', model: 'Sonnet 4.5', act: '🔎 מחפש קוד' }), ag('d1', { status: 'done', act: '✅ סיים', star: 7 })], { moreDone: 2, moreLabel: 'עוד 2 שסיימו' }),
     room('B', [ag('b1', { status: 'stale', act: '💤 ממתין' }), ag('b2', { failed: true, status: 'done', act: '✅ סיים' }), ag('b3', { longRunning: true })], { title: 'Plan the static-registry move and the v2 config rollout', pinned: true }),
@@ -1918,7 +1921,7 @@ test('THE LINE COUNTS (probe rounds 8-9): at every width 24..200, narrowing and 
             expect(blank, at).toEqual({ type: 'Box', props: { height: 1 }, children: [] })
             const rm = m.rooms[i]!
             expect(rowsOf(card).length, at).toBe(rm.rows.length)
-            if (rm.more) expect(more, at).toMatchObject({ props: { height: 1, marginTop: 1 } })
+            if (rm.more) { expect(more, at).toMatchObject({ props: { height: 1 } }); expect(more!.props.marginTop, at).toBeUndefined() }
             else expect(more, at).toBeUndefined()
             for (const col of columnsOf(card)) expect((col.children as Node[]).every(c => c.type === 'Text'), at).toBe(true)
             for (const n of nodes(card)) if (n.type === 'Text') expect(texts(n), at).not.toContain(' ')

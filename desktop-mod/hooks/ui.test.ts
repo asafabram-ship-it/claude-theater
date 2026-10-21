@@ -922,7 +922,7 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   //     publish drops the pin (one prefs write + its store mirror) and the override (one store write), after
   //     the payload write in the same tick; no view write (nothing selected)
   await clickIn(ui, 'pin', QSESS2)
-  await clickIn(ui, 'roomDone', QSESS2)
+  await ui.post({ t: 'roomDone', room: QSESS2 }, { in: OFFICE_KEY })   // (its finished toggle's post: the room draws no more line)
   expect((await officePropsOf(ui))?.rooms.find(r => r.id === QSESS2)).toMatchObject({ pinned: true, showDone: true })
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([QSESS2])
   expect(captured.store.roomDone).toEqual({ [QSESS2]: true })
@@ -950,7 +950,7 @@ test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished sele
   expect(captured.prefsReads).toBe(reads4)
   // the render's own copy of the overrides followed the prune: a toggle on room 1 writes room 1 alone
   // (a stale copy would resurrect room 2's pruned entry)
-  await clickIn(ui, 'roomDone', QSESS)
+  await ui.post({ t: 'roomDone', room: QSESS }, { in: OFFICE_KEY })
   expect(captured.store.roomDone).toEqual({ [QSESS]: true })
   // (4) never in the demo, never on an empty office: room 1 pinned, then the demo cast (other rooms) and an
   //     office with no agent at all are published — the pin and the override stay

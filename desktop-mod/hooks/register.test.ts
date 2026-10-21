@@ -56,6 +56,7 @@ function fixture(): Agent[] {
 type Ui = {
   find: (q: { type?: string; key?: string; text?: RegExp; in?: string }) => Promise<{ text?: string; props: Record<string, unknown> } | undefined>
   pointer: (ev: { in?: string; type: 'down'; x: number; y: number; button: 'left' }) => Promise<void>
+  post: (data: JsonValue, scope?: { in?: string }) => Promise<void>
 }
 
 /** The office Client's props as last drawn. */
@@ -140,13 +141,15 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   await click(ui, 'pin', SB)
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([])
 
-  // room A's ✅ counts: the override lives in $.store, not $.state — no state write; drawn at once (the message's answer, and
-  // the redraw asked before the store write: no latch — live check 7, R3; the engine folds a burst of redraws itself)
-  expect(await writesOf(captured, async () => { await click(ui, 'roomDone', SA); await click(ui, 'roomDone', SA); await click(ui, 'roomDone', SA) })).toEqual({ 'store:roomDone': 3 })
+  // room A's finished toggle (its post: room A holds one finished, so it draws no more line — live check 7, Q6 — and its
+  // counts are read-only): the override lives in $.store, not $.state — no state write; drawn at once (the message's answer,
+  // and the redraw asked before the store write: no latch — R3; the engine folds a burst of redraws itself)
+  const roomDone = () => ui.post({ t: 'roomDone', room: SA }, { in: OFFICE_KEY })
+  expect(await writesOf(captured, async () => { await roomDone(); await roomDone(); await roomDone() })).toEqual({ 'store:roomDone': 3 })
   expect(captured.store.roomDone).toEqual({ [SA]: true })
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)).toMatchObject({ showDone: true })
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.agents.map(a => a.id)).toEqual(['lead-a', 'a1', 'a2'])
-  await click(ui, 'roomDone', SA)
+  await roomDone()
   expect(captured.store.roomDone).toEqual({})
   expect((await propsOf(ui)).rooms.find(r => r.id === SA)?.showDone).toBe(false)
 

@@ -81,7 +81,7 @@ const MORE_LABEL = I18N.he.moreDoneN(1)
 const HIDE_LABEL = I18N.he.hideDone
 /** The more / hide line as drawn: with no plain space (office-layout.ts nb: a one-line value never wraps). */
 const MORE_LINE = nb(`▸ ${MORE_LABEL}`)
-const HIDE_LINE = nb(`▸ ${HIDE_LABEL}`)
+const HIDE_LINE = nb(`▾ ${HIDE_LABEL}`)   // (the arrow follows the state: live check 7)
 
 /**
  * WHAT EACH WIDTH DRAWS (office-layout.ts geometry, office-chrome.ts; the probe's rounds 8-9), pinned by the first test of
@@ -244,10 +244,12 @@ async function cardOf(ui: Ui, p: OfficeProps, room: string): Promise<Drawn> {
   expect(card, `card of ${room}`).toBeDefined()
   return card!
 }
-/** The parts of a WHOLE card: the title line's pin Text (drawn only for a pinned or hovered room), its title and counts Boxes, the blank line, the table block, the more line. */
+/** The parts of a WHOLE card: the title line's pin Text (drawn only for a pinned or hovered room), its title and counts Boxes, the more line under it, the table block. */
 function partsOf(card: Drawn): { pin: Drawn | undefined; title: Drawn; counts: Drawn; table: Drawn; more: Drawn | undefined } {
   expect(isFragment(card), 'a whole card').toBe(false)
-  const [titleLine, , table, more] = elements(card)
+  // (the more line DIRECTLY UNDER THE TITLE when the card has one: live check 7, Q3)
+  const parts = elements(card)
+  const [titleLine, more, , table] = parts.length === 4 ? parts : [parts[0], undefined, parts[1], parts[2]]
   const kids = elements(titleLine)
   const pin = kids.find(n => n.type === 'Text')
   const [title, counts] = kids.filter(n => n.type === 'Box')
@@ -544,11 +546,11 @@ function suite(COLUMNS: Columns): void {
     await click(ui, 'agent', 'demo-mcp-dd')
     expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
     await ui.press({ key: 'close' })
-    // a room's ✅ counts: that room shows its finished (the override in the store), as a real room's do
-    await click(ui, 'roomDone', DEMO_S2)
+    // a room's more line: that room shows its finished (the override in the store), as a real room's does
+    await click(ui, 'moreDone', DEMO_S2)
     expect(captured.store.roomDone).toEqual({ [DEMO_S2]: true })
     expect(roomOf(await officeProps(ui), DEMO_S2).showDone).toBe(true)
-    await click(ui, 'roomDone', DEMO_S2)
+    await click(ui, 'moreDone', DEMO_S2)
     expect(captured.store.roomDone).toEqual({})
     // ☐ → ☑: every demo room shows its finished; and back
     await ui.press({ key: 'showDone' })
@@ -725,38 +727,25 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('room counts ✅: a click on a card\'s counts toggles that room\'s finished alone (the $.store override, prefs untouched): after the redraw latch room A draws all of them with הסתר שסיימו; a click again hides them', async ($, on) => {
-    const { ui, captured, clock } = await mountOffice($, on)
+  t('room counts ✅ are READ-ONLY (live check 7, Q6: the more line under the title is the room\'s one toggle): the title line answers in its pin zone alone, a click on the counts changes nothing (no override, no prefs, the props as they were)', async ($, on) => {
+    const { ui, captured } = await mountOffice($, on)
     const p0 = await officeProps(ui)
-    const counts = hitOf(p0, 'roomDone', SA)
-    expect(counts.x).toBe(0)   // RTL: the counts zone at the column's left edge
-    expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.countsA))   // (the ✅ dropped at 36 — the counts stay the room's toggle)
-    expect(officeModel(p0).hits.some(h => h.kind === 'roomDone' && h.id === SB)).toBe(false)   // room B has no finished: no ✅ count, nothing to click
-    await click(ui, 'roomDone', SA)
-    expect(captured.store.roomDone).toEqual({ [SA]: true })
-    expect((await officeProps(ui)).prefs.showDone).toBe(false)
-    expect(roomOf(await officeProps(ui), SA).showDone).toBe(true)   // at once: no latch (live check 7, R3)
-    const p1 = await officeProps(ui)
-    expect(roomOf(p1, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
-    expect(ids(p1, SA)).toEqual(ALL_A)
-    expect(roomOf(p1, SB).showDone).toBe(false)
-    expect(p1.prefs.showDone).toBe(false)
-    expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
-    expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
-    await rowsOk(ui, p1)
-    await click(ui, 'roomDone', SA)
-    const p2 = await officeProps(ui)
-    expect(captured.store.roomDone).toEqual({})
-    expect(roomOf(p2, SA)).toMatchObject({ showDone: false, moreDone: 1, moreLabel: MORE_LABEL })
-    expect(ids(p2, SA)).toEqual(DRAWN_A)
+    expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.countsA))   // (the ✅ dropped at 36)
+    const titleA = officeModel(p0).rooms[0]!.titleAt
+    expect(officeModel(p0).hits.filter(h => h.y === titleA).map(h => h.kind)).toEqual(['pin'])
+    // RTL: the counts at the column's left edge
+    await deadRow(ui, chromeRows(p0) + titleA, 'A\'s ✅ counts', GEO.margin + 2)
+    expect(captured.store.roomDone ?? {}).toEqual({})
+    expect((captured.store.prefs as Prefs).showDone).toBe(false)
     await ui.unmount()
   })
 
-  t('the ▸ עוד N שסיימו line: a click on it shows the room\'s finished (the same override as the counts); the line then reads הסתר שסיימו, and a click on that hides them again', async ($, on) => {
-    const { ui, captured, clock } = await mountOffice($, on)
+  t('the ▸ עוד N שסיימו line, DIRECTLY UNDER THE TITLE (live check 7, Q3): a click on it shows the room\'s finished (the $.store override, prefs untouched, drawn at once); the line then reads ▾ הסתר שסיימו ON THE SAME LINE, and a click on that hides them again', async ($, on) => {
+    const { ui, captured } = await mountOffice($, on)
     const p0 = await officeProps(ui)
     const more = hitOf(p0, 'moreDone', SA)
     expect(more.w).toBe(GEO.W)   // the whole line is the hit
+    expect(more.y).toBe(officeModel(p0).rooms[0]!.titleAt + 1)
     expect((await headOf(ui, p0, SA)).more).toBe(MORE_LINE)
     expect(officeModel(p0).hits.some(h => h.kind === 'moreDone' && h.id === SB)).toBe(false)   // room B holds no finished: no such line
     await click(ui, 'moreDone', SA)
@@ -764,8 +753,12 @@ function suite(COLUMNS: Columns): void {
     const p1 = await officeProps(ui)
     expect(ids(p1, SA)).toEqual(ALL_A)
     expect(roomOf(p1, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
+    expect(roomOf(p1, SB).showDone).toBe(false)
+    expect(p1.prefs.showDone).toBe(false)
+    expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
+    await rowsOk(ui, p1)
     const hide = hitOf(p1, 'moreDone', SA)
-    expect(hide.y).toBe(more.y + 1)   // one line lower: the held-back writer is drawn above it
+    expect(hide.y).toBe(more.y)   // the same line: the held-back writer is drawn under it, among the rows
     expect((await headOf(ui, p1, SA)).more).toBe(HIDE_LINE)
     await click(ui, 'moreDone', SA)
     const p2 = await officeProps(ui)
@@ -1141,15 +1134,28 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('SCROLLED (the card controls lower down): with the window on A\'s end and B\'s card — B\'s title under the pointer draws its dim 📌; A\'s more line shows its held-back writer (the hide line one lower) and hides it again; B\'s ✅ counts give B its hide line and take it away; B\'s pin zone pins B, which leaves the window for the top (its 📌 bright there, unpinned after a scroll back)', async ($, on) => {
-    const { ui, captured, clock } = await mountOffice($, on, tallFixture, { offset: 0, bodyRows: BODY })
+  t('SCROLLED (the card controls lower down): with the window on A\'s end and B\'s card — B\'s title under the pointer draws its dim 📌; B\'s ✅ counts are read-only (live check 7, Q6: B holds one finished, so it has no more line either); A\'s more line, under its title (Q3), lies above the window — at the top it shows A\'s held-back writer and hides it again from the same line; B\'s pin zone pins B, which leaves the window for the top (its 📌 bright there, unpinned after a scroll back)', async ($, on) => {
+    const { ui, captured } = await mountOffice($, on, tallFixture, { offset: 0, bodyRows: BODY })
     const p0 = await officeProps(ui)
     const m0 = officeModel(p0)
     const roomA = m0.rooms[0]!
     const roomB = m0.rooms[1]!
     expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.tallA))   // (31 working; the ✅ dropped at 36)
-    // the window from A's last rows: A's more line, its frame, and B whole
-    const FROM = roomA.moreAt - 9
+    // A's more line under its title, at the top: A's override, the held-back writer drawn, the hide line on the SAME line
+    expect(roomA.moreAt).toBe(roomA.titleAt + 1)
+    expect((await headOf(ui, p0, SA)).more).toBe(MORE_LINE)
+    await click(ui, 'moreDone', SA)
+    expect(captured.store.roomDone).toEqual({ [SA]: true })
+    const pa = await officeProps(ui)
+    expect(roomOf(pa, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
+    expect(ids(pa, SA)).toEqual([...ids(p0, SA), DONE[RECENT_DONE]])
+    expect(hitOf(pa, 'moreDone', SA).y).toBe(roomA.moreAt)
+    expect((await headOf(ui, pa, SA)).more).toBe(HIDE_LINE)
+    await click(ui, 'moreDone', SA)
+    expect(captured.store.roomDone).toEqual({})
+    expect(ids(await officeProps(ui), SA)).toEqual(ids(p0, SA))
+    // the window from A's last rows: its frame, and B whole
+    const FROM = roomA.top + roomA.height - 9
     await scrollTo(ui, fixedRows(p0) + FROM, BODY)
     const p1 = await officeProps(ui)
     const w1 = windowNow(p1)
@@ -1159,7 +1165,8 @@ function suite(COLUMNS: Columns): void {
     expect(await cardsOf(ui)).toHaveLength(2)
     await rowsOk(ui, p1)
     expect(hitOf(p1, 'pin', SB).y).toBe(roomB.titleAt)
-    expect(hitOf(p1, 'moreDone', SA).y).toBe(roomA.moreAt)
+    // A's more line, scrolled above the window: its old Client row is the spacer now — dead
+    await deadRow(ui, chromeRows(p1) + roomA.moreAt, 'A\'s more line, above the window')
     // the head hover at B's scrolled title line: B's 📌 dim, A's none; off it, none; no post
     const writes = { ...captured.writes }
     await moveOver(ui, 'pin', SB)
@@ -1170,42 +1177,14 @@ function suite(COLUMNS: Columns): void {
     expect(await pinOf(ui, p1, SB)).toBe('none')
     await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
     expect(captured.writes).toEqual(writes)
-    // A's more line at its scrolled Client row: A's override; after the latch the held-back writer is drawn and the hide line is one lower
-    expect((await headOf(ui, p1, SA)).more).toBe(MORE_LINE)
-    await click(ui, 'moreDone', SA)
-    expect(captured.store.roomDone).toEqual({ [SA]: true })
-    const p2 = await officeProps(ui)
-    expect(roomOf(p2, SA)).toMatchObject({ showDone: true, moreDone: 0, moreLabel: HIDE_LABEL })
-    expect(ids(p2, SA)).toEqual([...ids(p1, SA), DONE[RECENT_DONE]])
-    expect(hitOf(p2, 'moreDone', SA).y).toBe(roomA.moreAt + 1)
-    expect(p2.offset).toBe(p1.offset)
-    expect((await headOf(ui, p2, SA)).more).toBe(HIDE_LINE)
-    await rowsOk(ui, p2)
-    await click(ui, 'moreDone', SA)
-    const p3 = await officeProps(ui)
-    expect(captured.store.roomDone).toEqual({})
-    expect(ids(p3, SA)).toEqual(ids(p1, SA))
-    expect((await headOf(ui, p3, SA)).more).toBe(MORE_LINE)
-    // B's ✅ counts at its scrolled title line: B's override; B drew its one finished already (among the recent), so the change
-    // is its hide line; clicked again, gone
-    expect((await headOf(ui, p3, SB)).counts).toBe(nb(W.tallB))
-    expect(nb(countsFor(roomOf(p3, SB), GEO))).toBe(nb(W.tallB))
-    expect((await headOf(ui, p3, SB)).more).toBe('')
-    expect(roomOf(p3, SB).moreLabel).toBe('')
-    await click(ui, 'roomDone', SB)
-    expect(captured.store.roomDone).toEqual({ [SB]: true })
-    const p4 = await officeProps(ui)
-    expect(roomOf(p4, SB)).toMatchObject({ showDone: true, moreLabel: HIDE_LABEL })
-    expect(ids(p4, SB)).toEqual(['b1', 'bd'])
-    expect(roomOf(p4, SA).showDone).toBe(false)
-    expect(p4.prefs.showDone).toBe(false)
-    expect((await headOf(ui, p4, SB)).more).toBe(HIDE_LINE)
-    expect(officeModel(p4).rooms[1]!.height).toBe(roomB.height + 2)
-    await rowsOk(ui, p4)
-    await click(ui, 'roomDone', SB)
-    const p5 = await officeProps(ui)
-    expect(captured.store.roomDone).toEqual({})
-    expect((await headOf(ui, p5, SB)).more).toBe('')
+    // B's ✅ counts at its scrolled title line: read-only — no line, no hit, a click there changes nothing
+    expect((await headOf(ui, p1, SB)).counts).toBe(nb(W.tallB))
+    expect(nb(countsFor(roomOf(p1, SB), GEO))).toBe(nb(W.tallB))
+    expect((await headOf(ui, p1, SB)).more).toBe('')
+    expect(roomOf(p1, SB).moreLabel).toBe('')
+    expect(officeModel(p1).hits.filter(h => h.y === roomB.titleAt).map(h => h.kind)).toEqual(['pin'])
+    await deadRow(ui, chromeRows(p1) + roomB.titleAt, 'B\'s ✅ counts', GEO.margin + (p1.rtl ? 2 : GEO.W - 3))
+    expect(captured.store.roomDone ?? {}).toEqual({})
     // B's pin zone at its scrolled title line: B pinned, first — out of this window, which keeps A's rows (one card drawn)
     await click(ui, 'pin', SB)
     const p6 = await officeProps(ui)
@@ -1262,14 +1241,14 @@ function suite(COLUMNS: Columns): void {
     const p4 = await officeProps(ui)
     expect((captured.store.prefs as Prefs).pins).toEqual([])
     expect(p4.rooms.map(r => r.id)).toEqual([SA, SB])
-    await click(ui, 'roomDone', SA)
+    await click(ui, 'moreDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
     const p5 = await officeProps(ui)
     expect(p5.helpOpen).toBe(true)
     expect(ids(p5, SA)).toEqual(ALL_A)
     expect((await headOf(ui, p5, SA)).more).toBe(HIDE_LINE)
     await rowsOk(ui, p5)
-    await click(ui, 'roomDone', SA)
+    await click(ui, 'moreDone', SA)
     expect(captured.store.roomDone).toEqual({})
     expect(ids(await officeProps(ui), SA)).toEqual(DRAWN_A)
     await ui.press({ key: 'closeHelp' })

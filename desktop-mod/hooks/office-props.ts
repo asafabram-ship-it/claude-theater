@@ -54,7 +54,7 @@ export type OfficeRoom = {
   agents: OfficeAgent[]
   /** The finished agents (of the search) the room holds past the ones it draws: 0 when it shows them all. */
   moreDone: number
-  /** The row under the agents: i18n moreDoneN while finished are held back, hideDone while the room shows them all, '' when there is no such row. */
+  /** The room's one finished toggle under its title (live check 7): i18n moreDoneN while finished are held back, hideDone while the room shows them all — only past RECENT_DONE finished; '' when there is no such line. */
   moreLabel: string
 }
 
@@ -184,7 +184,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
   // THE BADGED FIRST (the probe's round 8): among a room's finished the ⭐ and ❌ ones rank first — kept ahead of the others when
   // the room draws its RECENT_DONE most recent (never hidden behind the more line), and drawn ahead of them
   const starred = new Set(office.agents.filter(a => starOf(a) !== 0).map(a => a.id))
-  const { rooms, stat, order, moreDone } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins, RECENT_DONE, starred)
+  const { rooms, stat, order, moreDone, finished } = officeView(office.agents, view.search, lang, showDone, roomDone, prefs.pins, RECENT_DONE, starred)
   const nowMin = minuteClock(now)
   const cards = new Map<number, OfficeAgent>()
   /** The card of `order[i]` (memoised: a rebuild under the budget maps no agent twice). */
@@ -231,8 +231,10 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
         pinned: prefs.pins.includes(s), showDone: shows,
         run: st?.running ?? 0, stale: st?.stale ?? 0, done: st?.done ?? 0,
         agents, moreDone: more,
-        // the row under the agents: "N more finished" while the room holds some back, "Hide finished" once it shows them all
-        moreLabel: more > 0 ? L.moreDoneN(more) : shows && agents.some(a => a.status === 'done') ? L.hideDone : '',
+        // THE ONE FINISHED TOGGLE (live check 7, Q6), under the title: only for a room with more finished than the RECENT_DONE it
+        // always draws — "N more finished" while it holds them back, "Hide finished" once it shows them all; a room with RECENT_DONE
+        // or fewer draws them all either way, so a line there would hide nothing (it only took itself away)
+        moreLabel: (finished.get(s) ?? 0) > RECENT_DONE ? (shows ? L.hideDone : L.moreDoneN(more)) : '',
       })
     }
     const drawer: OfficeDrawer | null = sel ? {

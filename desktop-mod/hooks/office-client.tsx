@@ -14,8 +14,10 @@
 // on a line of its own below that, and only while the office holds more than
 // SEARCH_FROM agents or a search is active — then a framed card per room: the
 // title line (the title flush at the reading edge — a 📌 before it only when
-// the room is pinned or its head is under the pointer — the counts at the
-// other edge, the title cut on a word), a BLANK line (no rule), and the agents
+// the room is pinned or its head is under the pointer — the read-only counts
+// at the other edge, the title cut on a word), under it the room's ONE finished
+// toggle (`▸ עוד 2 שסיימו` / `▾ הסתר שסיימו`, only past RECENT_DONE finished:
+// live check 7, Q3 + Q6), a BLANK line (no rule), and the agents
 // as a COLUMN-MAJOR table — rigid column Boxes (status mark · who · [model] ·
 // activity emoji · [activity word] · [task]), the padding cell on the column's
 // reading side, every value ONE Text with no plain space in it (office-layout.ts
@@ -66,7 +68,7 @@
 // engine's window offset and `props.rows` the pane's body height. The module
 // draws the fixed chrome, then ONE spacer Box for the lines above the window's
 // first card, then only the cards the window touches: every card drawn whole
-// (its frame, title, blank line, more line), its agent rows only where they lie
+// (its frame, title, more line, blank line), its agent rows only where they lie
 // in the window (office-layout.ts trimWindow caps them at WINDOW_ROWS), a
 // spacer Box in each column standing in for the rows above and below — the
 // lines above the window lie above the viewport, which the native scroll
@@ -287,7 +289,7 @@ function listen(surface: Surface): void {
           // new card — the next move sets it on whatever head is then under the pointer
           if (cur.hoverRoom !== null) surface.setState({ ...cur, hoverRoom: null })
           send(surface, inst, { t: 'pin', room: hit.id })
-        } else send(surface, inst, { t: 'roomDone', room: hit.id })   // the title's ✅ counts and the "more / hide finished" line: the room's toggle
+        } else send(surface, inst, { t: 'roomDone', room: hit.id })   // the "more / hide finished" line under the title: the room's one toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
         // the unpinned room whose title line is under the pointer (its dim 📌): one setState when it changes; a pointer in a
         // centring margin (off the column's cells, as for a click) hovers nothing
@@ -636,8 +638,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const blank = (): RenderElement => Box({ height: 1 })
       /** The frame's bottom in a fragment (which has no border): one dim rule the column's width, cut by its Box. */
       const rule = (): RenderElement => Box({ height: 1, overflow: 'hidden', width: '100%', children: [Text({ dimColor: true, children: ['─'.repeat(Math.max(4, geo.W))] })] })
-      /** The `▸ עוד N שסיימו` / `▸ הסתר שסיימו` line, the blank line over it as its margin (none in a fragment that starts on the line itself). */
-      const moreLine = (room: RoomView, blankOver: boolean): RenderElement => Box({ flexDirection: row, ...(blankOver ? { marginTop: 1 } : {}), paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [room.more] })] })
+      /** The `▸ עוד N שסיימו` / `▾ הסתר שסיימו` line, directly under the title (live check 7, Q3: it never moves with the rows it reveals). */
+      const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [room.more] })] })
       /**
        * The table of a card: the window's rows as cells in the column Boxes the mode draws — the status, the who, the model (unless
        * the mode dropped it), the activity's emoji, its word (when the mode has it), the dim task from CENTRE_AT (the last column
@@ -661,17 +663,17 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (above === 0 && below === 0) return tbl
         return Box({ flexDirection: 'column', width: '100%', children: [...(above > 0 ? [Box({ height: above })] : []), tbl, ...(below > 0 ? [Box({ height: below })] : [])] })
       }
-      /** A whole card: the frame, the title line, the blank line, the table (every row of the room a cell or a spacer line), the more line. */
+      /** A whole card: the frame, the title line, the more line under it, the blank line, the table (every row of the room a cell or a spacer line). */
       const card = (room: RoomView): RenderElement => Box({ flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, marginBottom: 1, width: '100%', overflow: 'hidden', children: [
         titleLine(room),
+        ...(room.more ? [moreLine(room)] : []),
         blank(),
         table(room, room.rows.filter(r => r.y < from).length),
-        ...(room.more ? [moreLine(room, true)] : []),
       ] })
       /**
        * The window's first card drawn from line `from` inside it (under an overlay at the window's top): a frameless column Box with
-       * the frame's cells as padding, holding the card's lines from `from` on — the top padding line, the title, the blank line, the
-       * rows (none above `from`), the more line with its blank, the bottom padding line, the frame's bottom as a rule — each only
+       * the frame's cells as padding, holding the card's lines from `from` on — the top padding line, the title, the more line, the
+       * blank line, the rows (none above `from`), the bottom padding line, the frame's bottom as a rule — each only
        * when `from` lies at or before it, the gap after the card as its margin; its height exact, so every line y sits at Client
        * row chrome + y as in a whole card. From the gap line alone, a one-row spacer.
        */
@@ -681,9 +683,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         const lines: RenderElement[] = []
         if (from <= room.top + 1) lines.push(Box({ height: 1 }))
         if (from <= room.titleAt) lines.push(titleLine(room))
-        if (from <= room.titleAt + 1) lines.push(blank())
+        if (room.more && from <= room.moreAt) lines.push(moreLine(room))
+        if (from <= room.blankAt) lines.push(blank())
         if (room.rows.some(r => r.y >= from)) lines.push(table(room, 0))
-        if (room.more && from <= room.moreAt) lines.push(moreLine(room, from < room.moreAt))
         if (from <= end - 2) lines.push(Box({ height: 1 }))
         lines.push(rule())
         return Box({ key: 'fragment', flexDirection: 'column', paddingX: geo.px + 1, marginBottom: 1, width: '100%', height: end - from, overflow: 'hidden', children: lines })

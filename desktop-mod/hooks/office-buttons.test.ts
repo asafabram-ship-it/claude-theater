@@ -12,8 +12,9 @@ import type { Engine, Mounted } from 'claude-code/testing'
 
 import { DEFAULT_PREFS, DEFAULT_VIEW, PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
+import { I18N } from './i18n'
 import { chromeRows } from './office-chrome'
-import { geometry, officeModel, rowCount } from './office-layout'
+import { LESS_MARK, MORE_MARK, geometry, nb, officeModel, rowCount } from './office-layout'
 import type { Hit } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
@@ -226,5 +227,101 @@ test('R1 · the search field is drawn by the office\'s agents (more than SEARCH_
     expect(officeModel(p).rooms[0]!.top, step).toBe(top0)
     expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), step).toBeDefined()
   }
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// R8 + R5 (Q3 + Q6): one meaning for the finished controls
+// ---------------------------------------------------------------------------
+
+const MORE = (n: number) => nb(`${MORE_MARK} ${I18N.he.moreDoneN(n)}`)
+const HIDE = nb(`${LESS_MARK} ${I18N.he.hideDone}`)
+
+test('R8 · the toolbar ☐ / ☑ sets EVERY card (Q6): after a card line showed its finished, ☑ then ☐ hides them again; after ☑ and a card hide line, ☐ then ☑ shows them again — the press clears every per-room override', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  await down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  expect(roomOf(await officeProps(ui), S2).showDone).toBe(true)
+  await ui.press({ key: 'showDone' })      // ☑
+  expect(captured.store.roomDone).toEqual({})
+  expect((await officeProps(ui)).rooms.every(r => r.showDone)).toBe(true)
+  await ui.press({ key: 'showDone' })      // ☐
+  expect(roomOf(await officeProps(ui), S2).showDone, 'the toolbar is ☐ but the card still shows its finished').toBe(false)
+  // ☑, the card's hide line, ☐, ☑: the card shows its finished
+  await ui.press({ key: 'showDone' })
+  const p1 = await officeProps(ui)
+  await down(ui, cellOf(p1, hitOf(p1, 'moreDone', S2)))
+  expect(roomOf(await officeProps(ui), S2).showDone).toBe(false)
+  await ui.press({ key: 'showDone' })
+  await ui.press({ key: 'showDone' })
+  const p2 = await officeProps(ui)
+  expect(p2.prefs.showDone).toBe(true)
+  expect(roomOf(p2, S2).showDone, 'the toolbar is ☑ but the card keeps its finished hidden').toBe(true)
+  await ui.unmount()
+})
+
+test('R5 · the card one finished line sits DIRECTLY UNDER ITS TITLE (Q3): `▸ עוד 2 שסיימו` collapsed, `▾ הסתר שסיימו` open — it never moves, so a second click on the same cell toggles it back (never a row drawer)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  const card = officeModel(p0).rooms.find(r => r.id === S2)!
+  const more = hitOf(p0, 'moreDone', S2)
+  expect(more.y).toBe(card.titleAt + 1)
+  expect(card.more).toBe(MORE(2))
+  expect(card.rows[0]!.y).toBeGreaterThan(more.y)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: MORE(2) })).toBeDefined()
+  const at = cellOf(p0, more)
+  await down(ui, at)
+  const p1 = await officeProps(ui)
+  expect(roomOf(p1, S2).showDone).toBe(true)
+  expect(hitOf(p1, 'moreDone', S2).y).toBe(more.y)
+  expect(officeModel(p1).rooms.find(r => r.id === S2)!.more).toBe(HIDE)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: HIDE })).toBeDefined()
+  await down(ui, at)                        // the same cell again
+  const p2 = await officeProps(ui)
+  expect(p2.drawer, 'the second click opened a drawer').toBeNull()
+  expect(roomOf(p2, S2).showDone, 'the second click did not toggle the room back').toBe(false)
+  await ui.unmount()
+})
+
+test('R8 · the line only where it hides or shows something (Q6): the demo frontend room with its one finisher draws none, ☐ or ☑; the title ✅ counts are read-only (no hit but the pin on the title line, a click on the counts changes nothing)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, clock } = await demoAt($, on, 1)
+  await clock.advance(POLL_MS)              // phase 6: the poll publishes the finisher done
+  const p0 = await officeProps(ui)
+  expect(roomOf(p0, S1).agents.some(a => a.status === 'done')).toBe(true)
+  expect(roomOf(p0, S1).moreLabel).toBe('')
+  expect(officeModel(p0).hits.some(h => h.kind === 'moreDone' && h.id === S1)).toBe(false)
+  await ui.press({ key: 'showDone' })
+  expect(roomOf(await officeProps(ui), S1).moreLabel).toBe('')
+  const p1 = await officeProps(ui)
+  const card = officeModel(p1).rooms.find(r => r.id === S2)!
+  expect(officeModel(p1).hits.filter(h => h.y === card.titleAt).map(h => h.kind)).toEqual(['pin'])
+  const before = JSON.stringify(p1)
+  const geo = geometry(p1.columns)
+  await down(ui, { x: geo.margin + 3, y: chromeRows(p1) + card.titleAt })   // (RTL: the counts at the column's left edge)
+  expect(JSON.stringify(await officeProps(ui))).toBe(before)
+  await ui.unmount()
+})
+
+test('R8 · a real office whose rooms hold 2 and 3 finished: no line in either state, and ☐ → ☑ draws the same rows (every finished already drawn)', { timeoutMs: 30_000 }, async ($, on) => {
+  const fx = (): Agent[] => {
+    const a = (id: string, sess: string, done: boolean, i: number): Agent => agent(id, { session_full: sess, session: sess.slice(0, 8), status: done ? 'done' : 'running', end_ms: done ? T0 - (i + 1) * 1000 : null, result: done ? 'ok' : null })
+    return [
+      { ...a('lead-a', 'sess-aaaa-1', false, 0), is_session: true, tool: '' }, a('a1', 'sess-aaaa-1', false, 0), a('ad1', 'sess-aaaa-1', true, 1), a('ad2', 'sess-aaaa-1', true, 2),
+      { ...a('lead-b', 'sess-bbbb-2', false, 0), is_session: true, tool: '' }, a('bd1', 'sess-bbbb-2', true, 3), a('bd2', 'sess-bbbb-2', true, 4), a('bd3', 'sess-bbbb-2', true, 5),
+    ]
+  }
+  const { clock } = beneath(on, fx, PREFS())
+  on('ui.status', () => ({ value: undefined }))
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount(paneAt(COLUMNS, { offset: 0, bodyRows: ROWS }))
+  await ui.resize({ in: OFFICE_KEY, columns: COLUMNS, rows: ROWS })
+  const rows = (p: OfficeProps) => JSON.stringify(p.rooms.map(r => [r.agents.map(x => x.id), r.moreLabel]))
+  const p0 = await officeProps(ui)
+  expect(p0.rooms.map(r => r.moreLabel)).toEqual(['', ''])
+  await ui.press({ key: 'showDone' })
+  const p1 = await officeProps(ui)
+  expect(rows(p1)).toBe(rows(p0))
+  expect(rowCount(p1)).toBe(rowCount(p0))
   await ui.unmount()
 })

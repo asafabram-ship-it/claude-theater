@@ -5,8 +5,11 @@
 // THE CARDS (docs/superpowers/specs/2026-10-19-office-cards-design.md, the
 // probe docs/research/2026-10-19-cards-probe/register.tsx, round 9): every
 // room is a framed card — a title line (the pin at the reading edge, the
-// counts at the other edge), a BLANK line (no rule: it never stretched with
-// the card), then the agents as a COLUMN-MAJOR table of rigid columns (status
+// read-only counts at the other edge), under it — when the room holds more
+// finished agents than RECENT_DONE — its ONE finished toggle (`▸ עוד 2 שסיימו`
+// / `▾ הסתר שסיימו`, live check 7: above the rows, it never moves), a BLANK
+// line (no rule: it never stretched with the card), then the agents as a
+// COLUMN-MAJOR table of rigid columns (status
 // mark · who · [model] · activity emoji · [activity word] · [task]), each sized
 // by the desktop to its widest value, every value one line tall. The desktop
 // draws its Text in a proportional font, so this module never pads by cell
@@ -39,8 +42,8 @@
 // would shift every line under it: the desktop does not enforce a Text's
 // `wrap`), so the y of every line is known here, before anything is drawn:
 // the pointer's y maps to a line, a row's hit is the column's whole width,
-// the title line keeps the pin zone at the reading edge and the counts zone
-// at the other edge. The decor (the hovered head, the keyboard focus) is the
+// the title line keeps the pin zone at the reading edge (the counts are
+// read-only: live check 7). The decor (the hovered head, the keyboard focus) is the
 // module's local state handed in as data, so the model
 // stays a pure function of (props, decor, the last mode's rank).
 //
@@ -117,9 +120,11 @@ export function fitLine(cells: number): number {
 export const TITLE_GAP = 2
 /** The lines of a card around its rows: the two borders, the two padding lines, the title, the blank line under it, the gap after the card. */
 export const CARD_LINES = 7
-/** The more / hide line and the blank line over it. */
-export const MORE_LINES = 2
+/** The more / hide line: ONE line, directly under the title (live check 7, Q3: under the rows it moved with what it revealed). */
+export const MORE_LINES = 1
+/** The more / hide line's arrow, following its state: ▸ while the room holds finished back, ▾ while it shows them all. */
 export const MORE_MARK = '▸'
+export const LESS_MARK = '▾'
 /** The keyboard focus marker beside the status mark, pointing into the row from the reading edge. */
 export const FOCUS_MARK: Readonly<Record<'rtl' | 'ltr', string>> = { rtl: '‹', ltr: '›' }
 
@@ -359,14 +364,6 @@ export function pinZone(geo: Geo): number {
   return 1 + geo.px + 1 + EMOJI_CELLS + TITLE_GAP
 }
 
-/**
- * The counts' zone on the title line (the room's ✅ toggle), from the far edge, in cells: the border and the paddings, then
- * the counts as the desktop draws them — wider than their cells, by FIT — never into the pin zone.
- */
-export function countsZone(counts: string, geo: Geo): number {
-  return Math.max(1, Math.min(1 + geo.px + 1 + Math.ceil(textWidth(counts) / FIT), geo.W - pinZone(geo)))
-}
-
 /** The cells the title line leaves the title: the inner width less the title's own padding, the pin and its gap when pinned, the counts and the gap before them. */
 function titleRoom(geo: Geo, counts: string, pinned: boolean): number {
   return geo.inner - 2 - (pinned ? EMOJI_CELLS + TITLE_GAP : 0) - textWidth(counts) - TITLE_GAP
@@ -528,7 +525,7 @@ export type LineKind = 'border' | 'pad' | 'title' | 'blank' | 'row' | 'more' | '
 /** One drawn line of the office (its index is its y): what it is, whose room, and the agent on a row. */
 export type Line = { kind: LineKind; room: string; agent: string | null }
 /** A hit rectangle in the reading column's cells (x from the column's left edge: the Client takes the centring margin off the pointer). */
-export type Hit = { kind: 'agent' | 'pin' | 'roomDone' | 'moreDone'; id: string; x: number; y: number; w: number; h: number }
+export type Hit = { kind: 'agent' | 'pin' | 'moreDone'; id: string; x: number; y: number; w: number; h: number }
 
 /** One agent row of a card: the cells' texts (every one without a plain space: `nb`) and the flags that weight them. */
 export type RowView = {
@@ -564,10 +561,12 @@ export type RoomView = {
   title: string
   counts: string
   pin: 'bright' | 'dim' | 'none'
-  /** The title line's y, the blank line's, the first row's. */
+  /** The title line's y. */
   titleAt: number
+  /** The blank line's y, over the first row (under the more line when the card has one). */
+  blankAt: number
   rows: RowView[]
-  /** The `▸ עוד N שסיימו` / `▸ הסתר שסיימו` line, '' when the room draws none. */
+  /** The `▸ עוד N שסיימו` / `▾ הסתר שסיימו` line under the title, '' when the room draws none. */
   more: string
   moreAt: number
 }
@@ -646,10 +645,10 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
 
 /**
  * The rooms as cards, the line map and the hit rectangles of the whole office. Card lines, in order: the top border, a
- * padding line, the title (pin · title · counts), the blank line, one line per agent, [a blank line, the more / hide line],
- * a padding line, the bottom border, the gap. A row's hit is the column's whole width; so is the more line's; the title line
- * keeps pinZone cells at the reading edge for the pin and the counts' zone (countsZone) at the other edge for the room's ✅
- * toggle (when the room has finished agents). The decor changes only the pin of the head it hovers and the focus marker —
+ * padding line, the title (pin · title · counts), [the more / hide line — DIRECTLY UNDER THE TITLE, live check 7 Q3: it never
+ * moves with the rows it reveals], the blank line, one line per agent, a padding line, the bottom border, the gap. A row's
+ * hit is the column's whole width; so is the more line's; the title line keeps pinZone cells at the reading edge for the pin
+ * and nothing else (the ✅ counts are read-only: Q6 — the more line is the room's one toggle). The decor changes only the pin of the head it hovers and the focus marker —
  * never a line, never a hit. The table mode is chosen once for the office (chooseMode) from `last`, the
  * token the caller kept from its previous model (the hysteresis: its rank counts only while the widest values are the ones
  * it was chosen from — ModeToken; null on the first). With a `cache` (THE ROOM MEMO), a room whose props, width and mode did
@@ -693,10 +692,16 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
     const titleAt = lines.length
     line('title', room.id)
     hits.push({ kind: 'pin', id: room.id, x: rtl ? Math.max(0, geo.W - pz) : 0, y: titleAt, w: pz, h: 1 })
-    if (room.done) {
-      const cw = countsZone(counts, geo)
-      hits.push({ kind: 'roomDone', id: room.id, x: rtl ? 0 : Math.max(0, geo.W - cw), y: titleAt, w: cw, h: 1 })
+    // the room's one finished toggle, under its title: `▸ עוד N שסיימו` while it holds finished back, `▾ הסתר שסיימו` while it
+    // shows them all (the props draw it only past RECENT_DONE finished: Q6)
+    let moreAt = -1
+    const more = room.moreLabel ? nb(`${room.showDone ? LESS_MARK : MORE_MARK} ${room.moreLabel}`) : ''
+    if (more) {
+      moreAt = lines.length
+      line('more', room.id)
+      hits.push({ kind: 'moreDone', id: room.id, x: 0, y: moreAt, w: geo.W, h: 1 })
     }
+    const blankAt = lines.length
     line('blank', room.id)
     const rows: RowView[] = []
     for (const r of base.rows) {
@@ -708,14 +713,6 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
       line('row', room.id, r.id)
       hits.push({ kind: 'agent', id: r.id, x: 0, y, w: geo.W, h: 1 })
     }
-    let moreAt = -1
-    const more = room.moreLabel ? nb(`${MORE_MARK} ${room.moreLabel}`) : ''
-    if (more) {
-      line('blank', room.id)
-      moreAt = lines.length
-      line('more', room.id)
-      hits.push({ kind: 'moreDone', id: room.id, x: 0, y: moreAt, w: geo.W, h: 1 })
-    }
     line('pad', room.id)
     line('border', room.id)
     line('gap', room.id)
@@ -723,7 +720,7 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
       id: room.id, top, height: lines.length - top,
       title: base.title, counts,
       pin: room.pinned ? 'bright' : decor.hoverRoom === room.id ? 'dim' : 'none',
-      titleAt, rows, more, moreAt,
+      titleAt, blankAt, rows, more, moreAt,
     })
   })
   if (cache) for (const id of [...cache.rooms.keys()]) if (!seen.has(id)) cache.rooms.delete(id)

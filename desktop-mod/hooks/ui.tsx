@@ -112,7 +112,8 @@
 // Per-room "show finished" overrides (PAGE roomDone, tri-state): kept in
 // $.store under 'roomDone' (the prefs contract has only the global flag) and
 // cached in this module; a room that comes to match the global toggle drops
-// its override. Pins live in prefs.pins.
+// its override, and the toolbar's ☐ / ☑ clears them all (live check 7: it sets
+// every card — showDoneEverywhere). Pins live in prefs.pins.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
@@ -288,6 +289,8 @@ export type OfficeView = {
   order: Agent[]
   /** Per room that hides its finished: how many finished agents (of the search) it holds past the `recentDone` it draws. */
   moreDone: Map<string, number>
+  /** Per room: its finished agents of the search (open chats), shown or not — whether it draws the more / hide line at all (live check 7, Q6). */
+  finished: Map<string, number>
 }
 
 /**
@@ -331,8 +334,11 @@ export function officeView(
   const searched = needle ? all.filter(a => matchesSearch(a, needle, lang)) : [...all]
   // the finished agents of a room that hides them: the recentDone newest stay, the rest are counted
   const held = new Map<string, Agent[]>()
+  const finished = new Map<string, number>()
   for (const a of searched) {
-    if (a.closed || a.status !== 'done' || roomShowsDone(roomDone, showDone, a.session_full)) continue
+    if (a.closed || a.status !== 'done') continue
+    finished.set(a.session_full, (finished.get(a.session_full) ?? 0) + 1)
+    if (roomShowsDone(roomDone, showDone, a.session_full)) continue
     const list = held.get(a.session_full) ?? []
     list.push(a)
     held.set(a.session_full, list)
@@ -359,7 +365,7 @@ export function officeView(
   })
   const order: Agent[] = []
   for (const s of rooms) for (const a of visible) if (a.session_full === s) order.push(a)
-  return { visible, rooms, stat, order, moreDone }
+  return { visible, rooms, stat, order, moreDone, finished }
 }
 
 /** PAGE emptyHTML kind: office (nothing at all) | nomatch | nonewindow | noactive. */
@@ -587,6 +593,19 @@ async function saveRoomDone($: EngineInterface, value: Record<string, boolean>):
   await $.store.set(STORE_ROOM_DONE_KEY, value).catch(() => undefined)
 }
 
+/**
+ * THE TOOLBAR'S ☐ / ☑ (live check 7, Q6): flips the global "show finished" AND CLEARS EVERY PER-ROOM OVERRIDE, so it sets
+ * every card — a room's override won over it, and after one card click the toolbar box no longer moved that card. The
+ * render's copy is cleared before the prefs write redraws, the store after it (one write, only when there was an override).
+ */
+async function showDoneEverywhere($: EngineInterface): Promise<Prefs> {
+  const overridden = Object.keys(await loadRoomDone($)).length > 0
+  if (overridden) rememberRoomDone({})
+  const saved = await savePrefs($, flipShowDone)
+  if (overridden) await $.store.set(STORE_ROOM_DONE_KEY, {}).catch(() => undefined)
+  return saved
+}
+
 /** Writes prefs through the atom and mirrors them to $.store (they outlive the session). */
 async function savePrefs($: EngineInterface, fn: (p: Prefs) => Prefs): Promise<Prefs> {
   const saved = await update($, prefsAtom, fn)
@@ -712,7 +731,7 @@ async function applyOfficeAction($: EngineInterface, data: unknown): Promise<App
   const shown = (view: View): Applied => ({ view, changed: true })
   switch (m.t) {
     case 'showDone':
-      return wrote(await savePrefs($, flipShowDone))
+      return wrote(await showDoneEverywhere($))
     case 'mute':
       return wrote(await savePrefs($, flipMuted))
     case 'still':
@@ -855,7 +874,7 @@ export function registerUi(on: On): void {
 
     // --- handlers (closures over $, declared here so `$` never crosses an import; the transitions are the
     //     ones the desktop Client's posts go through, applyOfficeMessage) ---
-    const toggleShowDone = () => void savePrefs($, flipShowDone)
+    const toggleShowDone = () => void showDoneEverywhere($)
     const toggleMute = () => void savePrefs($, flipMuted)
     const toggleLang = () => void setLang($, otherLang(lang))
     const toggleHelp = () => void update($, viewAtom, flipHelp)

@@ -8,7 +8,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
 import { REFUSED_RE, cleanAgentText } from './office-chrome'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -433,14 +433,7 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   // the pin zone (drawn or not): the border, the padding, the title's own padding, the glyph and its gap — a cell more from WIDE_FROM
   expect(pinZone(atColumn(51))).toBe(7)
   expect(pinZone(atColumn(80))).toBe(8)
-  // the counts' zone (the room's ✅ toggle), from the far edge: the border and the paddings, then the counts as the desktop draws
-  // them — wider than their cells, by FIT (11 cells → 15) — never into the pin zone
-  expect(countsZone(counts, atColumn(51))).toBe(3 + Math.ceil(11 / FIT))
-  expect(countsZone(counts, atColumn(51))).toBe(18)
-  expect(countsZone(counts, atColumn(80))).toBe(19)
-  expect(countsZone('🟢2', atColumn(51))).toBe(3 + Math.ceil(3 / FIT))
-  expect(countsZone(counts, atColumn(20))).toBe(20 - pinZone(atColumn(20)))
-  expect(countsZone(counts, atColumn(8))).toBe(1)
+  // (the counts are read-only since live check 7 — Q6: the more line under the title is the room's one toggle — so they have no zone)
 })
 
 test('iconLabel: a labelled control reads icon-then-word as the probe writes it — the icon TRAILS a Hebrew word in the string (`הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️`), two icons reversed, the icons alone keeping that arrangement; any other word takes the icon first', () => {
@@ -615,9 +608,9 @@ test('floorsOf (from WIDE_FROM): the minWidth floor of each column — the offic
 
 test('cardLines / rowCount: a card is CARD_LINES around its rows, MORE_LINES more with the more / hide line; rowCount counts the office without building a row and equals the line map\'s length across shapes, widths and both directions', { timeoutMs: 30_000 }, () => {
   expect(CARD_LINES).toBe(7)
-  expect(MORE_LINES).toBe(2)
+  expect(MORE_LINES).toBe(1)   // (live check 7, Q3: the line directly under the title, no blank line of its own)
   expect(cardLines(2, false)).toBe(9)
-  expect(cardLines(2, true)).toBe(11)
+  expect(cardLines(2, true)).toBe(10)
   expect(cardLines(0, false)).toBe(7)
   const shapes: OfficeRoom[][] = [
     [room()],
@@ -639,7 +632,7 @@ test('cardLines / rowCount: a card is CARD_LINES around its rows, MORE_LINES mor
   expect(rowCount(props({ rooms: [] }))).toBe(0)
 })
 
-test('officeModel: the line map of a card — border, pad, title, a BLANK line (no rule: round 9), a row per agent, [blank, more], pad, border, gap — each line one row tall by construction; the rows carry the probe\'s strings (the activity split into its emoji and its word), no plain space and no time; the hits: a row and the more line the column\'s width, the pin zone at the reading edge of the title, the counts zone (by FIT) at the other edge', () => {
+test('officeModel: the line map of a card — border, pad, title, [the more line DIRECTLY UNDER THE TITLE: live check 7, Q3], a BLANK line (no rule: round 9), a row per agent, pad, border, gap — each line one row tall by construction; the rows carry the probe\'s strings (the activity split into its emoji and its word), no plain space and no time; the hits: a row and the more line the column\'s width, the pin zone at the reading edge of the title, nothing on the counts (read-only: Q6); the more line\'s arrow follows its state', () => {
   const r = room({ title: 'תיאטרון הסוכנים', run: 3, stale: 1, done: 2, moreLabel: 'עוד 2 שסיימו', agents: [
     ag('lead', 0, { name: 'הינשוף', act: '🤔 חושב', task: 'תכנון המעבר לרישום הסטטי' }),
     ag('a1', 1, { name: 'הרופא', model: 'Sonnet 4.5', act: '✏️ עורך' }),
@@ -648,7 +641,7 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
   ] })
   const p = props({ rooms: [r], columns: 51 + PANE_GUTTER })
   const m = officeModel(p)
-  expect(kinds(m.lines)).toEqual(['border', 'pad', 'title', 'blank', 'row', 'row', 'row', 'row', 'blank', 'more', 'pad', 'border', 'gap'])
+  expect(kinds(m.lines)).toEqual(['border', 'pad', 'title', 'more', 'blank', 'row', 'row', 'row', 'row', 'pad', 'border', 'gap'])
   expect(m.lines.every(l => l.room === 'sess-a')).toBe(true)
   expect(m.lines.filter(l => l.kind === 'row').map(l => l.agent)).toEqual(['lead', 'a1', 'w', 'm'])
   expect(m.lines.filter(l => l.kind !== 'row').every(l => l.agent === null)).toBe(true)
@@ -656,8 +649,10 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
   expect(m.mode).toEqual({ rank: 0, word: true, model: 'family', nameMax: NAME_MAX })   // the probe's width draws the word and the family
   expect(m.floors).toBeNull()
   const room0 = m.rooms[0]!
-  expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 13, titleAt: 2, moreAt: 9, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pin: 'none', more: nb('▸ עוד 2 שסיימו') })
-  expect(room0.rows.map(x => x.y)).toEqual([4, 5, 6, 7])
+  expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 12, titleAt: 2, moreAt: 3, blankAt: 4, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pin: 'none', more: nb('▸ עוד 2 שסיימו') })
+  expect(room0.rows.map(x => x.y)).toEqual([5, 6, 7, 8])
+  // the arrow follows the state: ▾ once the room shows every finished (its line then hides them)
+  expect(officeModel(props({ rooms: [{ ...r, showDone: true, moreLabel: 'הסתר שסיימו' }], columns: 51 + PANE_GUTTER })).rooms[0]!.more).toBe(nb('▾ הסתר שסיימו'))
   // the rows: the status mark alone (the ⭐ badge for the just-finished one; no blank for the focus — the mark sits at the
   // reading edge), `${emoji} ${name}` with a no-break space, the family word (the version from MODEL_FULL_FROM), the activity's
   // emoji and its word apart, the short task (drawn from CENTRE_AT) — and nothing of the minutes anywhere
@@ -673,43 +668,40 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
   expect(room0.rows.every(x => !x.focus)).toBe(true)
   for (const x of room0.rows) for (const v of [x.status, x.who, x.model, x.actEmoji, x.actWord, x.task]) { expect(v).not.toMatch(/⏱|′|min|\d+ דק/); expect(v).not.toMatch(LONE_SURROGATE); expect(v).not.toContain(' ') }
   expect(officeModel(props({ rooms: [r], columns: 60 + PANE_GUTTER })).rooms[0]!.rows.map(x => x.model)).toEqual(['Opus 5.5', 'Sonnet 4.5', 'Opus 5.5', 'Opus 5.5'])
-  // the hits (RTL): the pin zone at the right edge of the title line, the counts zone at the left edge, a row and the more line the whole width
+  // the hits (RTL): the pin zone at the right edge of the title line (nothing on the counts at the left edge), the more line and
+  // a row the whole width
   const pz = pinZone(atColumn(51))
-  const cz = countsZone('🟢3 ⏳1 ✅2', atColumn(51))
   expect(m.hits).toEqual([
     { kind: 'pin', id: 'sess-a', x: 51 - pz, y: 2, w: pz, h: 1 },
-    { kind: 'roomDone', id: 'sess-a', x: 0, y: 2, w: cz, h: 1 },
-    { kind: 'agent', id: 'lead', x: 0, y: 4, w: 51, h: 1 },
-    { kind: 'agent', id: 'a1', x: 0, y: 5, w: 51, h: 1 },
-    { kind: 'agent', id: 'w', x: 0, y: 6, w: 51, h: 1 },
-    { kind: 'agent', id: 'm', x: 0, y: 7, w: 51, h: 1 },
-    { kind: 'moreDone', id: 'sess-a', x: 0, y: 9, w: 51, h: 1 },
+    { kind: 'moreDone', id: 'sess-a', x: 0, y: 3, w: 51, h: 1 },
+    { kind: 'agent', id: 'lead', x: 0, y: 5, w: 51, h: 1 },
+    { kind: 'agent', id: 'a1', x: 0, y: 6, w: 51, h: 1 },
+    { kind: 'agent', id: 'w', x: 0, y: 7, w: 51, h: 1 },
+    { kind: 'agent', id: 'm', x: 0, y: 8, w: 51, h: 1 },
   ])
   expect(hitAt(m, 50, 2)?.kind).toBe('pin')
-  expect(hitAt(m, 3, 2)?.kind).toBe('roomDone')
-  expect(hitAt(m, cz - 1, 2)?.kind).toBe('roomDone')   // the zone's last cell: the counts as the desktop draws them, wider than their cells
-  expect(hitAt(m, cz, 2)).toBeUndefined()
+  expect(hitAt(m, 3, 2)).toBeUndefined()         // the counts: read-only
   expect(hitAt(m, 25, 2)).toBeUndefined()        // the title itself is no control
-  expect(hitAt(m, 25, 3)).toBeUndefined()        // the blank line
-  expect(hitAt(m, 0, 4)?.id).toBe('lead')
-  expect(hitAt(m, 50, 7)?.id).toBe('m')
-  expect(hitAt(m, 25, 8)).toBeUndefined()        // the blank line over the more line
-  expect(hitAt(m, 25, 9)?.kind).toBe('moreDone')
-  expect(hitAt(m, 25, 12)).toBeUndefined()       // the gap
-  expect(hitAt(m, 25, 13)).toBeUndefined()       // past the office
-  // LTR: the pin zone at the left edge, the counts at the right; the rows the same
+  expect(hitAt(m, 25, 3)?.kind).toBe('moreDone') // the more line, under the title
+  expect(hitAt(m, 25, 4)).toBeUndefined()        // the blank line
+  expect(hitAt(m, 0, 5)?.id).toBe('lead')
+  expect(hitAt(m, 50, 8)?.id).toBe('m')
+  expect(hitAt(m, 25, 9)).toBeUndefined()        // the padding line
+  expect(hitAt(m, 25, 11)).toBeUndefined()       // the gap
+  expect(hitAt(m, 25, 12)).toBeUndefined()       // past the office
+  // LTR: the pin zone at the left edge; the more line and the rows the same
   const ltr = officeModel(props({ rooms: [r], columns: 51 + PANE_GUTTER, rtl: false }))
   expect(ltr.hits[0]).toEqual({ kind: 'pin', id: 'sess-a', x: 0, y: 2, w: pz, h: 1 })
-  expect(ltr.hits[1]).toEqual({ kind: 'roomDone', id: 'sess-a', x: 51 - cz, y: 2, w: cz, h: 1 })
+  expect(ltr.hits[1]).toEqual({ kind: 'moreDone', id: 'sess-a', x: 0, y: 3, w: 51, h: 1 })
   expect(ltr.rooms[0]!.rows.map(x => x.status)).toEqual(['●', '●', '●', '⭐'])
   // THE FROZEN COLUMN: from CENTRE_AT the hits are the column's cells (x from the column's left edge, w its width), never the pane's
   const wide = officeModel(props({ rooms: [r], columns: 200 }))
   expect(wide.geo.margin).toBe(50)
   expect(wide.hits.find(h => h.kind === 'agent')).toMatchObject({ x: 0, w: 100 })
   expect(wide.hits.find(h => h.kind === 'pin')).toMatchObject({ x: 100 - pinZone(geometry(200)), w: pinZone(geometry(200)) })
-  expect(hitAt(wide, 99, 4)?.id).toBe('lead')
-  expect(hitAt(wide, 100, 4)).toBeUndefined()
-  // no finished agents: no counts hit; no more label: no more line, no blank
+  expect(hitAt(wide, 99, 5)?.id).toBe('lead')
+  expect(hitAt(wide, 100, 5)).toBeUndefined()
+  // no more label: no more line
   const plain = officeModel(props({ rooms: [room()] }))
   expect(plain.hits.map(h => h.kind)).toEqual(['pin', 'agent', 'agent'])
   expect(kinds(plain.lines)).toEqual(['border', 'pad', 'title', 'blank', 'row', 'row', 'pad', 'border', 'gap'])

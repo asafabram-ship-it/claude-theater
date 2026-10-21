@@ -41,9 +41,12 @@
 //            (the shared transitions: one prefs / view atom, the store mirror)
 //            and ANSWERS it with the Client's next props (live check 7: drawn
 //            at once, not after the redraw); the write's redraw follows with the
-//            same props and the new height. Equal state → equal props → no
-//            redraw. A post is a numbered batch of the frame's actions (the
-//            module's outbox). The Client is drawn only where the
+//            same props and the new height — the newest answer only (THE NEWEST
+//            ANSWER: a hook that a later post or a render overtook answers `{}`,
+//            so an older read never sticks on screen). Equal state → equal
+//            props → no redraw. A post is a numbered batch of the frame's
+//            actions (the module's outbox), each applied once however the
+//            posts' hooks overlap. The Client is drawn only where the
 //            surface's table has one (`'Client' in els`) and while
 //            !DESKTOP.clientFailed; a `ui.fault` of the module (register.tsx)
 //            sets the flag and the desktop falls through to the text cards below
@@ -687,12 +690,24 @@ function redraw($: EngineInterface): void {
  */
 let officeFrame: { columns: number; rows: number; offset: number; footer: string } | null = null
 
-/** What an office action wrote: the prefs or the view it wrote (the answer is built from them), and whether anything changed. */
+/** What an office action wrote: the prefs or the view it wrote (the answer is built from them; never one only read), and whether anything changed. */
 type Applied = { prefs?: Prefs; view?: View; changed: boolean }
 const NOTHING: Applied = { changed: false }
 
 /** The outbox's last number applied, and whose (the posting instance's id): module memory (THE OUTBOX). */
 let appliedBatch = { i: '', n: 0 }
+
+/**
+ * THE NEWEST ANSWER (live check 7 review): the office's `ui.message` hooks started, and the desktop renders of the pane
+ * started — module memory. Two posts' hooks run at once and finish in any order (one awaits a slower $.store write), and
+ * every read of one dispatch sees the moment it began (d.ts: `$.state.get`), so an older hook's `{ props }` could reach the
+ * instance after a newer answer — or after a render that drew a newer write, a poll's publish among them — and stick there
+ * (equal props: nothing redraws it). A hook therefore answers only while no office post has started after it and no
+ * desktop render has started since it began; else `{}`. Dropping an answer costs nothing but its head start: every change
+ * a post makes is drawn by the redraw its own write (or roomDone's invalidate) asks for, which reads after it.
+ */
+let officeMessages = 0
+let officeRenders = 0
 /** The most actions of one post read (the module's outbox holds OUTBOX_MAX). */
 const BATCH_MAX = 16
 
@@ -704,7 +719,8 @@ const BATCH_MAX = 16
  * (live check 7, R12: one post per frame, a later one replacing an undelivered
  * one) — `{ t: 'batch', i, items }`, the module's outbox: each item numbered
  * once per instance `i`, applied in order and only once (a later post carries
- * the earlier actions too); an old single action is still applied as one:
+ * the earlier actions too; the number checked at each item, as two posts'
+ * hooks overlap); an old single action is still applied as one:
  *   showDone / mute / pin {room} → prefs (+ the $.store mirror)
  *   lang → prefs (+ mirror) and the pane retitled (setLang)
  *   help / close / open {id} / search {q} / demo → view (search: cleaned and
@@ -726,10 +742,14 @@ async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<Ap
   // THE OUTBOX (office-client.tsx, live check 7 R12): the frame's actions, each numbered once per instance — a number this
   // instance already sent is skipped (a later post carries the earlier actions too); at most BATCH_MAX are read
   if (typeof b.i !== 'string' || !Array.isArray(b.items)) return NOTHING
-  const fresh = (b.items as unknown[]).slice(-BATCH_MAX).filter((it): it is { n: number } =>
-    it !== null && typeof it === 'object' && typeof (it as { n?: unknown }).n === 'number' && (b.i !== appliedBatch.i || (it as { n: number }).n > appliedBatch.n))
+  const numbered = (b.items as unknown[]).slice(-BATCH_MAX).filter((it): it is { n: number } =>
+    it !== null && typeof it === 'object' && typeof (it as { n?: unknown }).n === 'number')
   let all = NOTHING
-  for (const it of fresh) {
+  for (const it of numbered) {
+    // checked AT EACH ITEM, not once before the loop (live check 7 review): the hooks of two posts run at once, and a later
+    // post of this instance — carrying this one's actions too — may have applied this item while this one awaited an earlier
+    // item's write (a slow $.store); applied twice, a flip undid itself. The number only moves forward
+    if (b.i === appliedBatch.i && it.n <= appliedBatch.n) continue
     appliedBatch = { i: b.i, n: it.n }
     const one = await applyOfficeAction($, it)
     // (what the batch wrote last wins: the answer is built from it)
@@ -776,12 +796,14 @@ async function applyOfficeAction($: EngineInterface, data: unknown): Promise<App
       if (typeof m.room !== 'string') return NOTHING
       const [prefs, cur] = await Promise.all([read($, prefsAtom), loadRoomDone($)])
       // R3: the override the render reads is set at once (rememberRoomDone) and the redraw asked BEFORE the store write is
-      // awaited (the write redraws nothing: the override lives in $.store); the answer carries it (no latch, no wait)
+      // awaited (the write redraws nothing: the override lives in $.store); the answer carries it (no latch, no wait). The
+      // prefs read here are not handed on as written (live check 7 review): read before the store write, they would stand
+      // over a newer prefs write of the same batch
       const next = toggledRoomDone(cur, prefs.showDone, m.room)
       rememberRoomDone(next)
       redraw($)
       await saveRoomDone($, next)
-      return { prefs, changed: true }
+      return { changed: true }
     }
     default:
       return NOTHING
@@ -815,14 +837,17 @@ export function registerUi(on: On): void {
   // The desktop office Client's posts (only this plugin's hooks see them): applied as the text cards' presses
   // (applyOfficeMessage), then ANSWERED with the Client's next props (officeAnswer, live check 7 R2: `{ props }` hands the
   // posting instance its props directly, its local state kept, with no ui.render run) — the write's redraw follows with the
-  // same props and the Client's new height. `{}` when nothing changed or nothing can be built (the redraw draws it); a post
-  // never fails the surface.
+  // same props and the Client's new height. `{}` when nothing changed, nothing can be built, or the answer is no longer the
+  // newest (THE NEWEST ANSWER: a later post or a render since — the redraw draws it); a post never fails the surface.
   on('ui.message', { element: 'office' }, async ($, e) => { // OFFICE_KEY, as a literal: validate reads a matcher statically
+    const mine = ++officeMessages
+    const renders = officeRenders
+    const newest = () => mine === officeMessages && renders === officeRenders
     try {
       const applied = await applyOfficeMessage($, e.data)
-      if (!applied.changed) return {}
+      if (!applied.changed || !newest()) return {}
       const props = await officeAnswer($, applied)
-      return props ? { props } : {}
+      return props && newest() ? { props } : {}
     } catch {
       // a bad post, or a write refused: the office stays as it was
       return {}
@@ -834,6 +859,8 @@ export function registerUi(on: On): void {
     const { Box, Text, Button } = els
     // the desktop draws the office Client (office-client.tsx); every other surface the text cards
     const desktop = e.surface === 'desktop'
+    // (counted before its reads: a post's hook that began before them answers no more — THE NEWEST ANSWER)
+    if (desktop) officeRenders += 1
     // ONE round of reads (live check 7, R2: they ran one after another, a round trip each, before every draw). The text
     // surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT (its rows show minutes, and every
     // redraw of it blinks — the tick must never reach it). The clock is the engine's; a host without one (a bare test) falls

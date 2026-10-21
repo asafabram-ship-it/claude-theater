@@ -6,8 +6,9 @@
 // probe docs/research/2026-10-19-cards-probe/register.tsx, round 9): every
 // room is a framed card — a title line (the pin at the reading edge, the
 // read-only counts at the other edge), under it — when the room holds more
-// finished agents than RECENT_DONE — its ONE finished toggle (`▸ עוד 2 שסיימו`
-// / `▾ הסתר שסיימו`, live check 7: above the rows, it never moves), a BLANK
+// finished agents than RECENT_DONE — its ONE finished toggle (`עוד 2 שסיימו ◂`
+// / `הסתר שסיימו ▾`, read arrow first through iconLabel; live check 7: above
+// the rows, it never moves), a BLANK
 // line (no rule: it never stretched with the card), then the agents as a
 // COLUMN-MAJOR table of rigid columns (status
 // mark · who · [model] · activity emoji · [activity word] · [task]), each sized
@@ -48,10 +49,11 @@
 // module's local state handed in as data, so the model
 // stays a pure function of (props, decor, the last mode's rank).
 //
-// The strings are the probe's (`${emoji} ${name}`, `🤔` then `חושב`, `▸ עוד 2
-// שסיימו`, a title cut on a word with a trailing …): the desktop lays a
-// Hebrew-first Text right-to-left, so nothing here reorders a string for the
-// reader.
+// The strings are the probe's (`${emoji} ${name}`, `🤔` then `חושב`, a title
+// cut on a word with a trailing …): the desktop lays a Hebrew-first Text
+// right-to-left, so nothing here reorders a string for the reader — but a
+// labelled control (the more / hide line, `עוד 2 שסיימו ◂`) goes through
+// iconLabel, which puts its mark where the reader meets it first.
 
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -129,8 +131,13 @@ export const TITLE_GAP = 2
 export const CARD_LINES = 7
 /** The more / hide line: ONE line, directly under the title (live check 7, Q3: under the rows it moved with what it revealed). */
 export const MORE_LINES = 1
-/** The more / hide line's arrow, following its state: ▸ while the room holds finished back, ▾ while it shows them all. */
-export const MORE_MARK = '▸'
+/**
+ * The more / hide line's arrow, following its state: ▸ while the room holds finished back — ◂ in the Hebrew pane, its RTL
+ * form pointing the reader's way (as FOCUS_MARK has one) — ▾ while it shows them all. Laid through iconLabel (live check 7
+ * review): the Hebrew reader meets it first, at the line's right edge, where the label is aligned — it never moves as the
+ * label's width changes.
+ */
+export const MORE_MARK: Readonly<Record<'rtl' | 'ltr', string>> = { rtl: '◂', ltr: '▸' }
 export const LESS_MARK = '▾'
 /** The keyboard focus marker beside the status mark, pointing into the row from the reading edge. */
 export const FOCUS_MARK: Readonly<Record<'rtl' | 'ltr', string>> = { rtl: '‹', ltr: '›' }
@@ -302,7 +309,7 @@ export function nb(s: string): string {
  * Hebrew word) the icon TRAILS the word in the string (`הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️` — seen right on the
  * desktop as written); two icons are reversed there (`יציאה ✕ 🎬`), and the icons alone keep that arrangement. Any other
  * word (Latin in either pane, or the English pane's one Hebrew word) takes the icon first. The office Client lays every
- * labelled control through it.
+ * labelled control through it, and officeModel the cards' more / hide line (`עוד 2 שסיימו ◂`).
  */
 export function iconLabel(icon: string, word: string, rtl: boolean): string {
   if (!icon) return word
@@ -578,7 +585,7 @@ export type RoomView = {
   /** The blank line's y, over the first row (under the more line when the card has one). */
   blankAt: number
   rows: RowView[]
-  /** The `▸ עוד N שסיימו` / `▾ הסתר שסיימו` line under the title, '' when the room draws none. */
+  /** The `עוד N שסיימו ◂` / `הסתר שסיימו ▾` line under the title (`▸ N more finished` in English: iconLabel), '' when the room draws none. */
   more: string
   moreAt: number
 }
@@ -710,10 +717,12 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
     const titleAt = lines.length
     line('title', room.id)
     hits.push({ kind: 'pin', id: room.id, x: rtl ? Math.max(0, geo.W - pz) : 0, y: titleAt, w: pz, h: 1 })
-    // the room's one finished toggle, under its title: `▸ עוד N שסיימו` while it holds finished back, `▾ הסתר שסיימו` while it
-    // shows them all (the props draw it only past RECENT_DONE finished: Q6)
+    // the room's one finished toggle, under its title: `עוד N שסיימו ◂` while it holds finished back, `הסתר שסיימו ▾` while it
+    // shows them all (the props draw it only past RECENT_DONE finished: Q6) — a labelled control, so iconLabel lays it: read
+    // arrow first in either pane (`▸ 2 more finished` in English)
     let moreAt = -1
-    const more = room.moreLabel ? nb(`${room.showDone ? LESS_MARK : MORE_MARK} ${room.moreLabel}`) : ''
+    const arrow = room.showDone ? LESS_MARK : MORE_MARK[rtl ? 'rtl' : 'ltr']
+    const more = room.moreLabel ? nb(iconLabel(arrow, room.moreLabel, rtl)) : ''
     if (more) {
       moreAt = lines.length
       line('more', room.id)

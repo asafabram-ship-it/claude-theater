@@ -9,7 +9,9 @@
 // into the fixture of the moment, `current()` (unless `files` is given: then
 // the scanner reads them and its own payload is published; a demo publish is
 // never rewritten either: state holds the demo cast, as on a live engine). It
-// counts what the plugin writes, reads back and calls, in `captured`.
+// counts what the plugin writes, reads back and calls, in `captured`, and
+// holds the next write of a key on request (`captured.hold`: a slow store, so
+// a test can make two office posts' hooks overlap).
 
 import type { On } from 'claude-code'
 import { mock } from 'claude-code/testing'
@@ -56,16 +58,34 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
     onScan: null as (() => void) | null,
     /** True → $.agent.list answers no list at all: the poll's ageing of the live map (a step past the scan, the poll's alone) throws. */
     agentListBroken: false,
+    /**
+     * ONE-SHOT HOLDS: the plugin's next write of a key waits beneath for its promise — `<key>` a $.store write, `state:<key>` a
+     * $.state write — then lands (a slow store, a loaded host: what makes two office posts' hooks overlap). `seq` records
+     * `held:<key>` when it waits.
+     */
+    hold: {} as Record<string, Promise<void>>,
+  }
+  /** The hold on `key`, taken (one-shot): its promise, or undefined (the write lands at once, as before). */
+  const held = (key: string): Promise<void> | undefined => {
+    const h = captured.hold[key]
+    if (!h) return undefined
+    delete captured.hold[key]
+    captured.seq.push('held:' + key)
+    return h
   }
   const clock = mock.clock(on, { now: T0 })
   // an in-memory store the test can read back (mock.store would hook store.set
   // itself, and an event may be hooked only once per module)
   on('store.get', ($, e) => ({ value: captured.store[e.key] }))
   on('store.set', ($, e) => {
-    captured.store[e.key] = e.value
-    captured.storeWrites[e.key] = (captured.storeWrites[e.key] ?? 0) + 1
-    captured.seq.push('store:' + e.key)
-    return { value: undefined }
+    const land = () => {
+      captured.store[e.key] = e.value
+      captured.storeWrites[e.key] = (captured.storeWrites[e.key] ?? 0) + 1
+      captured.seq.push('store:' + e.key)
+      return { value: undefined }
+    }
+    const h = held(e.key)
+    return h ? h.then(land) : land()
   })
   on('store.delete', ($, e) => { delete captured.store[e.key]; return { value: undefined } })
   on('store.keys', () => ({ value: Object.keys(captured.store) }))
@@ -145,10 +165,14 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
     files || (e.value as Payload).demo ? next(e) : next({ ...e, value: { ...EMPTY_PAYLOAD, agents: current(), scanned_ms: clock.now(), stars: (e.value as Payload).stars } }))
   // every $.state write of the plugin, counted by key; the ones that redraw the pane are sequenced
   on('state.set', { plugin: 'agent-theater' }, ($, e, next) => {
-    captured.writes[e.key] = (captured.writes[e.key] ?? 0) + 1
-    if (e.key === 'view') captured.view = e.value as View
-    if (e.key === 'payload' || e.key === 'view' || e.key === 'prefs') captured.seq.push(e.key)
-    return next(e)
+    const land = () => {
+      captured.writes[e.key] = (captured.writes[e.key] ?? 0) + 1
+      if (e.key === 'view') captured.view = e.value as View
+      if (e.key === 'payload' || e.key === 'view' || e.key === 'prefs') captured.seq.push(e.key)
+      return next(e)
+    }
+    const h = held('state:' + e.key)
+    return h ? h.then(land) : land()
   })
   on('state.get', { plugin: 'agent-theater', key: 'payload' }, async ($, e, next) => {
     const got = await next(e)

@@ -6,9 +6,9 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { hebrewRuleOk } from './i18n'
+import { I18N, hebrewRuleOk } from './i18n'
 import { REFUSED_RE, cleanAgentText } from './office-chrome'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LESS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, MORE_MARK, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -182,7 +182,7 @@ test('nb / NBSP (round 9): every plain space of a one-line value a no-break spac
   expect(nb('a b  c')).toBe(`a${NBSP}b${NBSP}${NBSP}c`)
   expect(nb('')).toBe('')
   expect(nb('x')).toBe('x')
-  expect(nb('▸ עוד 2 שסיימו')).not.toContain(' ')
+  expect(nb('עוד 2 שסיימו ◂')).not.toContain(' ')
   expect(textWidth(nb('🟢3 ⏳1 ✅2'))).toBe(textWidth('🟢3 ⏳1 ✅2'))
   expect(nb(nb('a b'))).toBe(nb('a b'))
   // THE HEBREW RULE holds on the no-break form as on the plain one (trimEnd drops a no-break space as it drops a space)
@@ -460,6 +460,117 @@ test('iconLabel: a labelled control reads icon-then-word as the probe writes it 
   for (const w of ['הצג שסיימו', 'צליל', 'הגדרות', 'דמו', 'תנועה', 'יציאה']) expect(hebrewRuleOk(w)).toBe(true)
 })
 
+/** The UBA's European terminators a value could hold (bidi class ET): # $ %, ¢ £ ¤ ¥, °, ±, ‰ ‱ ′ ″ ‴, the currency signs, the minus sign. */
+const ET_RE = /^[#-%¢-¥°±‰-‴₠-⃏−]$/u
+/**
+ * THE READER'S VIEW of a one-line value as the desktop draws it — ONE LEFT-TO-RIGHT PARAGRAPH, no bidi control in it (the
+ * desktop refuses them): the UBA's rules for such a line (the old cell grid's visualRtlReading, a1c9731, over a string). A
+ * Hebrew letter is R, another script's letter L, a digit EN — a terminator beside a digit joins its number (W5), one alone is
+ * a neutral (W6); a number after Hebrew is AN, else L (W2, W7: sos is L) — a stretch of neutrals (a no-break space among
+ * them) between two of one direction takes it, else the paragraph's L (N1, N2); the runs of R (with their numbers, level 2)
+ * are mirrored in place. `visual` is the glyphs left to right; `reading` what a Hebrew reader meets from the right, token by
+ * token: a mirrored stretch back in logical order, any other token (a number, a Latin word, a mark) as it is.
+ */
+function ltrParagraph(value: string): { visual: string[]; reading: string } {
+  const gl = glyphs(value.split(NBSP).join(' ')).map(g => g.ch)
+  type T = 'L' | 'R' | 'EN' | 'ET' | 'AN' | 'N'
+  const types: T[] = gl.map(ch => (/\p{Script=Hebrew}/u.test(ch) ? 'R' : /^\p{L}/u.test(ch) ? 'L' : /^\p{Nd}$/u.test(ch) ? 'EN' : ET_RE.test(ch) ? 'ET' : 'N'))
+  for (let i = 0; i < types.length; i++) {
+    if (types[i] !== 'ET') continue
+    let j = i
+    while (j < types.length && types[j] === 'ET') j++
+    const en = (i > 0 && types[i - 1] === 'EN') || (j < types.length && types[j] === 'EN')
+    for (let k = i; k < j; k++) types[k] = en ? 'EN' : 'N'
+    i = j - 1
+  }
+  let strong: 'L' | 'R' = 'L'
+  for (let i = 0; i < types.length; i++) {
+    const t = types[i]!
+    if (t === 'R' || t === 'L') strong = t
+    else if (t === 'EN') types[i] = strong === 'R' ? 'AN' : 'L'
+  }
+  const dir = (t: T) => (t === 'R' || t === 'AN' ? 'R' : 'L')
+  const levels = types.map(t => (t === 'AN' ? 2 : t === 'R' ? 1 : 0))
+  for (let i = 0; i < types.length; i++) {
+    if (types[i] !== 'N') continue
+    let j = i
+    while (j < types.length && types[j] === 'N') j++
+    const lv = (i > 0 ? dir(types[i - 1]!) : 'L') === 'R' && (j < types.length ? dir(types[j]!) : 'L') === 'R' ? 1 : 0
+    for (let k = i; k < j; k++) levels[k] = lv
+    i = j - 1
+  }
+  const visual = [...gl]
+  for (const min of [2, 1]) {
+    let i = 0
+    while (i < visual.length) {
+      if (levels[i]! < min) { i++; continue }
+      let j = i
+      while (j < visual.length && levels[j]! >= min) j++
+      visual.splice(i, 0, ...visual.splice(i, j - i).reverse())
+      levels.splice(i, 0, ...levels.splice(i, j - i).reverse())
+      i = j
+    }
+  }
+  const tokens: string[] = []
+  let i = 0
+  while (i < visual.length) {
+    if (levels[i]! >= 1) {
+      let j = i
+      while (j < visual.length && levels[j]! >= 1) j++
+      const back = visual.slice(i, j).reverse()
+      const lv = levels.slice(i, j).reverse()
+      for (let k = 0; k < back.length; k++) {
+        if (lv[k]! < 2) continue
+        let m = k
+        while (m < back.length && lv[m]! >= 2) m++
+        back.splice(k, 0, ...back.splice(k, m - k).reverse())
+        k = m - 1
+      }
+      tokens.push(back.join('').replace(/ +/g, ' ').trim())
+      i = j
+    } else if (visual[i] === ' ') i++
+    else {
+      let j = i
+      while (j < visual.length && levels[j]! < 1 && visual[j] !== ' ') j++
+      tokens.push(visual.slice(i, j).join(''))
+      i = j
+    }
+  }
+  return { visual: visual.filter(ch => ch !== ' '), reading: tokens.reverse().join(' ') }
+}
+
+test('ltrParagraph models the desktop\'s one LTR paragraph: a trailing icon after Hebrew lands at the right and is read first (the toolbar\'s `הצג שסיימו ☐`), a leading one at the left and is read last; a number inside Hebrew rides inside, a leading one is read after the words', () => {
+  expect(ltrParagraph(nb('הצג שסיימו ☐'))).toEqual({ visual: ['ו', 'מ', 'י', 'י', 'ס', 'ש', 'ג', 'צ', 'ה', '☐'], reading: '☐ הצג שסיימו' })
+  expect(ltrParagraph(nb('▸ עוד 4 שסיימו')).reading).toBe('עוד 4 שסיימו ▸')
+  expect(ltrParagraph(nb('סגירה ✕')).reading).toBe('✕ סגירה')
+  expect(ltrParagraph(nb('עוד 12 שסיימו')).reading).toBe('עוד 12 שסיימו')
+  expect(ltrParagraph('4 תמלילים').reading).toBe('תמלילים 4')
+  expect(ltrParagraph('נוצלו 42% ממכסת 5 השעות').reading).toBe('נוצלו 42% ממכסת 5 השעות')
+})
+
+test('THE MORE LINE reads arrow first (live check 7 review): laid through iconLabel, the Hebrew pane\'s `עוד 4 שסיימו ◂` / `הסתר שסיימו ▾`, drawn as one LTR paragraph, read `◂ עוד 4 שסיימו` / `▾ הסתר שסיימו` — the arrow the line\'s RIGHTMOST glyph in both states (its reading edge, where the label is aligned: the arrow stays put as the label\'s width changes, a two-digit count too), the collapsed one pointing the Hebrew reader\'s way (◂, MORE_MARK.rtl, as FOCUS_MARK has its RTL form); the English line unchanged', () => {
+  expect(MORE_MARK).toEqual({ rtl: '◂', ltr: '▸' })
+  expect(LESS_MARK).toBe('▾')
+  const he = I18N.he
+  const lineOf = (over: Partial<OfficeRoom>, p: Partial<OfficeProps> = {}) => officeModel(props({ rooms: [room({ moreDone: 4, ...over })], columns: 51 + PANE_GUTTER, ...p })).rooms[0]!.more
+  for (const [label, showDone, arrow] of [[he.moreDoneN(4), false, '◂'], [he.moreDoneN(12), false, '◂'], [he.hideDone, true, '▾']] as const) {
+    const line = lineOf({ showDone, moreLabel: label })
+    expect(line, label).toBe(nb(iconLabel(arrow, label, true)))
+    const { visual, reading } = ltrParagraph(line)
+    expect(reading, label).toBe(`${arrow} ${label}`)
+    expect(visual.at(-1), label).toBe(arrow)
+    expect(hebrewRuleOk(label), label).toBe(true)
+    expect(line, label).not.toMatch(REFUSED_RE)
+  }
+  // the English pane: the arrow leads, at the line's left edge (its reading edge there) — ▸ collapsed, ▾ open
+  const en = I18N.en
+  expect(lineOf({ moreLabel: en.moreDoneN(4) }, { lang: 'en', rtl: false })).toBe(nb(`▸ ${en.moreDoneN(4)}`))
+  expect(lineOf({ showDone: true, moreLabel: en.hideDone }, { lang: 'en', rtl: false })).toBe(nb(`▾ ${en.hideDone}`))
+  expect(ltrParagraph(lineOf({ moreLabel: en.moreDoneN(4) }, { lang: 'en', rtl: false })).visual[0]).toBe('▸')
+  // the arrows are one cell each (the line's width the same in either state's arrow)
+  for (const a of ['◂', '▸', '▾']) expect(textWidth(a)).toBe(1)
+})
+
 test('modelText / firstGlyph / countsText / markOf: the family word (the version only when `full`), an activity\'s emoji, the room\'s counts, the status mark with its badges', () => {
   expect(modelText('Opus 5.5')).toBe('Opus')
   expect(modelText('Opus 5.5', true)).toBe('Opus 5.5')
@@ -649,10 +760,10 @@ test('officeModel: the line map of a card — border, pad, title, [the more line
   expect(m.mode).toEqual({ rank: 0, word: true, model: 'family', nameMax: NAME_MAX })   // the probe's width draws the word and the family
   expect(m.floors).toBeNull()
   const room0 = m.rooms[0]!
-  expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 12, titleAt: 2, moreAt: 3, blankAt: 4, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pin: 'none', more: nb('▸ עוד 2 שסיימו') })
+  expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 12, titleAt: 2, moreAt: 3, blankAt: 4, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pin: 'none', more: nb('עוד 2 שסיימו ◂') })
   expect(room0.rows.map(x => x.y)).toEqual([5, 6, 7, 8])
-  // the arrow follows the state: ▾ once the room shows every finished (its line then hides them)
-  expect(officeModel(props({ rooms: [{ ...r, showDone: true, moreLabel: 'הסתר שסיימו' }], columns: 51 + PANE_GUTTER })).rooms[0]!.more).toBe(nb('▾ הסתר שסיימו'))
+  // the arrow follows the state: ▾ once the room shows every finished (its line then hides them); read arrow first (iconLabel)
+  expect(officeModel(props({ rooms: [{ ...r, showDone: true, moreLabel: 'הסתר שסיימו' }], columns: 51 + PANE_GUTTER })).rooms[0]!.more).toBe(nb('הסתר שסיימו ▾'))
   // the rows: the status mark alone (the ⭐ badge for the just-finished one; no blank for the focus — the mark sits at the
   // reading edge), `${emoji} ${name}` with a no-break space, the family word (the version from MODEL_FULL_FROM), the activity's
   // emoji and its word apart, the short task (drawn from CENTRE_AT) — and nothing of the minutes anywhere

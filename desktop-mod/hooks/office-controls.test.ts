@@ -79,9 +79,9 @@ const ALL_A = ['lead-a', 'a1', ...DONE]
 const EXTRA = Array.from({ length: SEARCH_FROM + 1 - 6 }, (_, i) => `x${i + 1}`)
 const MORE_LABEL = I18N.he.moreDoneN(1)
 const HIDE_LABEL = I18N.he.hideDone
-/** The more / hide line as drawn: with no plain space (office-layout.ts nb: a one-line value never wraps). */
-const MORE_LINE = nb(`▸ ${MORE_LABEL}`)
-const HIDE_LINE = nb(`▾ ${HIDE_LABEL}`)   // (the arrow follows the state: live check 7)
+/** The more / hide line as drawn: with no plain space (office-layout.ts nb: a one-line value never wraps); read arrow first (iconLabel: the arrow trails the Hebrew words in the string, ◂ the collapsed one's RTL form). */
+const MORE_LINE = nb(`${MORE_LABEL} ◂`)
+const HIDE_LINE = nb(`${HIDE_LABEL} ▾`)   // (the arrow follows the state: live check 7)
 
 /**
  * WHAT EACH WIDTH DRAWS (office-layout.ts geometry, office-chrome.ts; the probe's rounds 8-9), pinned by the first test of
@@ -549,7 +549,7 @@ function suite(COLUMNS: Columns): void {
       expect(ids(pOff, DEMO_S2), id).not.toContain(id)
       expect(officeModel(pOff).hits.some(h => h.kind === 'agent' && h.id === id), id).toBe(false)
     }
-    expect((await headOf(ui, pOff, DEMO_S2)).more).toBe(nb(`▸ ${I18N.he.moreDoneN(DEMO_HELD.length)}`))
+    expect((await headOf(ui, pOff, DEMO_S2)).more).toBe(nb(`${I18N.he.moreDoneN(DEMO_HELD.length)} ◂`))
     await rowsOk(ui, pOff)
     // a click on a demo row opens that row (the line map under the taller chrome)
     await click(ui, 'agent', 'demo-mcp-dd')

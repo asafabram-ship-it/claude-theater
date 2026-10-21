@@ -5,7 +5,9 @@
 // while the office holds more than SEARCH_FROM agents or a search is active;
 // the footer line; the settings popover or the drawer), their exact heights
 // (the search counted on the agents IN the office, never the ones shown: live
-// check 7), the drawer's wrapped lines and its one status line, and the window of layout
+// check 7), the drawer's wrapped lines and its one status line, padded to one
+// height at a width (drawerMax; drawerPad on a pane too short for it to ride the
+// window's top), and the window of layout
 // lines the engine's scroll offset shows; and the ONE definition of the characters the surfaces refuse
 // (REFUSED_RE), with the two cleaners built on it: cleanSearch (the search
 // text) and cleanAgentText (every agent text the payload carries, cleaned by
@@ -316,8 +318,21 @@ export function drawerMax(limits: DrawerLimits): number {
   return 8 + limits.task + limits.result
 }
 
-/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content — the task and the result wrapped to `limits` lines (drawerLimits: one fewer each under DRAWER_NARROW_BELOW) — then blank lines to drawerMax (THE DRAWER'S ONE HEIGHT). */
-export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number, limits: DrawerLimits = { task: TASK_LINES, result: RESULT_LINES }): DrawerLine[] {
+/**
+ * THE DRAWER'S PAD: the lines a drawer is padded to on a pane of `bodyRows` — drawerMax (THE DRAWER'S ONE HEIGHT), but on a
+ * pane too short for that whole card to ride the window's top (THE OVERLAY IN VIEW: the card, its gap and a row of the office
+ * — 20 body rows or fewer from DRAWER_NARROW_BELOW columns) only as many as still leave the window that row (live check 7
+ * review: padded to the most, a short drawer opened while scrolled was drawn in the chrome above the window — the cards
+ * jumped and no drawer was in view). drawerLines pads, never cuts: a drawer with more lines of its own keeps them. Rows
+ * unknown (0): drawerMax. Phase B's floating overlay lifts the limit.
+ */
+export function drawerPad(limits: DrawerLimits, bodyRows: number): number {
+  const most = drawerMax(limits)
+  return bodyRows > 0 ? Math.min(most, bodyRows - 1 - DRAWER_FRAME_ROWS - OVERLAY_GAP) : most
+}
+
+/** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content — the task and the result wrapped to `limits` lines (drawerLimits: one fewer each under DRAWER_NARROW_BELOW) — then blank lines to `pad` (THE DRAWER'S ONE HEIGHT, drawerMax; drawerPad on a short pane). */
+export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: number, limits: DrawerLimits = { task: TASK_LINES, result: RESULT_LINES }, pad = drawerMax(limits)): DrawerLine[] {
   const lbl = (k: string) => L[k] ?? ''
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
   if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
@@ -334,7 +349,7 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
     for (const t of wrapLines(d.result, inner, limits.result)) lines.push({ kind: 'body', text: t })
     if (d.truncated) lines.push({ kind: 'note', text: cut(`✂ ${lbl('resultTruncated')}`, inner) })
   }
-  while (lines.length < drawerMax(limits)) lines.push({ kind: 'blank', text: '' })
+  while (lines.length < pad) lines.push({ kind: 'blank', text: '' })
   return lines
 }
 
@@ -360,7 +375,10 @@ export function chromeRows(p: OfficeProps): number {
 /** The settings popover's or the drawer's rows, their gap included (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
 export function overlayRows(p: OfficeProps): number {
   if (p.helpOpen) return helpRows(p.columns, !!p.oversized) + OVERLAY_GAP
-  if (p.drawer) return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), drawerLimits(p.columns)).length + OVERLAY_GAP
+  if (p.drawer) {
+    const limits = drawerLimits(p.columns)
+    return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), limits, drawerPad(limits, p.rows)).length + OVERLAY_GAP
+  }
   return 0
 }
 

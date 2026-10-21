@@ -16,8 +16,9 @@
 // title line (the title flush at the reading edge — a 📌 before it only when
 // the room is pinned or its pin zone is under the pointer — the read-only counts
 // at the other edge, the title cut on a word), under it the room's ONE finished
-// toggle (`▸ עוד 2 שסיימו` / `▾ הסתר שסיימו`, only past RECENT_DONE finished:
-// live check 7, Q3 + Q6), a BLANK line (no rule), and the agents
+// toggle (`עוד 2 שסיימו ◂` / `הסתר שסיימו ▾`, read arrow first — iconLabel —
+// only past RECENT_DONE finished: live check 7, Q3 + Q6), a BLANK line (no
+// rule), and the agents
 // as a COLUMN-MAJOR table — rigid column Boxes (status mark · who · [model] ·
 // activity emoji · [activity word] · [task]), the padding cell on the column's
 // reading side, every value ONE Text with no plain space in it (office-layout.ts
@@ -97,7 +98,9 @@
 // line's hit is the card's inside, the dim 📌 lights over the pin's zone alone;
 // a pin click keeps the cards in the order drawn until the pointer leaves the
 // office (THE PIN'S PLACE, `inst.frozen`: the bright 📌 at once, the card to the
-// top then — never a jump under the pointer); the demo's switches post their
+// top then — never a jump under the pointer) and the hover on the clicked room
+// (its 📌 drawn dim until the answer brings the bright one: the title never
+// slides between the two); the demo's switches post their
 // target; an Enter that follows typing in the search is the field's
 // (`inst.typing`), o and an Enter after a click or a walk key open the focus.
 //
@@ -123,14 +126,15 @@
 // The strings are drawn as the probe writes them (the desktop lays a
 // Hebrew-first Text right-to-left): a labelled control reads icon-then-word
 // through office-layout.ts iconLabel (the toolbar's three, the settings'
-// three, the drawer's close, the empty office's demo Button); the search's
+// three, the drawer's close, the empty office's demo Button, the cards' more /
+// hide line — officeModel lays that one); the search's
 // placeholder is the probe's `🔍 חיפוש סוכנים` (the glass leading); a composed
 // line (the header's counts, the drawer's status and model lines and note) is
 // one Text.
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
+import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
 import { CARD_BORDER, FIT, LINK_FG, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
@@ -175,7 +179,7 @@ export type OfficeInst = {
   rowAt: Map<string, number>
   /** The agent ids in line order. */
   order: string[]
-  /** Line y → the UNPINNED room whose title line it is: the head hover. A pinned head draws its 📌 anyway, so the pointer over it sets no hoverRoom — no setState, no redraw for a change nothing would show. */
+  /** Line y → the UNPINNED room whose title line it is: the head hover. A pinned head draws its 📌 anyway, so the pointer moving over it sets no hoverRoom — no setState, no redraw for a change nothing would show (a pin click sets it on the clicked room, pinned or not: its unpin is drawn dim at once). */
   titleAt: Map<number, string>
   /** The window last drawn: [from, from + count) — the lines whose agent rows are drawn (the row budget's cut included). */
   win: { from: number; count: number }
@@ -324,9 +328,11 @@ function listen(surface: Surface): void {
           send(surface, inst, inst.props.drawer?.id === hit.id ? { t: 'close' } : { t: 'open', id: hit.id })
         } else if (hit.kind === 'pin') {
           // THE PIN'S PLACE (Q4): the rooms keep the order drawn now until the pointer leaves the office (the pinned card moves to
-          // the top then); the head hover goes, the props' bright 📌 replacing it
+          // the top then); the head hover set ON the clicked room (live check 7 review: cleared, the 📌 went until the answer
+          // came — the title slid by the pin and its gap and back; dim and bright are one width, so a pin goes dim → bright and
+          // an unpin bright → dim with no reflow, and a click with no hover before it shows the dim 📌 at once)
           inst.frozen ??= inst.model.rooms.map(r => r.id)
-          if (cur.hoverRoom !== null) surface.setState({ ...cur, hoverRoom: null })
+          if (cur.hoverRoom !== hit.id) surface.setState({ ...cur, hoverRoom: hit.id })
           send(surface, inst, { t: 'pin', room: hit.id })
         } else send(surface, inst, { t: 'roomDone', room: hit.id })   // the "more / hide finished" line under the title: the room's one toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
@@ -423,9 +429,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     // --- the drawer's lines, memoised (they decide the chrome's height); the key assigned after the lines ---
     const inner = drawerInner(props.columns)
     if (props.drawer && !props.helpOpen) {
-      const dk = JSON.stringify([props.columns, props.lang, props.drawer])
+      // (padded as the hooks' overlayRows pads it: drawerMax, or what a short pane leaves it — drawerPad)
+      const limits = drawerLimits(props.columns)
+      const pad = drawerPad(limits, props.rows)
+      const dk = JSON.stringify([props.columns, props.lang, pad, props.drawer])
       if (dk !== inst.drawerKey) {
-        inst.drawer = drawerLines(props.drawer, props.labels, inner, drawerLimits(props.columns))
+        inst.drawer = drawerLines(props.drawer, props.labels, inner, limits, pad)
         inst.drawerKey = dk
       }
     }
@@ -617,7 +626,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       ] })
     } else if (props.drawer) {
       // the drawer as a card in the cards' style: every line in a height-1 Box, so the rows under it never move; ONE height at a
-      // width whoever it shows (office-chrome.ts drawerMax: its lines padded with blank lines — live check 7, Q2)
+      // width whoever it shows (office-chrome.ts drawerMax: its lines padded with blank lines — live check 7, Q2; on a pane too
+      // short for that to ride the window's top, padded to what still does — drawerPad)
       const items: RenderElement[] = inst.drawer.map((l, i) => {
         // the name line: the persona (bold) at the reading edge, the close Button (read ✕ THEN the word: iconLabel) at the other
         if (l.kind === 'name') return line([
@@ -708,7 +718,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const blank = (): RenderElement => Box({ height: 1 })
       /** The frame's bottom in a fragment (which has no border): one dim rule the column's width, cut by its Box. */
       const rule = (): RenderElement => Box({ height: 1, overflow: 'hidden', width: '100%', children: [Text({ dimColor: true, children: ['─'.repeat(Math.max(4, geo.W))] })] })
-      /** The `▸ עוד N שסיימו` / `▾ הסתר שסיימו` line, directly under the title (live check 7, Q3: it never moves with the rows it reveals), in THE LINK COLOUR (Q7: what is clickable reads so at rest). */
+      /** The `עוד N שסיימו ◂` / `הסתר שסיימו ▾` line (read arrow first: office-layout.ts iconLabel), directly under the title (live check 7, Q3: it never moves with the rows it reveals), in THE LINK COLOUR (Q7: what is clickable reads so at rest). */
       const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ color: LINK_FG, children: [room.more] })] })
       /**
        * The table of a card: the window's rows as cells in the column Boxes the mode draws — the status, the who, the model (unless

@@ -10,7 +10,7 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, officeAgents, searchShown, windowOf } from './office-chrome'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerPad, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, officeAgents, searchShown, windowOf } from './office-chrome'
 import * as OfficeClient from './office-client'
 import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
@@ -769,9 +769,13 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   // between them is nothing
   f.pointer({ type: 'down', x: X(LAST), y: C + y('pin', 'A'), button: 'left' })
   expect(f.posts[2]).toEqual({ t: 'pin', room: 'A' })
+  // (the pin click keeps the hover on the clicked room — its 📌 drawn dim until the answer's bright one: live check 7 review)
+  expect(f.surface.state!.hoverRoom).toBe('A')
   f.pointer({ type: 'down', x: X(1), y: C + y('pin', 'A'), button: 'left' })
   f.pointer({ type: 'down', x: X(22), y: C + y('pin', 'A'), button: 'left' })
   expect(f.posts).toHaveLength(3)
+  f.pointer({ type: 'move', x: 7, y: C + y('agent', 'lead') })   // (the pointer moves off the title: the hover goes)
+  expect(f.surface.state!.hoverRoom).toBe(null)
   // the "more finished" line, directly under the title, posts the room's toggle
   expect(y('moreDone', 'A')).toBe(y('pin', 'A') + 1)
   f.pointer({ type: 'down', x: 20, y: C + y('moreDone', 'A'), button: 'left' })
@@ -829,12 +833,17 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   expect(pinOfTree(Office(q, g.surface))!.props.dimColor).toBeUndefined()
   g.pointer({ type: 'down', x: X(LAST), y: Cq + 2, button: 'left' })
   expect(g.posts).toEqual([{ t: 'pin', room: 'B' }])
-  // a pin click clears the head hover with it (the props' bright 📌 replaces it)
+  // a pin click KEEPS the head hover on the clicked room (live check 7 review: cleared, the 📌 went until the answer's bright one
+  // came and the title slid by the pin and back) — no setState when the hover is there already; a pinned room's pin click sets it
+  // (its unpin is drawn dim at once)
   f.pointer({ type: 'move', x: X(LAST - 2), y: C + y('pin', 'A') })
   expect(f.surface.state!.hoverRoom).toBe('A')
+  const setsPin = f.setStates()
   f.pointer({ type: 'down', x: X(LAST), y: C + y('pin', 'A'), button: 'left' })
-  expect(f.surface.state!.hoverRoom).toBeNull()
+  expect(f.surface.state!.hoverRoom).toBe('A')
+  expect(f.setStates()).toBe(setsPin)
   expect(f.posts[f.posts.length - 1]).toEqual({ t: 'pin', room: 'A' })
+  expect(g.surface.state!.hoverRoom).toBe('B')
 })
 
 test('THE PRE-EMPTS (live check 7, R14 and J9): every card keyed by its room (`room:<id>`: a line inserted before it never repaints it as another); an Enter that follows typing in the search field is the field\'s (its onSubmit) — onKey opens no drawer for it, while o and an Enter after a click or a walk key still open the focus (spec §6.4); the toolbar\'s words or icons are decided on the WIDEST state of its toggles (☑, 🔕), so a toggle never switches the row between words and icons', () => {
@@ -1096,15 +1105,18 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   expect(kidsOf(top).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round'])
   expect(rowsOf(cards(top)[0]!)[0]![1]).toBe(`🦉${NBSP}g0`)
   // a window no taller than the drawer: the drawer keeps its place in the chrome, scrolled as content — the window (lines 40 - H2 .. 39:
-  // offset 46 less the whole chrome of 6 + H2, 12 with the drawer's seven lines) cuts through A's card, so A is drawn from its top with no spacer, then B
+  // offset 46 less the whole chrome of 6 + H2) cuts through A's card, so A is drawn from its top with no spacer, then B. (A drawer of
+  // its most lines: a shorter one would be padded only to what leaves such a window a row, and ride its top — drawerPad)
+  const tall = drawer({ id: 'b5', task: 'word '.repeat(400), result: 'done '.repeat(400), truncated: true })
+  expect(overlayRows({ ...two, drawer: tall })).toBe(H2)
   const sf = fake(45, 0)
-  const short = Office({ ...two, rows: H2 }, sf.surface)
+  const short = Office({ ...two, drawer: tall, rows: H2 }, sf.surface)
   expect(kidsOf(short).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'round', 'round'])
   expect(sf.surface.state!.inst.win).toEqual({ from: 40 - H2, count: H2 })
   expect(rowsOf(cards(short)[0]!).map(r => r[1])).toEqual(Array.from({ length: H2 - 6 }, (_, i) => `🦉${NBSP}a${40 - H2 - 4 + i}`))   // (the window's rows of A: lines 40 - H2 .. 33)
   expect(rowsOf(cards(short)[1]!)).toHaveLength(0)
   // the overlay keeps its place at the top too: scrolled 20 rows further, a spacer stands for A's card
-  const further = Office({ ...two, rows: H2, offset: 46 + 20 }, fake(45, 0).surface)
+  const further = Office({ ...two, drawer: tall, rows: H2, offset: 46 + 20 }, fake(45, 0).surface)
   expect(kidsOf(further).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'drawer', 'spacer', 'round'])
   expect(byKey(further, 'spacer')!.props.height).toBe(37)
 })
@@ -1466,6 +1478,39 @@ test('the drawer under DRAWER_NARROW_BELOW columns (the probe\'s): the task wrap
   expect(overlayRows(props({ columns: 34, selected: 'lead', drawer: long })) - overlayRows(props({ columns: 33, selected: 'lead', drawer: long }))).toBe(2)
   // the default limits are the wide ones: drawerLines without them wraps as at 34
   expect(drawerLines(long, LABELS, drawerInner(45)).length).toBe(drawerLines(long, LABELS, drawerInner(45), drawerLimits(45)).length)
+})
+
+test('THE DRAWER ON A SHORT PANE (live check 7 review): padded to drawerMax only while that card leaves the window a row — on a pane too short for it (20 body rows or fewer at 34 columns and more), a short drawer is padded to what still rides the window\'s top (THE OVERLAY IN VIEW: opened while scrolled, it is drawn in view, never in the chrome above the window), never cut below its own lines; the hooks\' overlayRows and the module\'s drawer agree', () => {
+  const short = drawer({ result: '', task: 'short' })      // 7 lines of its own
+  const long = drawer({ task: 'word '.repeat(400), result: 'done '.repeat(400), truncated: true })
+  const crowd = Array.from({ length: 60 }, (_, i) => ag(`g${i}`))
+  for (const [columns, rows] of [[45, 18], [45, 20], [45, 13], [32, 16], [120, 14]] as const) {
+    const lim = drawerLimits(columns)
+    const p = withAgents(props({ columns, rows, offset: 30, selected: 'g40', drawer: short }), crowd)
+    const H = overlayRows(p)
+    expect(overlayInWindow(H, rows), `${columns} × ${rows}: ${H} rows`).toBe(true)
+    expect(H, `${columns} × ${rows}`).toBe(Math.min(DRAWER_FRAME_ROWS + drawerMax(lim) + OVERLAY_GAP, rows - 1))
+    expect(drawerPad(lim, rows)).toBe(H - DRAWER_FRAME_ROWS - OVERLAY_GAP)
+    const fk = fake(columns, 0)
+    const tree = Office(p, fk.surface)
+    expect(byKey(tree, 'drawer')!.props.height, `${columns} × ${rows}`).toBe(H - OVERLAY_GAP)
+    expect(fk.surface.state!.inst.chrome, `${columns} × ${rows}`).toBe(chromeRows(p))
+    expect(chromeOf(Office({ ...p, offset: 0 }, fake(columns, 0).surface)), `${columns} × ${rows} at the top`).toBe(chromeRows(p))
+    // in view: after the spacer of the lines above the window, at Client row `offset`
+    expect(kidsOf(tree).map(kindOf).slice(-3), `${columns} × ${rows}`).toEqual(['spacer', 'drawer', 'fragment'])
+    expect(clientRowOf(tree, 'drawer')).toBe(p.offset)
+    // a drawer longer than the pad keeps its lines (never cut): as tall as on a tall pane
+    const pl = withAgents(props({ columns, rows, offset: 30, selected: 'g40', drawer: long }), crowd)
+    expect(overlayRows(pl), `${columns} × ${rows}`).toBe(DRAWER_FRAME_ROWS + drawerLines(long, LABELS, drawerInner(columns), lim).length + OVERLAY_GAP)
+  }
+  // a pane tall enough (21 body rows and more): ONE height at the width, whoever the drawer shows (live check 7, Q2)
+  for (const rows of [21, 30, 60]) {
+    const p = props({ columns: 45, rows, selected: 'lead', drawer: short })
+    expect(overlayRows(p), `${rows}`).toBe(overlayRows(props({ columns: 45, rows, selected: 'lead', drawer: long })))
+    expect(overlayRows(p), `${rows}`).toBe(DRAWER_FRAME_ROWS + drawerMax(drawerLimits(45)) + OVERLAY_GAP)
+  }
+  // rows unknown (0): the most lines
+  expect(drawerPad(drawerLimits(45), 0)).toBe(drawerMax(drawerLimits(45)))
 })
 
 test('the drawer (a card in the cards\' style), the settings popover and the empty office draw from props and labels; Buttons post; no selection band — the selected row is flagged, not tinted', () => {

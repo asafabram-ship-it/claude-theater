@@ -234,8 +234,9 @@ test('R1 · the search field is drawn by the office\'s agents (more than SEARCH_
 // R8 + R5 (Q3 + Q6): one meaning for the finished controls
 // ---------------------------------------------------------------------------
 
-const MORE = (n: number) => nb(`${MORE_MARK} ${I18N.he.moreDoneN(n)}`)
-const HIDE = nb(`${LESS_MARK} ${I18N.he.hideDone}`)
+/** The Hebrew pane's more / hide line: read arrow first (iconLabel — the arrow trails the words in the string), ◂ collapsed. */
+const MORE = (n: number) => nb(`${I18N.he.moreDoneN(n)} ${MORE_MARK.rtl}`)
+const HIDE = nb(`${I18N.he.hideDone} ${LESS_MARK}`)
 
 test('R8 · the toolbar ☐ / ☑ sets EVERY card (Q6): after a card line showed its finished, ☑ then ☐ hides them again; after ☑ and a card hide line, ☐ then ☑ shows them again — the press clears every per-room override', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
@@ -260,7 +261,7 @@ test('R8 · the toolbar ☐ / ☑ sets EVERY card (Q6): after a card line showed
   await ui.unmount()
 })
 
-test('R5 · the card one finished line sits DIRECTLY UNDER ITS TITLE (Q3): `▸ עוד 2 שסיימו` collapsed, `▾ הסתר שסיימו` open — it never moves, so a second click on the same cell toggles it back (never a row drawer)', { timeoutMs: 30_000 }, async ($, on) => {
+test('R5 · the card one finished line sits DIRECTLY UNDER ITS TITLE (Q3): `עוד 2 שסיימו ◂` collapsed, `הסתר שסיימו ▾` open — it never moves, so a second click on the same cell toggles it back (never a row drawer)',{ timeoutMs: 30_000 }, async ($, on) => {
   const { ui } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
   const card = officeModel(p0).rooms.find(r => r.id === S2)!
@@ -510,6 +511,172 @@ test('R11 · the motion toggle is gone (Q9: nothing read it but its own icon) �
   expect(JSON.stringify(await officeProps(ui))).toBe(before)
   expect(captured.writes).toEqual(writes)
   expect((captured.store.prefs as { still?: boolean }).still).toBe(true)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// The phase A review: overlapping posts — each action applied once, only the newest answer drawn; the pin's frame between
+// ---------------------------------------------------------------------------
+
+type Captured = ReturnType<typeof beneath>['captured']
+/** The runtime's own next turn (the kit's tests have no DOM or node types: the global taken as it is). */
+const tick = () => new Promise<void>(r => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(r, 0))
+/** Waits up to `n` turns until `cond` holds (a hook held beneath, a write landed); whether it does. */
+async function until(cond: () => boolean, n = 400): Promise<boolean> {
+  for (let i = 0; i < n && !cond(); i++) await tick()
+  return cond()
+}
+/** A one-shot hold beneath on the plugin's next write of `key` ($.store; `state:<key>` for $.state — test-kit.ts): released by the function returned. */
+function hold(captured: Captured, key: string): () => void {
+  let release!: () => void
+  captured.hold[key] = new Promise<void>(r => (release = r))
+  return () => release()
+}
+const storedPrefs = (captured: Captured) => captured.store.prefs as { muted: boolean; pins: string[] }
+/** The mute Button's label as the MODULE drew it (what the person sees), not the Client element's props. */
+async function drawnMute(ui: Ui): Promise<string> {
+  return String((await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'mute' }))?.props.label ?? '')
+}
+/** The agent rows the module drew: their status cells (the mark, the focus marker beside it). */
+async function drawnRows(ui: Ui): Promise<number> {
+  const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
+  return allNodes(root).filter(n => n.type === 'Text' && /^[‹›]?[●○⭐❌⏰][‹›]?$/u.test(drawnText(n))).length
+}
+/** The room's title line as the module drew it: its pin ('none' | 'dim' | 'bright') and its children (pin · title · counts). */
+async function drawnTitle(ui: Ui, room: string): Promise<{ pin: string; kids: number; title: string }> {
+  const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
+  const card = allNodes(root).find(n => n.props?.key === `room:${room}`)
+  const line = (card?.children ?? []).find(isDrawn)
+  const kids = (line?.children ?? []).filter(isDrawn)
+  const pin = kids.find(k => k.type === 'Text' && drawnText(k) === '📌')
+  return { pin: pin ? (pin.props?.dimColor ? 'dim' : 'bright') : 'none', kids: kids.length, title: drawnText(kids.find(k => k.type === 'Box')) }
+}
+
+test('THE OUTBOX applies an action ONCE when posts overlap: a post of two actions still applying its first (its $.store write held) when the next frame\'s post carries them again — the later post applies the second, and the first then skips it (mute pressed once: the office ends muted, one prefs write)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  expect(p0.prefs.muted).toBe(false)
+  const prefs0 = captured.writes.prefs
+  const release = hold(captured, 'roomDone')
+  // one frame: the more line (roomDone, its store write held) and mute — one post [roomDone, mute]
+  const first = Promise.all([down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2))), ui.press({ key: 'mute' })])
+  expect(await until(() => captured.seq.includes('held:roomDone')), 'the roomDone write held').toBe(true)
+  // the next frame: settings — its post carries [roomDone, mute, help] (no frame cleared the outbox in between)
+  const views = captured.writes.view
+  const second = ui.press({ key: 'help' })
+  expect(await until(() => captured.writes.view > views), 'the settings applied while roomDone is held').toBe(true)
+  release()
+  await Promise.all([first, second])
+  await until(() => false, 20)
+  const p1 = await officeProps(ui)
+  const log = `prefs writes ${captured.writes.prefs - prefs0}, store muted ${storedPrefs(captured).muted}, props muted ${p1.prefs.muted}`
+  expect(captured.writes.prefs - prefs0, log).toBe(1)
+  expect(storedPrefs(captured).muted, log).toBe(true)
+  expect(p1.prefs.muted, log).toBe(true)
+  expect([p1.helpOpen, roomOf(p1, S2).showDone]).toEqual([true, true])
+  await ui.unmount()
+})
+
+test('THE NEWEST ANSWER: a slower post answering after a newer one never draws over it — the more line (its $.store write held), then mute: once the held write lands the module draws 🔕 and the room\'s hide line, as the prefs and the store say (the older answer, read before mute wrote, once drew 🔔 and stuck: equal props, no redraw)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  expect(await drawnMute(ui)).toContain('🔔')
+  const release = hold(captured, 'roomDone')
+  const more = down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  expect(await until(() => captured.seq.includes('held:roomDone'))).toBe(true)
+  const mute = ui.press({ key: 'mute' })
+  expect(await until(() => storedPrefs(captured).muted === true), 'mute applied while roomDone is held').toBe(true)
+  await until(() => false, 20)
+  release()
+  await Promise.all([more, mute])
+  await until(() => false, 20)
+  const p1 = await officeProps(ui)
+  expect([storedPrefs(captured).muted, p1.prefs.muted, roomOf(p1, S2).showDone]).toEqual([true, true, true])
+  expect(await drawnMute(ui), 'the module draws the sound as the prefs say').toContain('🔕')
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: officeModel(p1).rooms.find(r => r.id === S2)!.more })).toBeDefined()
+  await ui.unmount()
+})
+
+test('THE NEWEST ANSWER: mute (its prefs $.store mirror held), then the settings — once the held write lands the module draws the settings popover and 🔕 (the mute answer, read before the settings opened, once closed the popover the person had just opened)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const release = hold(captured, 'prefs')
+  const mute = ui.press({ key: 'mute' })
+  expect(await until(() => captured.seq.includes('held:prefs'))).toBe(true)
+  const views = captured.writes.view
+  const help = ui.press({ key: 'help' })
+  expect(await until(() => captured.writes.view > views)).toBe(true)
+  await until(() => false, 20)
+  release()
+  await Promise.all([mute, help])
+  await until(() => false, 20)
+  const p1 = await officeProps(ui)
+  expect([p1.helpOpen, p1.prefs.muted]).toEqual([true, true])
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'closeHelp' }), 'the settings popover drawn').toBeDefined()
+  expect(await drawnMute(ui)).toContain('🔕')
+  await ui.unmount()
+})
+
+test('THE NEWEST ANSWER: a poll publish inside a post\'s hook — the more line (its $.store write held), the demo\'s next publish walks the newcomer in, then the held write lands: the module draws the rows the props hold (the answer, read before the publish, once drew the cast without the newcomer and stuck)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured, clock } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  expect(idsOf(p0, S2)).not.toContain(NEWCOMER)
+  const total = (p: OfficeProps) => p.rooms.reduce((n, r) => n + r.agents.length, 0)
+  const release = hold(captured, 'roomDone')
+  const more = down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  expect(await until(() => captured.seq.includes('held:roomDone'))).toBe(true)
+  const payloads = captured.writes.payload
+  const advance = clock.advance(POLL_MS)       // the next poll (phase 6): the newcomer in, the finisher done
+  expect(await until(() => captured.writes.payload > payloads), 'the publish while roomDone is held').toBe(true)
+  await until(() => false, 20)
+  const p1 = await officeProps(ui)
+  expect(idsOf(p1, S2)).toContain(NEWCOMER)
+  release()
+  await Promise.all([more, advance])
+  await until(() => false, 20)
+  const p2 = await officeProps(ui)
+  expect(roomOf(p2, S2).showDone).toBe(true)
+  expect(await drawnRows(ui), 'the rows drawn are not the props\' rows').toBe(total(p2))
+  await ui.unmount()
+})
+
+test('R5 · pinning the HOVERED pin keeps the 📌 on every draw (dim → bright; unpinned, bright → dim) and the title never slides: the click keeps the hover on the clicked room — dim and bright one width (once cleared: the title slid by the pin and back as the answer came); a click with no hover before it shows the dim pin at once', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui, captured } = await demoAt($, on, 1)
+  const p0 = await officeProps(ui)
+  const second = p0.rooms[1]!.id
+  const at = cellOf(p0, hitOf(p0, 'pin', second))
+  await ui.pointer({ in: OFFICE_KEY, type: 'move', ...at })
+  const hovered = await drawnTitle(ui, second)
+  expect(hovered).toMatchObject({ pin: 'dim', kids: 3 })
+  // the pin's prefs write held beneath: the frame between the click and its answer
+  const release = hold(captured, 'state:prefs')
+  const pin = down(ui, at)
+  expect(await until(() => captured.seq.includes('held:state:prefs'))).toBe(true)
+  await until(() => false, 20)
+  expect(await drawnTitle(ui, second), 'the frame between the click and the answer').toEqual(hovered)
+  release()
+  await pin
+  // (the pointer's act settles before a held hook does: the hook's last write awaited)
+  expect(await until(() => storedPrefs(captured).pins.length > 0)).toBe(true)
+  await until(() => false, 20)
+  expect(storedPrefs(captured).pins).toEqual([second])
+  // (the title may be cut a little shorter pinned: cutTitle counts a pinned room's pin, the hover's rides the fit's slack)
+  expect(await drawnTitle(ui, second)).toMatchObject({ pin: 'bright', kids: 3 })
+  await down(ui, at)                            // unpinned, the pointer still over the pin
+  expect(storedPrefs(captured).pins).toEqual([])
+  expect(await drawnTitle(ui, second), 'unpinned under the pointer').toEqual(hovered)
+  // the other card, clicked with no hover before it: the dim pin at once, the bright one with the answer
+  const first = p0.rooms[0]!.id
+  await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
+  const release2 = hold(captured, 'state:prefs')
+  const pin2 = down(ui, cellOf(p0, hitOf(p0, 'pin', first)))
+  expect(await until(() => captured.seq.includes('held:state:prefs'))).toBe(true)
+  await until(() => false, 20)
+  expect((await drawnTitle(ui, first)).pin, 'a click with no hover before it').toBe('dim')
+  release2()
+  await pin2
+  expect(await until(() => storedPrefs(captured).pins.includes(first))).toBe(true)
+  await until(() => false, 20)
+  expect((await drawnTitle(ui, first)).pin).toBe('bright')
   await ui.unmount()
 })
 

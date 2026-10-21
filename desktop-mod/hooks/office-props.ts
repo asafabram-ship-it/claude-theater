@@ -95,7 +95,7 @@ export type OfficeProps = {
 /** One action of the office (what a click, a key or the search does). */
 export type OfficeMessage =
   | { t: 'open'; id: string } | { t: 'close' } | { t: 'pin'; room: string } | { t: 'roomDone'; room: string }
-  | { t: 'showDone' } | { t: 'mute' } | { t: 'lang' } | { t: 'help' } | { t: 'demo'; on?: boolean } | { t: 'still' }
+  | { t: 'showDone' } | { t: 'mute' } | { t: 'lang' } | { t: 'help' } | { t: 'demo'; on?: boolean }
   | { t: 'search'; q: string } | { t: 'content'; rows: number } | { t: 'pull'; seq: number }
 /** An action as THE OUTBOX numbers it (office-client.tsx: each number is applied once per instance). */
 export type OfficeItem = OfficeMessage & { n: number }

@@ -306,7 +306,8 @@ async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Pro
 
 /**
  * DESKTOP (the Client office): a left click inside the office Client on the layout hit `kind`/`id` — a
- * tile (`open`), a room head's pin (`pin`) or its ✅ counts (`roomDone`) — where the module draws it:
+ * row (`agent`), a room head's pin (`pin`) or its more line under the title (`moreDone`; the ✅ counts are
+ * read-only: live check 7, Q6) — where the module draws it:
  * the module hit-tests it and POSTS the message, the plugin's `ui.message` hook (ui.tsx) applies it.
  * (A toolbar Button of the module is pressed by its key: `ui.press({ key })`.)
  */
@@ -361,7 +362,7 @@ function ageOut(files: MemFiles, path: string, now: number): void {
   files.set(path, { ...f, mtimeMs: now - (MAX_AGE_MIN + 1) * 60_000 })
 }
 
-/** A second open conversation beside quietOffice's: its lead answering, one FINISHED subagent (so the room header draws its ✅ toggle). */
+/** A second open conversation beside quietOffice's: its lead answering, one FINISHED subagent (so the room header draws its ✅ counts: the text cards' toggle, read-only on the desktop). */
 const QSESS2 = 'sess-quiet-0002'
 const QLEAD2 = `${QPROJ}/${QSESS2}.jsonl`
 const R1 = `${QPROJ}/${QSESS2}/subagents/agent-r1.jsonl`
@@ -881,14 +882,14 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
 test('HOUSEKEEPING (the publish branch, same tick as the write): a vanished selection resets view.selected (one view write); a vanished pinned room drops its pin (one prefs write) and its roomDone override (one store write); nothing when nothing vanished; never in the demo or on an empty office', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   secondRoom(files, T0)
-  finishIn(files, Q2, T0 - 7000, 'All green.') // room 1 has a finished agent too (its ✅ toggle is drawn)
+  finishIn(files, Q2, T0 - 7000, 'All green.') // room 1 has a finished agent too (its ✅ counts are drawn)
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } }, files)
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS) // the first poll scans the files and publishes: two rooms, three working (both leads, q1)
   expect(captured.writes.payload).toBe(1)
   expect(captured.opens[captured.opens.length - 1]).toBe('🟢 3 · 🎭 התיאטרון')
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  // (the desktop pane is the office Client: room 2's head carries its pin and its ✅ toggle as pointer hits, a tile
+  // (the desktop pane is the office Client: room 2's head carries its pin as a pointer hit (its ✅ counts read-only), a tile
   // opens the drawer (`props.drawer`) — each a click inside the Client, posted to the plugin's `ui.message` hook)
   expect((await officePropsOf(ui))?.rooms.find(r => r.id === QSESS2)).toMatchObject({ done: 1, pinned: false })
   // (1) the drawer open on q1, then q1's transcript ages out of the office: the next structure publish

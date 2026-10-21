@@ -738,7 +738,6 @@ async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<Ap
   return all
 }
 
-
 /** One action of the office (an item of a batch, or an old single post): what it wrote. */
 async function applyOfficeAction($: EngineInterface, data: unknown): Promise<Applied> {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) return NOTHING
@@ -911,7 +910,7 @@ export function registerUi(on: On): void {
     const toggleRoomDone = async (s: string) => {
       await saveRoomDone($, toggledRoomDone(roomDone, showDone, s))
       // redraw: the override lives outside $.state (a view write here, at once: a text surface does not blink; the
-      // desktop Client's roomDone goes through the redraw latch instead)
+      // desktop Client's roomDone is drawn by the message's {props} answer and an immediate invalidate — no latch: live check 7, R3)
       await update($, viewAtom, v => ({ ...v }))
     }
     const setSearch = (value: string) => void update($, viewAtom, searchedFor(value))

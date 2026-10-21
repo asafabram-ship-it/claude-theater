@@ -695,8 +695,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       })
       /**
        * The title line: the 📌 only when there is one to draw (bright pinned, dim under the pointer — then the title shifts by the
-       * pin and its gap; otherwise the title sits flush at the reading edge, as the probe's), the title cut on a word, the counts
-       * (the room's ✅ toggle) at the far edge; the gap the probe's (office-layout.ts TITLE_GAP: pinZone and cutTitle count it).
+       * pin and its gap; otherwise the title sits flush at the reading edge, as the probe's), the title cut on a word, the dim
+       * counts at the far edge — read-only (live check 7, Q6: the more line under the title is the room's one toggle); the gap the
+       * probe's (office-layout.ts TITLE_GAP: pinZone and cutTitle count it).
        */
       const titleLine = (room: RoomView): RenderElement => Box({ flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, paddingX: 1, gap: TITLE_GAP, overflow: 'hidden', children: [
         ...(room.pin === 'none' ? [] : [Text({ ...(room.pin === 'dim' ? { dimColor: true } : {}), children: [PIN] })]),

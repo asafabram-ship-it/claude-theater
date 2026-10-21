@@ -43,8 +43,8 @@
 // of the window and around it is clicked: a row opens its drawer, the rest
 // open nothing — the rows above the window (the spacer), past it, the
 // overlay's own rows and the chrome included — and the card controls lower
-// down (A's more line, B's pin and ✅ counts, B's head hover) answer where the
-// window shows them.
+// down (A's more line, B's pin, B's head hover) answer where the window shows
+// them — B's ✅ counts read-only (live check 7, Q6).
 
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
@@ -161,7 +161,7 @@ const READERS = 30
 /**
  * The tall office: room A (its lead, READERS readers, the RECENT_DONE + 1 finished writers — the room draws the RECENT_DONE and
  * the "1 more finished" line) is a card of CARD_LINES + 1 + READERS + RECENT_DONE + MORE_LINES lines, past any 25-row window;
- * room B holds a working agent and a finished one (drawn: it is among the recent), so its title line has ✅ counts to click.
+ * room B holds a working agent and a finished one (drawn: it is among the recent), so its title line has ✅ counts — read-only since live check 7 (Q6): a click on them changes nothing.
  */
 function tallFixture(): Agent[] {
   const inB = { session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research' }
@@ -318,7 +318,7 @@ async function rowsOk(ui: Ui, p: OfficeProps): Promise<void> {
   expect((await ui.findAll({ in: OFFICE_KEY })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
 }
 
-/** The layout hit `kind`/`id` of the props as drawn (a row, a room's pin zone, its ✅ counts, its "more finished" line). */
+/** The layout hit `kind`/`id` of the props as drawn (a row, a room's pin zone, its more / hide finished line under the title). */
 function hitOf(p: OfficeProps, kind: Hit['kind'], id: string): Hit {
   const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit, `${kind} ${id}`).toBeDefined()
@@ -1218,7 +1218,7 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('OVERLAID at the top: under the open settings a row click opens its drawer (the settings close), B\'s pin zone pins B (the settings stay) and A\'s ✅ counts toggle A\'s finished; the settings\' own rows are dead; under the open drawer the pin and the more line land too (the drawer stays), and the drawer\'s rows are dead', async ($, on) => {
+  t('OVERLAID at the top: under the open settings a row click opens its drawer (the settings close), B\'s pin zone pins B (the settings stay) and A\'s more line under its title toggles A\'s finished; the settings\' own rows are dead; under the open drawer the pin and the more line land too (the drawer stays), and the drawer\'s rows are dead', async ($, on) => {
     // (a 40-row body: the settings' 15 rows and their gap over a 30-row one would leave B's title line past the window)
     const { ui, captured, clock } = await mountOffice($, on, fixture, { offset: 0, bodyRows: 40 })
     const p0 = await officeProps(ui)
@@ -1237,7 +1237,7 @@ function suite(COLUMNS: Columns): void {
     expect(p2.helpOpen).toBe(false)
     expect(p2.drawer?.id).toBe('a1')
     expect(await focused(ui, p2)).toEqual([whoOf(p2, 'a1')])
-    // the settings again: B's pin zone under them pins B (the view untouched: the settings stay); A's counts toggle A's finished
+    // the settings again: B's pin zone under them pins B (the view untouched: the settings stay); A's more line toggles A's finished
     await ui.key({ in: OFFICE_KEY, key: 'x' })
     await ui.key({ in: OFFICE_KEY, key: 'h' })
     expect((await officeProps(ui)).helpOpen).toBe(true)

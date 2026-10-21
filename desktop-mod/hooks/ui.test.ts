@@ -21,9 +21,8 @@ import {
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
-import { REFUSED_RE, chromeRows, emptyLines, fixedRows, officeHeight } from './office-chrome'
-import { FX_BG, FX_DONE_MS, FX_TICK_MS } from './office-client'
-import { officeModel, rowCount, type Hit } from './office-layout'
+import { OVERLAY_GAP, REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight } from './office-chrome'
+import { geometry, officeModel, rowCount, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'
@@ -315,12 +314,12 @@ async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Rec
   const p = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
   const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit).toBeDefined()
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
 }
 
-/** DESKTOP (the Client office): whether the module draws the finish pulse (the FX_BG.done / doneAlt tint on a row's four Texts). */
-async function hopShown(ui: { findAll: (q: { in?: string; type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }): Promise<boolean> {
-  return (await ui.findAll({ in: OFFICE_KEY, type: 'Text' })).some(n => n.props.backgroundColor === FX_BG.done || n.props.backgroundColor === FX_BG.doneAlt)
+/** DESKTOP (the Client office): whether the module lays any background (live check 6: the finish's tint flashed a near-black band on the light theme — the ⭐ is the whole finish). */
+async function tintShown(ui: { findAll: (q: { in?: string; type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }): Promise<boolean> {
+  return (await ui.findAll({ in: OFFICE_KEY })).some(n => n.props.backgroundColor !== undefined)
 }
 
 /** A quiet office on disk (HOME = C:/Users/test): one open conversation (its lead answering on Fable) with two subagents, one of them on Opus. */
@@ -836,12 +835,13 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect(renders()).toBe(desktop2 + 1) // one redraw (the beat's prefs read is the retitle's)
   expect(captured.toasts).toHaveLength(1)
   expect(captured.plays).toBe(1)
-  // the tile: ⭐ (the stamp rides the props) + done; the hop is the office Client's own fx — its frame clock runs
-  // FX_DONE_MS and stops, no redraw of the pane; no confetti Client on the desktop (the office Client is the only one)
+  // the tile: ⭐ (the stamp rides the props) on the status column + done — and that is the whole finish: nothing tinted, no
+  // clock (live check 6), no redraw of the pane; no confetti Client on the desktop (the office Client is the only one)
   expect(await cardOf(ui, 'q1')).toMatchObject({ status: 'done', star: clock.now() })
-  expect(await hopShown(ui)).toBe(true)
-  await ui.advance(FX_DONE_MS + FX_TICK_MS)
-  expect(await hopShown(ui)).toBe(false)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^⭐$/ })).toBeDefined()
+  expect(await tintShown(ui)).toBe(false)
+  await ui.advance(2000)
+  expect(await tintShown(ui)).toBe(false)
   expect(renders()).toBe(desktop2 + 1)
   expect((await ui.findAll({ type: 'Client' })).map(c => c.key)).toEqual([OFFICE_KEY])
   // quiet: the ⭐ holds inside its window, nothing is written or redrawn
@@ -850,11 +850,11 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect(renders()).toBe(desktop2 + 1)
   expect((await cardOf(ui, 'q1'))?.star).toBeGreaterThan(0)
   // a redraw inside the window (the help popover, opened and closed: two view writes, two redraws, no
-  // publish) keeps the ⭐ (static) and replays no hop — the stamp did not change, so the module starts no fx
+  // publish) keeps the ⭐ (static), nothing tinted
   await ui.press({ key: 'help' })
   expect((await officePropsOf(ui))?.helpOpen).toBe(true)
   expect((await cardOf(ui, 'q1'))?.star).toBeGreaterThan(0)
-  expect(await hopShown(ui)).toBe(false)
+  expect(await tintShown(ui)).toBe(false)
   await ui.press({ key: 'help' })
   expect((await officePropsOf(ui))?.helpOpen).toBe(false)
   expect(captured.writes.payload).toBe(writes1.payload + 1)
@@ -1021,7 +1021,7 @@ test('a FAILED scan never touches user state: the first scan after a hot reload 
 })
 
 // (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)
-test('THE FOOTER: an oversized transcript\'s count and the scan error reach the desktop office\'s footer line (props.footer, one chrome row, drawn by the module) and the text cards\' dim footer', { timeoutMs: 30_000 }, async ($, on) => {
+test('THE FOOTER (live check 6): an oversized transcript is the too-long conversations note — in the desktop office\'s settings popover (props.oversized: no chrome row, drawn once the popover opens), in the text cards\' dim footer; the scan error stays in the desktop office\'s footer line (props.footer, one chrome row, drawn by the module) and joins the text cards\' footer', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   // a subagent transcript over 4 MiB ($.fs.read's limit) whose tail helper fails: skipped and counted (payload.oversized)
   files.set(`${QPROJ}/${QSESS}/subagents/agent-big.jsonl`, { text: '', mtimeMs: T0 - 2000, size: 5 * 1024 * 1024 })
@@ -1032,24 +1032,40 @@ test('THE FOOTER: an oversized transcript\'s count and the scan error reach the 
   expect(captured.payload?.oversized).toBe(1)
   const desk = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 90 } })
   const term = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 90 } })
+  const NOTE = 'One conversation is too long to show'
   let p = (await officePropsOf(desk))!
-  expect(p.footer).toBe('1 transcript over 4 MiB skipped')
-  expect(chromeRows(p)).toBe(fixedRows(p) + 1)
-  expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /^1 transcript over 4 MiB skipped$/ })).toBeDefined()
-  expect(await term.find({ type: 'Text', text: /^1 transcript over 4 MiB skipped$/ })).toBeDefined()
-  // the scan fails: its error joins the footer (the last good office stays drawn, its oversized count with it) — still one line
+  expect(p.footer).toBe('')
+  expect(p.oversized).toBe(NOTE)
+  expect(chromeRows(p)).toBe(fixedRows(p))
+  expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /too long|transcript/ })).toBeUndefined()
+  expect(await term.find({ type: 'Text', text: /^One conversation is too long to show$/ })).toBeDefined()
+  // the settings popover opened: its last line the note (dim), the popover a row taller
+  await desk.press({ key: 'help' })
+  p = (await officePropsOf(desk))!
+  expect(p.helpOpen).toBe(true)
+  expect(chromeRows(p)).toBe(fixedRows(p) + helpRows(p.columns, true) + OVERLAY_GAP)
+  const noteText = await desk.find({ in: OFFICE_KEY, type: 'Text', text: /One.conversation.is.too.long.to.show/ })
+  expect(noteText).toBeDefined()
+  expect(noteText!.props.dimColor).toBe(true)
+  await desk.press({ key: 'help' })
+  expect((await officePropsOf(desk))?.helpOpen).toBe(false)
+  // the scan fails: its error is the desktop footer (the last good office stays drawn, its note in the settings) — one line; the
+  // text cards' footer joins the two
   captured.envDown = true
   await clock.advance(POLL_MS)
   p = (await officePropsOf(desk))!
   // (the kit's env.get refuses: what the engine says then is the scan error)
-  expect(p.footer).toMatch(/^1 transcript over 4 MiB skipped · .*env\.get/)
+  expect(p.footer).toMatch(/env\.get/)
+  expect(p.footer).not.toMatch(/too long|transcript/)
+  expect(p.oversized).toBe(NOTE)
   expect(chromeRows(p)).toBe(fixedRows(p) + 1)
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /env\.get/ })).toBeDefined()
-  expect(await term.find({ type: 'Text', text: /^1 transcript over 4 MiB skipped · .*env\.get/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /^One conversation is too long to show · .*env\.get/ })).toBeDefined()
   // the scan works again: the error leaves the footer
   captured.envDown = false
   await clock.advance(POLL_MS)
-  expect((await officePropsOf(desk))?.footer).toBe('1 transcript over 4 MiB skipped')
+  expect((await officePropsOf(desk))?.footer).toBe('')
+  expect((await officePropsOf(desk))?.oversized).toBe(NOTE)
   await term.unmount()
   await desk.unmount()
 })

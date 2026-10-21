@@ -10,7 +10,7 @@
 // Guarantees the Client contract needs (spec §6.2, §10): plain JSON (assertJson
 // throws on the first `undefined`, naming its path); `task`/`result` only in
 // the drawer (one selected agent), never per agent — the row's `task` is the
-// SHORT task cut to TASK_MAX cells (the dim task column from 100 columns);
+// SHORT task cut to TASK_MAX cells (the dim task column of a 100-cell column);
 // every text capped (name 24, act 18, the row's task 24, room title and the
 // drawer's name / subtitle 48, task/result 4000 — whole glyphs, through the
 // layout's `cut`); 200 agents with long short tasks ≈ 44 KB (measured
@@ -34,7 +34,7 @@ export const OFFICE_KEY = 'office'
 /**
  * One agent row as the cards draw it (office-layout.ts): the status mark from `status`, `failed`, `longRunning` and `star`,
  * `${emoji} ${name}`, the model word, the activity, and the short task (`task_short` cut to TASK_MAX: the dim task column
- * from CENTRE_AT columns). Nothing else rides the props: the rows carry no clock (the drawer's status line has the
+ * of a CENTRE_AT-cell reading column). Nothing else rides the props: the rows carry no clock (the drawer's status line has the
  * minutes), and no tool family, model family, lead flag or first-seen stamp — the cards read none of them.
  */
 export type OfficeAgent = {
@@ -79,7 +79,13 @@ export type OfficeProps = {
   search: string; selected: string | null; helpOpen: boolean; demo: boolean
   rooms: OfficeRoom[]
   drawer: OfficeDrawer | null
+  /** The chrome's dim footer line: the props cap's `+N`, the scan error ('' when none). */
   footer: string
+  /**
+   * THE TOO-LONG CONVERSATIONS NOTE (live check 6): the scan's transcripts too long to read (payload.oversized) as one dim line
+   * of the settings popover — i18n oversizedN (`שיחה אחת ארוכה מדי ולא מוצגת`); '' when none, or while the demo runs.
+   */
+  oversized: string
   usage: { pct: number; resetsAt: string } | null
   empty: { kind: 'office' | 'nomatch' | 'nonewindow' | 'noactive'; msg: string; sub: string } | null
   labels: Record<string, string>                            // the i18n strings the module draws (toolbar, help rows, drawer headings)
@@ -241,6 +247,7 @@ export function buildOfficeProps(input: OfficePropsInput): OfficeProps {
       prefs: { showDone: prefs.showDone, muted: prefs.muted, still: prefs.still === true },
       search: view.search, selected: view.selected, helpOpen: view.helpOpen, demo: view.demo,
       rooms: outRooms, drawer, footer, usage: input.usage,
+      oversized: (office.oversized ?? 0) > 0 ? L.oversizedN(office.oversized) : '',
       empty: kind === null ? null : { kind, msg: kind === 'noactive' ? L.emptyNoActive : kind === 'nonewindow' ? L.emptyNoneInWindow : kind === 'nomatch' ? L.emptyNoMatch : L.emptyOffice, sub: kind === 'office' ? L.emptySub : '' },
       labels,
     }

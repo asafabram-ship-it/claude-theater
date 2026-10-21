@@ -25,8 +25,10 @@
 // row's height — and a row costs the desktop one Text per column and no Box
 // (THE RENDER COST: office-client.test.ts guards the node count per row and per
 // card). THE WIDTH (probe rounds 8-9, office-layout.ts geometry): one reading
-// column, the pane up to 99 cells and a frozen 100-cell column centred by a
-// left margin from 100; the TABLE MODE decided once per render for the whole
+// column, the pane less a cell at each edge (PANE_GUTTER, live check 6: the
+// Client lays out a hair wider than the visible pane, and the cards' right
+// border was clipped) up to a frozen 100-cell column, centred by a left
+// margin; the TABLE MODE decided once per render for the whole
 // office with two cells of hysteresis while the pane is dragged — the last
 // mode's token (its rank and the widest values it was chosen from) lives in
 // the instance (`inst.lastMode`), never in the props; a change of content
@@ -43,12 +45,17 @@
 // row keeps a regular name; the status mark is the one coloured glyph. No
 // selection band: the open drawer says which agent is selected; the keyboard
 // focus is a small marker on the inner side of the status mark (the mark stays
-// at the reading edge); the finish pulse a subtle tint on the row's Texts, and
-// ⭐ ❌ ⏰ ride the status column (office-layout.ts markOf). The drawer is a card
+// at the reading edge); ⭐ ❌ ⏰ ride the status column (office-layout.ts
+// markOf) — the ⭐ is the whole finish: no tint on the row (live check 6: the
+// tint flashed a near-black band on the light theme), so the module lays no
+// background on anything. The drawer is a card
 // in the same style with ONE dim status line (`● עובד · זמן 12 דק׳ · Explore`)
 // and a blank line before its content; the settings popover (titled הגדרות)
 // holds the demo, motion and language Buttons and the shortcuts as a
-// column-major label | key table, two pairs side by side from WIDE_FROM.
+// column-major label | key table, two pairs side by side from WIDE_FROM — and,
+// while the scan skips a transcript too long to read, THE TOO-LONG
+// CONVERSATIONS NOTE as its last line (live check 6: once the footer's
+// `דולגו 1 תמלילים גדולים מדי`, unclear on the main screen).
 // While the demo runs, THE DEMO LINE (live check 5) is the first line under
 // the header — `🎬 זו הדגמה - הסוכנים לא אמיתיים` and its exit Button — so the
 // demo's cast is never taken for the office (the chrome a row taller:
@@ -79,12 +86,11 @@
 // answers nothing. The keyboard walk (j / k) keeps to the agent rows drawn, and
 // `o` opens the focus only while its row is among them.
 //
-// Discipline (spec §7.3-7.4, Phase 0): the frame clock (`surface.every`) runs
-// only while a finish pulse is active and is stopped when the last one ends;
-// the render never calls `setState` (the one init aside) — what must survive
-// between renders without a redraw lives in `state.inst`, a record mutated in
-// place (the model, the mode's rank, the fx list, the stamps seen, the search
-// text); `setState` is called only from events (a tick, a pointer, a key). The
+// Discipline (spec §7.3-7.4, Phase 0): no clock runs but the search's debounce
+// (`surface.every`, a one-shot); the render never calls `setState` (the one
+// init aside) — what must survive between renders without a redraw lives in
+// `state.inst`, a record mutated in place (the model, the mode's rank, the
+// search text); `setState` is called only from events (a pointer, a key). The
 // search Input draws the text typed, not `props.search`, so a publish between
 // keystrokes cannot reset it; the `search` post is debounced. The render is
 // wrapped in try/catch and draws a short red Text instead of throwing (spec
@@ -114,11 +120,7 @@ import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, 
 import type { OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
 
-export const FX_TICK_MS = 250
-export const FX_DONE_MS = 1000
 export const SEARCH_DEBOUNCE_MS = 150
-/** The finish pulse: the tint on the row's cells, alternating by frame (the ⭐ itself is the props' badge). The one colour the module lays on a row. */
-export const FX_BG = { done: '#3a3620', doneAlt: '#2d2a1c' } as const
 /** The toolbar's gap between its Buttons (the probe's). */
 export const TOOLBAR_GAP = 2
 /** The search field on the toolbar's line (from ONE_LINE_FROM): its width in cells, between these, after the toolbar's cells. */
@@ -133,8 +135,6 @@ export const DEMO_FG = '#d29922'
 const KEY_MESSAGES: Record<string, OfficeMessage> = {
   x: { t: 'close' }, f: { t: 'showDone' }, m: { t: 'mute' }, l: { t: 'lang' }, h: { t: 'help' }, d: { t: 'demo' }, s: { t: 'still' },
 }
-
-type Fx = { id: string; left: number }
 
 /** What survives between renders without a redraw: mutated in place, never replaced. */
 export type OfficeInst = {
@@ -161,17 +161,13 @@ export type OfficeInst = {
   cache: RoomCache
   drawerKey: string
   drawer: DrawerLine[]
-  fx: Fx[]
-  stop: (() => void) | null
-  /** The ⭐ stamps seen per agent (null before the first props): a new stamp starts a finish pulse. */
-  seen: Record<string, number> | null
   query: string
   propsSearch: string
   posted: string | null
   debounce: (() => void) | null
 }
 /** The local state: what a redraw reads (`setState` only from events). `hoverRoom` is the room whose title line is under the pointer. */
-export type OfficeState = { hoverRoom: string | null; focus: string | null; frame: number; inst: OfficeInst }
+export type OfficeState = { hoverRoom: string | null; focus: string | null; inst: OfficeInst }
 
 type Surface = ClientSurface<OfficeState>
 
@@ -183,9 +179,9 @@ function send(surface: Surface, m: OfficeMessage): void {
 // the instance
 // ---------------------------------------------------------------------------
 
-/** The decor from the local state: the hovered head, the keyboard focus, the agents whose finish pulse runs. */
+/** The decor from the local state: the hovered head and the keyboard focus. */
 function decorOf(s: OfficeState): OfficeDecor {
-  return { hoverRoom: s.hoverRoom, focus: s.focus, pulse: new Set(s.inst.fx.map(f => f.id)) }
+  return { hoverRoom: s.hoverRoom, focus: s.focus }
 }
 
 /** The model of the props under the decor (the table mode from the last one's token: the hysteresis), and the indexes the events read from it (the rows' lines, their order, the unpinned heads). */
@@ -213,46 +209,10 @@ function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
     props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null }, lastMode: null,
     rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
-    fx: [], stop: null, seen: null, query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
+    query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
   }
   setModel(inst, p, NO_DECOR)
   return inst
-}
-
-/** One frame of the fx clock: the pulses age by a tick, the clock stops with the last one, and the drawing is asked for. */
-function tick(surface: Surface): void {
-  const cur = surface.state
-  if (!cur) return
-  const inst = cur.inst
-  inst.fx = inst.fx.map(f => ({ ...f, left: f.left - FX_TICK_MS })).filter(f => f.left > 0)
-  if (inst.fx.length === 0 && inst.stop) {
-    inst.stop()
-    inst.stop = null
-  }
-  surface.setState({ ...cur, frame: cur.frame + 1 })
-}
-
-/** New pulses from the props' ⭐ stamps (the first props prime the stamps and start nothing); `still` records the stamps and drops every fx. */
-function detectFx(surface: Surface, inst: OfficeInst, p: OfficeProps): void {
-  const seen = inst.seen
-  const next: Record<string, number> = { ...seen }
-  const fresh: Fx[] = []
-  const still = p.prefs.still
-  for (const room of p.rooms) {
-    for (const a of room.agents) {
-      if (seen && !still && a.star && seen[a.id] !== a.star) fresh.push({ id: a.id, left: FX_DONE_MS })
-      next[a.id] = a.star
-    }
-  }
-  inst.seen = next
-  if (still) {
-    if (inst.fx.length) inst.fx = []
-    if (inst.stop) { inst.stop(); inst.stop = null }
-    return
-  }
-  if (fresh.length === 0) return
-  inst.fx = [...inst.fx.filter(f => !fresh.some(g => g.id === f.id)), ...fresh]
-  if (!inst.stop) inst.stop = surface.every(FX_TICK_MS, () => tick(surface))
 }
 
 /** The typed text, posted after SEARCH_DEBOUNCE_MS of quiet (a one-shot on the frame clock); Enter posts at once. */
@@ -364,14 +324,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     let s = surface.state
     if (s === undefined) {
       listen(surface)
-      s = { hoverRoom: null, focus: null, frame: 0, inst: newInst(props) }
+      s = { hoverRoom: null, focus: null, inst: newInst(props) }
       surface.setState(s)
     }
     const inst = s.inst
     inst.props = props
-
-    // --- the finish pulses from the ⭐ stamps (never on the first props; nothing under `still`): before the model, which flags them ---
-    detectFx(surface, inst, props)
 
     // --- the model: the geometry, the office's table mode (from the last rank: the hysteresis), the cards, the line map, the hits ---
     setModel(inst, props, decorOf(s))
@@ -402,7 +359,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     }
     // (the settings | drawer rows: chromeRows' overlayRows, from the memoised lines, the gap under the overlay included; the
     // search field by the props AND the text typed into it — a poll between keystrokes never takes the field away)
-    const helpH = helpRows(props.columns)
+    const note = props.oversized ?? ''
+    const helpH = helpRows(props.columns, note !== '')
     const overlayRows = props.helpOpen ? helpH + OVERLAY_GAP : props.drawer ? DRAWER_FRAME_ROWS + inst.drawer.length + OVERLAY_GAP : 0
     const search = searchShown(props, inst.query)
     inst.chrome = fixedRows(props, inst.query) + (props.footer ? 1 : 0) + overlayRows
@@ -522,8 +480,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       ] }))
     }
 
-    // --- footer (the props cap's `+N`, the scan notes): in the chrome, so it is seen without scrolling to the end; one dim line,
-    //     cut to the line by LINE_FIT with an ellipsis (the height-1 Box would chop it at the edge without one) ---
+    // --- footer (the props cap's `+N`, the scan error — not the too-long conversations: the settings' note): in the chrome, so it
+    //     is seen without scrolling to the end; one dim line, cut to the line by LINE_FIT with an ellipsis (the height-1 Box would
+    //     chop it at the edge without one) ---
     if (props.footer) kids.push(Box({ key: 'footer', flexDirection: row, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [cut(props.footer, Math.max(1, fit))] })] }))
 
     // --- settings popover | drawer: fixed heights, so the cards under them never move; pushed further down — at the window's
@@ -563,6 +522,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
           Button({ key: 'lang', ...hk('l'), plain: true, label: hb[2]!, onPress: () => send(surface, { t: 'lang' }) }),
         ]),
         Box({ flexDirection: row, columnGap: PAIRS_GAP, width: '100%', children: pairs.map(pair) }),
+        // THE TOO-LONG CONVERSATIONS NOTE (live check 6): one dim line under the shortcuts, cut to the popover's inner width by
+        // LINE_FIT, its spaces no-break (it never wraps out of its row: helpRows counts it)
+        ...(note ? [line([Text({ dimColor: true, children: [nb(cut(note, Math.max(1, fitLine(geo.inner))))] })], { key: 'oversized' })] : []),
       ] })
     } else if (props.drawer) {
       // the drawer as a card in the cards' style: every line in a height-1 Box, so the rows under it never move
@@ -620,9 +582,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       if (overlay && !atTop) kids.push(overlay)
       if (spacer > 0) kids.push(Box({ key: 'spacer', height: spacer }))
       if (overlay && atTop) kids.push(overlay)
-      const pulseBg = s.frame % 2 === 0 ? FX_BG.done : FX_BG.doneAlt
-      /** One value of the table: ONE Text that never wraps (no plain space in it; an empty value a no-break space: the row stays one line tall), the row's tint on it while its pulse runs. */
-      const cell = (text: string, style: Record<string, unknown>, r: RowView) => Text({ wrap: 'truncate', ...style, ...(r.pulse ? { backgroundColor: pulseBg } : {}), children: [text || NBSP] })
+      /** One value of the table: ONE Text that never wraps (no plain space in it; an empty value a no-break space: the row stays one line tall), on no background. */
+      const cell = (text: string, style: Record<string, unknown>) => Text({ wrap: 'truncate', ...style, children: [text || NBSP] })
       /**
        * One column of the table: the window's rows one Text each, aligned to the reading edge, the padding cell on the column's
        * reading side (the probe's cell padding, once per column); from WIDE_FROM its minWidth floor (the office-wide widest value by
@@ -630,7 +591,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
        */
       const column = (name: keyof Floors | 'task', rows: readonly RowView[], pick: (r: RowView) => string, style: (r: RowView) => Record<string, unknown>, grow: boolean) => Box({
         flexDirection: 'column', alignItems: edge, flexShrink: 0, flexGrow: grow ? 1 : 0, ...padEdge, ...(floors && name !== 'task' ? { minWidth: floors[name] } : {}),
-        children: rows.map(r => cell(pick(r), style(r), r)),
+        children: rows.map(r => cell(pick(r), style(r))),
       })
       /**
        * The title line: the 📌 only when there is one to draw (bright pinned, dim under the pointer — then the title shifts by the
@@ -700,11 +661,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       }
       drawn.forEach((room, i) => kids.push(fragmentFirst && i === 0 ? fragment(room) : card(room)))
     }
-    // THE READING COLUMN: the pane's width up to 99 cells; from CENTRE_AT a frozen column of geo.W cells, centred by a left margin
-    // (an explicit margin, not alignItems: the pointer's x maps to the column by the same number — inst.margin)
-    return geo.centred
-      ? Box({ flexDirection: 'column', width: geo.W, flexShrink: 0, marginLeft: geo.margin, children: kids })
-      : Box({ flexDirection: 'column', children: kids })
+    // THE READING COLUMN: geo.W cells — the pane less a cell at each edge (PANE_GUTTER: no card border ever touches the pane's
+    // edge, live check 6), frozen at CENTRE_AT — centred by a left margin (an explicit margin, not alignItems: the pointer's x maps
+    // to the column by the same number — inst.margin)
+    return Box({ flexDirection: 'column', width: geo.W, flexShrink: 0, marginLeft: geo.margin, children: kids })
   } catch (err) {
     // nothing of the office is drawn now: the pointer must not hit-test the window of the last good render
     const st = surface.state

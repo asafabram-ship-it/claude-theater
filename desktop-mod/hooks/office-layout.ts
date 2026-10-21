@@ -14,9 +14,12 @@
 // conservative estimate of what fits (`fitCells`: the desktop draws letters
 // wider than a cell — the probe's round 6 fit four columns at 51 columns).
 //
-// THE WIDTH (probe rounds 8-9): ONE reading column, `geometry`: the pane up to
-// 99 cells, frozen at CENTRE_AT and centred from 100; the card's padding 1 →
-// 2 from WIDE_FROM. The frame never changes shape with the width — widening
+// THE WIDTH (probe rounds 8-9): ONE reading column, `geometry`: the pane less
+// PANE_GUTTER cells — a cell at each edge, so no card border ever touches the
+// pane's edge (live check 6: the Client lays out a hair wider than the visible
+// pane, and the cards' right border was clipped) — frozen at CENTRE_AT cells
+// and centred; every width threshold below is measured on that column. The
+// card's padding 1 → 2 from WIDE_FROM. The frame never changes shape with the width — widening
 // or narrowing changes words and columns, never a line's position. The TABLE
 // MODE is decided ONCE per render for the whole office from the widest values
 // across all its rooms (`officeWidest`), with HYSTERESIS cells kept by the
@@ -37,8 +40,8 @@
 // `wrap`), so the y of every line is known here, before anything is drawn:
 // the pointer's y maps to a line, a row's hit is the column's whole width,
 // the title line keeps the pin zone at the reading edge and the counts zone
-// at the other edge. The decor (the hovered head, the keyboard focus, the
-// finish pulse) is the module's local state handed in as data, so the model
+// at the other edge. The decor (the hovered head, the keyboard focus) is the
+// module's local state handed in as data, so the model
 // stays a pure function of (props, decor, the last mode's rank).
 //
 // The strings are the probe's (`${emoji} ${name}`, `🤔` then `חושב`, `▸ עוד 2
@@ -64,14 +67,20 @@ export const TASK_UNITS = 2 * TASK_MAX
 export const NAME_MIN = 8
 /** The names' floor once the model column is gone (the probe: the narrowest panes only). */
 export const NAME_FLOOR = 3
-/** The model's version rides its family word from this many columns (`Opus 5.5`); under it the family alone (`Opus`). */
+/** The model's version rides its family word from a reading column this many cells wide (`Opus 5.5`); under it the family alone (`Opus`). */
 export const MODEL_FULL_FROM = 60
-/** The toolbar and the search share one line from this many columns (the chrome 6 rows → 4 while the search is drawn). */
+/** The toolbar and the search share one line from a reading column this many cells wide (the chrome 6 rows → 4 while the search is drawn). */
 export const ONE_LINE_FROM = 64
-/** From this many columns: the card's padding is 2, the columns align across the cards (floors), the settings' shortcuts in two pairs, the full meter. */
+/** From a reading column this many cells wide: the card's padding is 2, the columns align across the cards (floors), the settings' shortcuts in two pairs, the full meter. */
 export const WIDE_FROM = 80
-/** From this many columns the reading column is frozen at this width and centred. */
+/** The reading column is frozen at this many cells (the dim task column from there). */
 export const CENTRE_AT = 100
+/**
+ * The cells of the pane the reading column leaves free: one at each edge (the odd cell of a centred column on the right), so
+ * no card border ever touches the pane's edge — live check 6: the Client lays out a hair wider than the visible pane (a
+ * rounding, or the scrollbar), and the cards' right border was clipped there.
+ */
+export const PANE_GUTTER = 2
 /** The title keeps at least this many fit cells before the counts shrink. */
 export const TITLE_MIN = 16
 /** The cells a richer table mode must have to spare before it is regained (none to be dropped). */
@@ -329,21 +338,20 @@ export function markOf(a: Pick<OfficeAgent, 'status' | 'star' | 'failed' | 'long
 // ---------------------------------------------------------------------------
 
 /**
- * The reading column at `columns`: its width `W` (the pane, frozen at CENTRE_AT from 100 and centred by `margin` cells on
- * the left), the card's padding `px` (2 from WIDE_FROM), the frame (`2 + 2 px`: a border and the padding on each side),
- * the card's inner width, the table's `budget` (the inner width by FIT), the chrome line's `L` (by LINE_FIT) and the
- * structure flags: `oneLine` (toolbar + search on one line), `full` (the model's version), `wide` (floors, two settings
- * pairs, the full meter), `centred` (the task column, the frozen column).
+ * The reading column at `columns`: its width `W` (the pane less PANE_GUTTER, frozen at CENTRE_AT, centred by `margin` cells
+ * on the left: a cell at least on each side), the card's padding `px` (2 from WIDE_FROM), the frame (`2 + 2 px`: a border
+ * and the padding on each side), the card's inner width, the table's `budget` (the inner width by FIT), the chrome line's
+ * `L` (by LINE_FIT) and the structure flags, every one measured on `W`: `oneLine` (toolbar + search on one line), `full`
+ * (the model's version), `wide` (floors, two settings pairs, the full meter), `centred` (the frozen column: the task column).
  */
 export type Geo = { columns: number; W: number; px: number; frame: number; inner: number; budget: number; L: number; oneLine: boolean; full: boolean; wide: boolean; centred: boolean; margin: number }
 
 export function geometry(columns: number): Geo {
-  const W = Math.min(columns, CENTRE_AT)
+  const W = Math.max(0, Math.min(columns - PANE_GUTTER, CENTRE_AT))
   const px = W >= WIDE_FROM ? 2 : 1
   const frame = 2 + 2 * px
   const inner = W - frame
-  const centred = columns >= CENTRE_AT
-  return { columns, W, px, frame, inner, budget: fitCells(inner), L: fitLine(W), oneLine: W >= ONE_LINE_FROM, full: W >= MODEL_FULL_FROM, wide: W >= WIDE_FROM, centred, margin: centred ? Math.floor((columns - W) / 2) : 0 }
+  return { columns, W, px, frame, inner, budget: fitCells(inner), L: fitLine(W), oneLine: W >= ONE_LINE_FROM, full: W >= MODEL_FULL_FROM, wide: W >= WIDE_FROM, centred: W >= CENTRE_AT, margin: Math.max(0, Math.floor((columns - W) / 2)) }
 }
 
 /** The pin's zone on the title line, from the reading edge — drawn or not: the border, the padding, the title's own padding, the glyph and its gap. */
@@ -545,8 +553,6 @@ export type RowView = {
   /** ❌: the who keeps a regular weight. */
   failed: boolean
   focus: boolean
-  /** A `done` fx is running on it: the module tints the row's cells by frame parity. */
-  pulse: boolean
 }
 
 export type RoomView = {
@@ -572,11 +578,12 @@ export type OfficeModel = { rooms: RoomView[]; lines: Line[]; hits: Hit[]; geo: 
 /**
  * What the surface module lays on the model from its local state, by id:
  *   hoverRoom the room whose title line is under the pointer: a dim 📌 at the pin of an unpinned room (a pinned one draws its 📌 anyway);
- *   focus     the keyboard focus: a small marker beside the status mark;
- *   pulse     the agents whose `done` fx runs: their rows tinted by frame parity.
+ *   focus     the keyboard focus: a small marker beside the status mark.
+ * (No finish pulse: the ⭐ on the status column is the whole finish — live check 6, where the row's tint flashed a
+ * near-black band on the light theme.)
  */
-export type OfficeDecor = { hoverRoom: string | null; focus: string | null; pulse: ReadonlySet<string> }
-export const NO_DECOR: OfficeDecor = { hoverRoom: null, focus: null, pulse: new Set() }
+export type OfficeDecor = { hoverRoom: string | null; focus: string | null }
+export const NO_DECOR: OfficeDecor = { hoverRoom: null, focus: null }
 
 /** The lines a room's card takes: CARD_LINES around its rows, MORE_LINES when it draws the more / hide line. */
 export function cardLines(agents: number, more: boolean): number {
@@ -602,7 +609,7 @@ type RoomBase = {
 /**
  * THE ROOM MEMO: a surface module keeps one across its renders (office-client.tsx), so a redraw rebuilds the base of a room
  * only when that room's props, the width or the mode changed — a poll that changes one room leaves the others' texts as they
- * were, and a decor change (a hover, the focus, a pulse) measures no text at all; the office-wide widest values are kept
+ * were, and a decor change (a hover, the focus) measures no text at all; the office-wide widest values are kept
  * the same way (`office`), measured again only when a room changed. `builds` counts the bases built, `measures` the
  * office-wide measurements (the tests' guards).
  */
@@ -642,8 +649,8 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
  * padding line, the title (pin · title · counts), the blank line, one line per agent, [a blank line, the more / hide line],
  * a padding line, the bottom border, the gap. A row's hit is the column's whole width; so is the more line's; the title line
  * keeps pinZone cells at the reading edge for the pin and the counts' zone (countsZone) at the other edge for the room's ✅
- * toggle (when the room has finished agents). The decor changes only the pin of the head it hovers, the focus marker and
- * the pulse flags — never a line, never a hit. The table mode is chosen once for the office (chooseMode) from `last`, the
+ * toggle (when the room has finished agents). The decor changes only the pin of the head it hovers and the focus marker —
+ * never a line, never a hit. The table mode is chosen once for the office (chooseMode) from `last`, the
  * token the caller kept from its previous model (the hysteresis: its rank counts only while the widest values are the ones
  * it was chosen from — ModeToken; null on the first). With a `cache` (THE ROOM MEMO), a room whose props, width and mode did
  * not change is not measured again, nor is the office when no room changed.
@@ -697,7 +704,7 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
       const focus = decor.focus === r.id
       // the mark at the reading edge, the marker on its inner side when focused (a Text with no Hebrew is laid left to right)
       const status = !focus ? r.mark : rtl ? `${FOCUS_MARK.rtl}${r.mark}` : `${r.mark}${FOCUS_MARK.ltr}`
-      rows.push({ id: r.id, y, status, color: r.color, who: r.who, model: r.model, actEmoji: r.actEmoji, actWord: r.actWord, task: r.task, bold: r.bold, dim: r.dim, failed: r.failed, focus, pulse: decor.pulse.has(r.id) })
+      rows.push({ id: r.id, y, status, color: r.color, who: r.who, model: r.model, actEmoji: r.actEmoji, actWord: r.actWord, task: r.task, bold: r.bold, dim: r.dim, failed: r.failed, focus })
       line('row', room.id, r.id)
       hits.push({ kind: 'agent', id: r.id, x: 0, y, w: geo.W, h: 1 })
     }

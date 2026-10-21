@@ -83,6 +83,23 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   expect(hebrewRuleOk(I18N.en.switchTo)).toBe(true)
 })
 
+test('THE TOO-LONG CONVERSATIONS NOTE (live check 6: `דולגו 1 תמלילים גדולים מדי` was unclear and ungrammatical): one conversation, or n, too long to show — the Hebrew opening on a Hebrew letter (a leading count would be read last), no Latin, singular and plural agreeing', () => {
+  const he = I18N.he.oversizedN
+  const en = I18N.en.oversizedN
+  expect(he(1)).toBe('שיחה אחת ארוכה מדי ולא מוצגת')
+  expect(he(2)).toBe('יש 2 שיחות ארוכות מדי ולא מוצגות')
+  expect(he(400)).toBe('יש 400 שיחות ארוכות מדי ולא מוצגות')
+  expect(en(1)).toBe('One conversation is too long to show')
+  expect(en(2)).toBe('2 conversations are too long to show')
+  expect(en(400)).toBe('400 conversations are too long to show')
+  for (const n of [1, 2, 3, 11, 400]) {
+    expect(he(n), `${n}`).toMatch(/^\p{Script=Hebrew}/u)
+    expect(he(n), `${n}`).not.toMatch(/\p{Script=Latin}/u)
+    expect(hebrewRuleOk(he(n)), `${n}`).toBe(true)
+    expect(he(n), `${n}`).not.toMatch(/תמליל|דולגו/)
+  }
+})
+
 test('modelLabel: short human names for the known families', () => {
   expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')
   expect(modelLabel('claude-sonnet-5-5')).toBe('Sonnet 5.5')

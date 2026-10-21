@@ -33,8 +33,8 @@
 //            without building a cell), so the engine scrolls it natively
 //            and hands the window back as e.props.scroll (offset → props.offset,
 //            bodyRows → props.rows). The module draws the chrome and the room
-//            cards with their agent rows (office-layout.ts), the head hover, the
-//            keyboard focus marker and the finish pulse, and POSTS
+//            cards with their agent rows (office-layout.ts), the head hover and
+//            the keyboard focus marker (the finish is the props' ⭐: no tint), and POSTS
 //            what the person did (open / pin / roomDone / the toolbar / search —
 //            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
 //            applies each post as the text cards' press of the same name does
@@ -59,7 +59,9 @@
 //            within JUST_FINISHED_MS, ❌ failed/killed (from the live map).
 //   nav      [k] previous · [j] next · [o] open · [x] close — the arrow-key walk
 //   empty    office (with "▶ watch a demo") / no-active / none-in-window / no-match
-//   footer   oversized transcripts, scanError, dim
+//   footer   the too-long conversations (oversizedN), scanError, dim (the desktop
+//            office: scanError alone — the too-long conversations are the
+//            settings popover's note, office-props.ts `oversized`)
 //
 // Rules:
 // - A render hook never writes state; presses/inputs write with update($, ...)
@@ -771,11 +773,10 @@ export function registerUi(on: On): void {
     //     register.tsx; /theater clears it): then the desktop falls through to the text cards below.
     if (e.surface === 'desktop' && 'Client' in els && !DESKTOP.clientFailed) {
       const { Client } = els
-      const footerBits: string[] = []
-      if (office.oversized > 0) footerBits.push(L.oversizedN(office.oversized))
-      if (scanError !== null && scanError !== '') footerBits.push(scanError)
+      // the footer: the scan error alone (the too-long conversations ride the settings popover: buildOfficeProps `oversized`,
+      // live check 6 — `דולגו 1 תמלילים גדולים מדי` on the main screen was unclear)
       const props = buildOfficeProps({
-        payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: footerBits.join(' · '),
+        payload, prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: scanError ?? '',
         columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0,
       })
       const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)

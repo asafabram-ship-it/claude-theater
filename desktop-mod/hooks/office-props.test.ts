@@ -168,7 +168,7 @@ test('THE PROPS CAP: 600 agents (show finished on) stay under the props bound �
     id: `a${String(i).padStart(16, '0')}`, session_full: `sess-${String(i % 12).padStart(4, '0')}-ffff-eeee-dddd-cccccccccccc`, session: `s${i % 12}`,
     ...(i % 3 === 0 ? { status: 'done' as const, end_ms: T0 - 1000 } : {}),
   }))
-  const p = buildOfficeProps(input(many, { prefs: shown, footer: '2 transcripts over 4 MiB skipped' }))
+  const p = buildOfficeProps(input(many, { prefs: shown, footer: 'scan: env.get refused' }))
   const size = JSON.stringify(p).length
   expect(size).toBeLessThan(PROPS_MAX_CHARS)
   expect(size).toBeLessThanOrEqual(PROPS_BUDGET)
@@ -177,7 +177,7 @@ test('THE PROPS CAP: 600 agents (show finished on) stay under the props bound �
   // 400 are working: the finished are the ones left out; what is kept keeps the office's order
   const order = officeView(many, '', 'he', true, {}, []).order
   expect(carried).toEqual(order.filter(a => a.status !== 'done').slice(0, MAX_PROPS_AGENTS).map(a => a.id))
-  expect(p.footer).toBe(`${I18N.he.moreAgentsN(400)} · 2 transcripts over 4 MiB skipped`)
+  expect(p.footer).toBe(`${I18N.he.moreAgentsN(400)} · scan: env.get refused`)
   expect(p.footer.startsWith('עוד 400 ')).toBe(true)   // (the count inside the Hebrew: THE HEBREW RULE; `+400 more agents` in English)
   expect(buildOfficeProps(input(many, { prefs: { ...shown, lang: 'en' } })).footer.startsWith('+400 more agents')).toBe(true)
   expect(p.counts).toEqual({ run: 400, idle: 0, done: 200 })
@@ -211,6 +211,19 @@ test('THE PROPS BUDGET: an office that is heavy per agent (a room each, uncapped
   const q = buildOfficeProps(input(heavy, { prefs: shown }))
   expect(JSON.stringify(q).length).toBeLessThanOrEqual(PROPS_BUDGET)
   expect(q.footer).toBe(I18N.he.moreAgentsN(300 - q.rooms.flatMap(r => r.agents).length))
+})
+
+test('THE TOO-LONG CONVERSATIONS NOTE (live check 6): the oversized count of the payload rides the props as the note of the settings popover (i18n oversizedN in the language), never the footer; none while the count is 0 or the demo runs (its own office)', () => {
+  const one = [agent({ id: 'a1' })]
+  const p = buildOfficeProps(input(one, { payload: { ...EMPTY_PAYLOAD, agents: one, stars: {}, oversized: 1 }, footer: 'scan: env.get refused' }))
+  expect(p.oversized).toBe('שיחה אחת ארוכה מדי ולא מוצגת')
+  expect(p.oversized).toBe(I18N.he.oversizedN(1))
+  expect(p.footer).toBe('scan: env.get refused')
+  const en = buildOfficeProps(input(one, { payload: { ...EMPTY_PAYLOAD, agents: one, stars: {}, oversized: 3 }, prefs: { ...DEFAULT_PREFS, lang: 'en' } }))
+  expect(en.oversized).toBe('3 conversations are too long to show')
+  expect(en.footer).toBe('')
+  expect(buildOfficeProps(input(one)).oversized).toBe('')
+  expect(buildOfficeProps(input(one, { payload: { ...EMPTY_PAYLOAD, agents: one, stars: {}, oversized: 2 }, view: { ...DEFAULT_VIEW, demo: true } })).oversized).toBe('')
 })
 
 test('assertJson throws on undefined anywhere', () => {

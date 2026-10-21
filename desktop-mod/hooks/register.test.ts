@@ -18,7 +18,7 @@ import type { Agent } from './model'
 import { PERSONA_EMOJI, POLL_MS, REDRAW_LATCH_MS } from './model'
 import { SEARCH_MAX, chromeRows } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
-import { officeModel, type Hit } from './office-layout'
+import { geometry, officeModel, type Hit } from './office-layout'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { T0, beneath } from './test-kit'
 
@@ -69,7 +69,7 @@ async function click(ui: Ui, kind: Hit['kind'], id: string): Promise<void> {
   const p = await propsOf(ui)
   const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit).toBeDefined()
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
 }
 
 /** The writes an act made, by key ($.state, then $.store): only the non-zero ones. */

@@ -8,20 +8,22 @@
 // person sees change. A failing test here is a bug in the owning file, never
 // a test to loosen.
 //
-// THE THREE WIDTHS: every test runs at 34, 51 and 120 columns (`suite`), the
-// probe's narrow, reference and wide panes (rounds 8-9) — the toolbar in its
-// icon-only form at 34 and in words from 51, the settings' Buttons in words at
-// every one of the three (the probe's L) but icons while the demo runs at 34; the search on a
-// line of its own under ONE_LINE_FROM and beside the toolbar at 120; the
-// reading column frozen at 100 cells and centred by a margin at 120, which the
-// pointer's x must count; the table mode poorer at 34 (the activity's emoji
-// alone) and richer at 120 (the model's version, the dim task column); the
-// room counts shrunk at 34 (the ✅ dropped before the title is cut). WIDTHS
+// THE THREE WIDTHS: every test runs at 36, 53 and 120 columns (`suite`): the
+// probe's narrow, reference and wide reading columns (rounds 8-9: 34, 51 and
+// 100 cells) in their panes — the column a cell in from each edge (live check
+// 6: office-layout.ts PANE_GUTTER), so the pointer's x counts a margin of 1 —
+// the toolbar in its icon-only form at 36 and in words from 53, the settings'
+// Buttons in words at every one of the three (the probe's L) but icons while
+// the demo runs at 36; the search on a line of its own under ONE_LINE_FROM and
+// beside the toolbar at 120; the reading column frozen at 100 cells and
+// centred by a margin of 10 at 120; the table mode poorer at 36 (the
+// activity's emoji alone) and richer at 120 (the model's version, the dim task
+// column); the room counts shrunk at 36 (the ✅ dropped before the title is cut). WIDTHS
 // says what each width draws; the first test of each width pins it, and every
 // other test reads its labels and rows from there, so a control is proved at
 // the width's own forms, never at the reference width's.
 //
-// The mechanics (the window, the fx clock, the write budget, a bad post) are
+// The mechanics (the window, the write budget, a bad post) are
 // office-client.mounted.test.ts's and register.test.ts's; the fake-surface
 // cases of office-client.test.ts cover the module alone. This file reads the
 // effects: the pref or view flipped and mirrored, the cards and rows redrawn,
@@ -84,12 +86,12 @@ const HIDE_LINE = nb(`▸ ${HIDE_LABEL}`)
 /**
  * WHAT EACH WIDTH DRAWS (office-layout.ts geometry, office-chrome.ts; the probe's rounds 8-9), pinned by the first test of
  * each width and read by the rest:
- *   column / margin  the reading column's cells and its centring margin (CENTRE_AT: the pane up to 99, a frozen 100 centred
- *                    by 10 at 120 — the pointer's x counts the margin);
+ *   column / margin  the reading column's cells and its centring margin (the pane less a cell at each edge, PANE_GUTTER; a
+ *                    frozen 100 centred by 10 at 120 — the pointer's x counts the margin);
  *   toolbar / settings  the three labels of each, in Hebrew and in English: their words when the set fits the line by
- *                    LINE_FIT (office-chrome.ts labelsFit, the whole column: the probe's L), else the icons alone — 34 columns
- *                    hold the settings' set (26 ≤ 28) but not the toolbar's, 51 and 100 both; `exitDemo` the demo Button while
- *                    the demo runs (`יציאה ✕ 🎬`, which at 34 no longer fits beside the other two: the icons alone, `✕ 🎬`);
+ *                    LINE_FIT (office-chrome.ts labelsFit, the whole column: the probe's L), else the icons alone — a 34-cell
+ *                    column holds the settings' set (26 ≤ 28) but not the toolbar's, 51 and 100 both; `exitDemo` the demo Button
+ *                    while the demo runs (`יציאה ✕ 🎬`, which at 34 cells no longer fits beside the other two: the icons alone, `✕ 🎬`);
  *   hotkeys          whether the Buttons carry their letters as hotkeys (from COMPACT_BELOW: the desktop draws a chip per hotkey);
  *   searchRows       the chrome's rows while the search field is drawn: 6 with the field on its own line, 4 beside the
  *                    toolbar from ONE_LINE_FROM;
@@ -126,9 +128,9 @@ const DEMO_ROOMS = ['demo-session-frontend-1111', DEMO_S2]
 /** The research room's finished, most recent first (pre-check 6): it draws the RECENT_DONE first while it hides its finished, and counts the rest on its more line. */
 const DEMO_DONE = ['demo-writer-ff', 'demo-survey-ii', 'demo-bench-jj', 'demo-dedupe-kk', 'demo-label-ll']
 const DEMO_HELD = DEMO_DONE.slice(RECENT_DONE)
-const WIDTHS: Record<34 | 51 | 120, Width> = {
-  34: { column: 34, margin: 0, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
-  51: { column: 51, margin: 0, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
+const WIDTHS: Record<36 | 53 | 120, Width> = {
+  36: { column: 34, margin: 1, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: '✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', drawerType: false },
+  53: { column: 51, margin: 1, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 15, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
   120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', frozen: 'תנועה 🖼', demoNote: DEMO_NOTE, hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', drawerType: true },
 }
 type Columns = keyof typeof WIDTHS
@@ -389,19 +391,21 @@ function suite(COLUMNS: Columns): void {
     for (const card of await cardsOf(ui)) for (const row of rowsOf(card)) expect(row, row.join('|')).toHaveLength(cells)
     const a1 = rowsOf(await cardOf(ui, p0, SA)).find(r => r[1] === whoOf(p0, 'a1'))
     expect(a1).toEqual(a1RowIn(p0, m.mode, 'קורא'))
-    // the room counts: A's ✅ dropped at 34 (the title keeps TITLE_MIN cells), B's 🟢 alone (no finished)
+    // the room counts: A's ✅ dropped at 36 (the title keeps TITLE_MIN cells), B's 🟢 alone (no finished)
     expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.countsA))
     expect((await headOf(ui, p0, SB)).counts).toBe(nb('🟢1'))
     expect((await headOf(ui, p0, SA)).title).toBe(nb(TITLE_A))
     await rowsOk(ui, p0)
     // the pointer counts the margin: a click where B's pin zone lies in the column's cells, without the margin, pins nothing
-    // (at 120 it lands in the title's field; at 34 and 51 the margin is 0 and the same click pins — so it is tried only with a margin)
-    if (W.margin > 0) {
+    // (at 120 it lands in the title's field; at 36 and 53 the margin of 1 leaves the same click in the pin zone — so it is tried
+    // only with a margin wider than half the zone); a click in the left margin is no row at every width
+    if (W.margin > PIN_ZONE / 2) {
       const pin = hitOf(p0, 'pin', SB)
       await deadRow(ui, chromeRows(p0) + pin.y, 'the pin zone without the margin', pin.x + Math.floor(pin.w / 2))
       expect((captured.store.prefs as Prefs).pins).toEqual([])
-      await deadRow(ui, chromeRows(p0) + hitOf(p0, 'agent', 'a1').y, 'a row\'s line, in the left margin', W.margin - 1)
     }
+    expect(W.margin).toBeGreaterThanOrEqual(1)
+    await deadRow(ui, chromeRows(p0) + hitOf(p0, 'agent', 'a1').y, 'a row\'s line, in the left margin', W.margin - 1)
     // the settings' labels, hotkeys and rows
     expect(helpRows(COLUMNS)).toBe(W.helpRows)
     await ui.press({ key: 'help' })
@@ -658,7 +662,7 @@ function suite(COLUMNS: Columns): void {
     expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
     expect(roomOf(p2, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'he'))
     // THE HYSTERESIS is about the width (office-layout.ts ModeToken): the names moved the widest values again, so the Hebrew
-    // mode is back at once at every width — at 34 the model column with it (the English rank held it dropped before this fix:
+    // mode is back at once at every width — at 36 the model column with it (the English rank held it dropped before this fix:
     // one cell to spare), the rows four Texts as before the round trip
     const m2 = officeModel(p2, NO_DECOR, undefined, m1.token)
     expect(m2.mode).toEqual(m0.mode)
@@ -728,7 +732,7 @@ function suite(COLUMNS: Columns): void {
     const p0 = await officeProps(ui)
     const counts = hitOf(p0, 'roomDone', SA)
     expect(counts.x).toBe(0)   // RTL: the counts zone at the column's left edge
-    expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.countsA))   // (the ✅ dropped at 34 — the counts stay the room's toggle)
+    expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.countsA))   // (the ✅ dropped at 36 — the counts stay the room's toggle)
     expect(officeModel(p0).hits.some(h => h.kind === 'roomDone' && h.id === SB)).toBe(false)   // room B has no finished: no ✅ count, nothing to click
     await click(ui, 'roomDone', SA)
     expect(captured.store.roomDone).toEqual({ [SA]: true })
@@ -796,7 +800,7 @@ function suite(COLUMNS: Columns): void {
     expect(drawer).toMatchObject({ type: 'Box', props: { key: 'drawer', borderStyle: 'round', borderColor: CARD_BORDER, paddingY: 1, height: overlayRows(p1) - OVERLAY_GAP, marginBottom: OVERLAY_GAP } })
     expect(textOf(drawer!)).toMatch(/משימה/)
     expect(textOf(drawer!)).toContain('Task of a1.')
-    // THE STATUS LINE (round 8): the word, the clock, the type — cut to the card's inner width at this width (the type past the cut at 34)
+    // THE STATUS LINE (round 8): the word, the clock, the type — cut to the card's inner width at this width (the type past the cut at 36)
     const status = drawerStatus(p1.drawer!, p1.labels, drawerInner(COLUMNS) - 3)
     expect(status).toMatch(/^עובד · זמן \d+ דק׳/)
     expect(status.endsWith('· Explore')).toBe(W.drawerType)
@@ -1149,7 +1153,7 @@ function suite(COLUMNS: Columns): void {
     const m0 = officeModel(p0)
     const roomA = m0.rooms[0]!
     const roomB = m0.rooms[1]!
-    expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.tallA))   // (31 working; the ✅ dropped at 34)
+    expect((await headOf(ui, p0, SA)).counts).toBe(nb(W.tallA))   // (31 working; the ✅ dropped at 36)
     // the window from A's last rows: A's more line, its frame, and B whole
     const FROM = roomA.moreAt - 9
     await scrollTo(ui, fixedRows(p0) + FROM, BODY)
@@ -1312,4 +1316,4 @@ function suite(COLUMNS: Columns): void {
   })
 }
 
-for (const columns of [34, 51, 120] as const) suite(columns)
+for (const columns of [36, 53, 120] as const) suite(columns)

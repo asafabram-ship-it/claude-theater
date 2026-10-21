@@ -79,6 +79,11 @@ export type Strings = {
   dMinutes: string
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
+  /**
+   * THE TOO-LONG CONVERSATIONS NOTE (live check 6: `דולגו 1 תמלילים גדולים מדי` was unclear and ungrammatical): the
+   * transcripts the scan skipped as too long to read — the desktop office's settings popover, the text cards' footer. The
+   * Hebrew opens on a Hebrew letter (a leading count would be read last) and agrees in number.
+   */
   oversizedN: (n: number) => string
   /** The desktop footer's count of the agents over the props cap (office-props.ts MAX_PROPS_AGENTS): `+N …` in English, the count inside the Hebrew. */
   moreAgentsN: (n: number) => string
@@ -119,7 +124,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     dAction: 'Activity', dTask: 'Task', dResult: 'Result', dModel: 'Model',
     taskUnavailable: 'working — details unavailable',
     actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
-    oversizedN: n => `${n} transcript${n === 1 ? '' : 's'} over 4 MiB skipped`,
+    oversizedN: n => (n === 1 ? 'One conversation is too long to show' : `${n} conversations are too long to show`),
     moreAgentsN: n => `+${n} more agent${n === 1 ? '' : 's'} not shown`,
     moreDoneN: n => `${n} more finished`, hideDone: 'Hide finished',
     roomTitle: 'Conversation', details: 'Details', keysHint: 'focus the pane (ctrl+x tab) for the hotkeys',
@@ -153,7 +158,7 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
     actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי מחובר',
-    oversizedN: n => `דולגו ${n} תמלילים גדולים מדי`,
+    oversizedN: n => (n === 1 ? 'שיחה אחת ארוכה מדי ולא מוצגת' : `יש ${n} שיחות ארוכות מדי ולא מוצגות`),
     moreAgentsN: n => `עוד ${n} סוכנים לא מוצגים`,
     moreDoneN: n => `עוד ${n} שסיימו`, hideDone: 'הסתר שסיימו',
     roomTitle: 'שיחה', details: 'פרטים', keysHint: 'למקשי הקיצור מקדו את החלונית (ctrl+x tab)',

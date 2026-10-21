@@ -62,9 +62,13 @@ export function helpPairs(wide: boolean): ReadonlyArray<ReadonlyArray<readonly [
   while (second.length < HELP_PAIR_ROWS) second.push([' ', ' '] as const)
   return [HELP.slice(0, HELP_PAIR_ROWS), second]
 }
-/** The settings popover's height at `columns`: the border, the padding line above and below (the cards' paddingY), the title row, the Buttons row, the shortcut rows (one pair's from WIDE_FROM). */
-export function helpRows(columns: number): number {
-  return 2 + 2 + 1 + HELP_BUTTON_ROWS + helpPairs(geometry(columns).wide)[0]!.length
+/**
+ * The settings popover's height at `columns`: the border, the padding line above and below (the cards' paddingY), the title
+ * row, the Buttons row, the shortcut rows (one pair's from WIDE_FROM) — and, with `note`, THE TOO-LONG CONVERSATIONS NOTE's
+ * one line under them (props.oversized, live check 6).
+ */
+export function helpRows(columns: number, note = false): number {
+  return 2 + 2 + 1 + HELP_BUTTON_ROWS + helpPairs(geometry(columns).wide)[0]!.length + (note ? 1 : 0)
 }
 /** The blank line under the settings popover | the drawer, before the first card (the cards' own gap). */
 export const OVERLAY_GAP = 1
@@ -339,7 +343,7 @@ export function chromeRows(p: OfficeProps): number {
 
 /** The settings popover's or the drawer's rows, their gap included (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
 export function overlayRows(p: OfficeProps): number {
-  if (p.helpOpen) return helpRows(p.columns) + OVERLAY_GAP
+  if (p.helpOpen) return helpRows(p.columns, !!p.oversized) + OVERLAY_GAP
   if (p.drawer) return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), drawerLimits(p.columns)).length + OVERLAY_GAP
   return 0
 }

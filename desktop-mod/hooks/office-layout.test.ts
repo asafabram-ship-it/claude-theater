@@ -8,7 +8,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { hebrewRuleOk } from './i18n'
 import { REFUSED_RE, cleanAgentText } from './office-chrome'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, countsZone, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -26,7 +26,7 @@ function props(over: Partial<OfficeProps> = {}): OfficeProps {
     counts: { run: 2, idle: 0, done: 0 }, prefs: { showDone: false, muted: false, still: false },
     search: '', selected: null, helpOpen: false, demo: false,
     rooms: [room()],
-    drawer: null, footer: '', usage: null, empty: null, labels: {}, ...over,
+    drawer: null, footer: '', oversized: '', usage: null, empty: null, labels: {}, ...over,
   }
 }
 
@@ -55,9 +55,12 @@ function probeRooms(): OfficeRoom[] {
   ]
 }
 
-function decor(over: Partial<{ hoverRoom: string | null; focus: string | null; pulse: string[] }> = {}): OfficeDecor {
-  return { hoverRoom: over.hoverRoom ?? null, focus: over.focus ?? null, pulse: new Set(over.pulse ?? []) }
+function decor(over: Partial<{ hoverRoom: string | null; focus: string | null }> = {}): OfficeDecor {
+  return { hoverRoom: over.hoverRoom ?? null, focus: over.focus ?? null }
 }
+
+/** The geometry of a reading column `W` cells wide: the pane `W + PANE_GUTTER` (live check 6: a cell left free at each edge). The probe's widths are the column's. */
+const atColumn = (W: number) => geometry(W + PANE_GUTTER)
 
 const LONE_SURROGATE = /\p{Cs}/u
 const kinds = (lines: readonly Line[]) => lines.map(l => l.kind)
@@ -317,36 +320,39 @@ test('nb (live check 5, pre-check 6): no line-break opportunity left among the s
   }
 })
 
-test('geometry (probe rounds 8-9): ONE reading column — the pane up to 99 cells, frozen at CENTRE_AT and centred by a left margin from 100; the card\'s padding 2 from WIDE_FROM (the inner width dips by a cell there); the structure flags at their thresholds; the table\'s budget by FIT, the chrome line by LINE_FIT', () => {
-  expect([MODEL_FULL_FROM, ONE_LINE_FROM, WIDE_FROM, CENTRE_AT, TITLE_MIN, HYSTERESIS, NAME_MIN, NAME_FLOOR, TASK_MAX]).toEqual([60, 64, 80, 100, 16, 2, 8, 3, 24])
-  expect(geometry(45)).toEqual({ columns: 45, W: 45, px: 1, frame: 4, inner: 41, budget: 30, L: 37, oneLine: false, full: false, wide: false, centred: false, margin: 0 })
-  expect(geometry(51)).toMatchObject({ W: 51, px: 1, frame: 4, inner: 47, budget: 35, L: 42 })   // the probe's width: round 6 fit four columns of 32 cells in 47
-  expect(geometry(59)).toMatchObject({ full: false })
-  expect(geometry(60)).toMatchObject({ full: true, oneLine: false })
-  expect(geometry(63)).toMatchObject({ oneLine: false })
-  expect(geometry(64)).toMatchObject({ oneLine: true, wide: false })
-  expect(geometry(79)).toMatchObject({ px: 1, frame: 4, inner: 75, wide: false })
-  expect(geometry(80)).toMatchObject({ px: 2, frame: 6, inner: 74, wide: true, centred: false, margin: 0 })
-  expect(geometry(99)).toMatchObject({ W: 99, inner: 93, centred: false, margin: 0 })
-  expect(geometry(100)).toMatchObject({ W: 100, inner: 94, budget: 70, L: 83, centred: true, margin: 0 })
-  expect(geometry(101)).toMatchObject({ W: 100, margin: 0 })
-  expect(geometry(102)).toMatchObject({ W: 100, margin: 1 })
+test('geometry (probe rounds 8-9; live check 6): ONE reading column — the pane less PANE_GUTTER cells (a cell at each edge: no border ever touches the pane\'s edge — the Client lays out a hair wider than the visible pane, and the cards\' right border was clipped), frozen at CENTRE_AT cells and centred by a left margin; the card\'s padding 2 from WIDE_FROM (the inner width dips by a cell there); the structure flags at their thresholds, measured on the column; the table\'s budget by FIT, the chrome line by LINE_FIT', () => {
+  expect([MODEL_FULL_FROM, ONE_LINE_FROM, WIDE_FROM, CENTRE_AT, TITLE_MIN, HYSTERESIS, NAME_MIN, NAME_FLOOR, TASK_MAX, PANE_GUTTER]).toEqual([60, 64, 80, 100, 16, 2, 8, 3, 24, 2])
+  expect(geometry(45)).toEqual({ columns: 45, W: 43, px: 1, frame: 4, inner: 39, budget: 29, L: 35, oneLine: false, full: false, wide: false, centred: false, margin: 1 })
+  expect(geometry(53)).toMatchObject({ W: 51, px: 1, frame: 4, inner: 47, budget: 35, L: 42 })   // the probe's column: round 6 fit four columns of 32 cells in 47
+  expect(geometry(61)).toMatchObject({ full: false })
+  expect(geometry(62)).toMatchObject({ full: true, oneLine: false })
+  expect(geometry(65)).toMatchObject({ oneLine: false })
+  expect(geometry(66)).toMatchObject({ oneLine: true, wide: false })
+  expect(geometry(81)).toMatchObject({ px: 1, frame: 4, inner: 75, wide: false })
+  expect(geometry(82)).toMatchObject({ W: 80, px: 2, frame: 6, inner: 74, wide: true, centred: false, margin: 1 })
+  expect(geometry(100)).toMatchObject({ W: 98, inner: 92, centred: false, margin: 1 })
+  expect(geometry(101)).toMatchObject({ W: 99, inner: 93, centred: false, margin: 1 })
+  expect(geometry(102)).toMatchObject({ W: 100, inner: 94, budget: 70, L: 83, centred: true, margin: 1 })
+  expect(geometry(103)).toMatchObject({ W: 100, margin: 1 })
+  expect(geometry(104)).toMatchObject({ W: 100, margin: 2 })
   expect(geometry(200)).toMatchObject({ W: 100, inner: 94, budget: 70, L: 83, oneLine: true, full: true, wide: true, centred: true, margin: 50 })
   for (let c = 24; c <= 200; c++) {
     const g = geometry(c)
-    expect(g.W, `${c}`).toBe(Math.min(c, CENTRE_AT))
+    expect(g.W, `${c}`).toBe(Math.min(c - PANE_GUTTER, CENTRE_AT))
     expect(g.frame, `${c}`).toBe(2 + 2 * g.px)
     expect(g.inner, `${c}`).toBe(g.W - g.frame)
     expect(g.budget, `${c}`).toBe(fitCells(g.inner))
     expect(g.L, `${c}`).toBe(fitLine(g.W))
-    expect([g.oneLine, g.full, g.wide, g.centred], `${c}`).toEqual([g.W >= ONE_LINE_FROM, g.W >= MODEL_FULL_FROM, g.W >= WIDE_FROM, c >= CENTRE_AT])
-    // the column centred: the margins differ by a cell at most, the column inside the pane
-    expect(g.margin, `${c}`).toBe(c >= CENTRE_AT ? Math.floor((c - CENTRE_AT) / 2) : 0)
-    expect(g.margin + g.W, `${c}`).toBeLessThanOrEqual(c)
+    expect([g.oneLine, g.full, g.wide, g.centred], `${c}`).toEqual([g.W >= ONE_LINE_FROM, g.W >= MODEL_FULL_FROM, g.W >= WIDE_FROM, g.W >= CENTRE_AT])
+    // the column centred, a cell at least on each side: the margins differ by a cell at most, the column never at an edge
+    expect(g.margin, `${c}`).toBe(Math.floor((c - g.W) / 2))
+    expect(g.W, `${c}`).toBeLessThanOrEqual(c - 2)
+    expect(g.margin, `${c}`).toBeGreaterThanOrEqual(1)
+    expect(c - g.margin - g.W, `${c}`).toBeGreaterThanOrEqual(1)
     expect(c - g.W - 2 * g.margin, `${c}`).toBeLessThanOrEqual(1)
   }
   // a pane narrower than the floor never throws and keeps its numbers sane
-  for (const c of [1, 4, 8, 12, 23]) { const g = geometry(c); expect(g.budget).toBeGreaterThanOrEqual(0); expect(g.L).toBeGreaterThanOrEqual(0) }
+  for (const c of [1, 2, 3, 4, 8, 12, 23]) { const g = geometry(c); expect(g.W).toBeGreaterThanOrEqual(0); expect(g.budget).toBeGreaterThanOrEqual(0); expect(g.L).toBeGreaterThanOrEqual(0); expect(g.margin).toBeGreaterThanOrEqual(0) }
 })
 
 test('fitCells / FIT: the share of a width the desktop draws text into (letters wider than a cell); countsFor shrinks the counts (✅ goes, then ⏳) before the title keeps under TITLE_MIN fit cells; cutTitle cuts by LINE_FIT beside the counts (and the 📌 when pinned), never under 8', () => {
@@ -362,33 +368,33 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   const counts = '🟢3 ⏳1 ✅2'
   // the counts whole while the title keeps TITLE_MIN cells by FIT: 45 columns leave 41 - 2 - 11 - 2 = 26 → 19; at 40, 36 - 15 = 21 →
   // 15: the ✅ goes (36 - 11 = 25 → 18); at 36, 32 - 11 = 21 → 15: the ⏳ too (32 - 7 = 25 → 18); pinned, four cells fewer
-  expect(countsFor(r, geometry(51))).toBe(counts)
-  expect(countsFor(r, geometry(45))).toBe(counts)
-  expect(countsFor(r, geometry(45), true)).toBe(counts)
-  expect(countsFor(r, geometry(44), true)).toBe('🟢3 ⏳1')
-  expect(countsFor(r, geometry(40))).toBe('🟢3 ⏳1')
-  expect(countsFor(r, geometry(36))).toBe('🟢3')
-  expect(countsFor(r, geometry(24))).toBe('🟢3')
-  expect(countsFor({ run: 0, stale: 0, done: 4 }, geometry(51))).toBe('🟢0 ✅4')
-  expect(countsFor({ run: 2, stale: 0, done: 0 }, geometry(24))).toBe('🟢2')
+  expect(countsFor(r, atColumn(51))).toBe(counts)
+  expect(countsFor(r, atColumn(45))).toBe(counts)
+  expect(countsFor(r, atColumn(45), true)).toBe(counts)
+  expect(countsFor(r, atColumn(44), true)).toBe('🟢3 ⏳1')
+  expect(countsFor(r, atColumn(40))).toBe('🟢3 ⏳1')
+  expect(countsFor(r, atColumn(36))).toBe('🟢3')
+  expect(countsFor(r, atColumn(24))).toBe('🟢3')
+  expect(countsFor({ run: 0, stale: 0, done: 4 }, atColumn(51))).toBe('🟢0 ✅4')
+  expect(countsFor({ run: 2, stale: 0, done: 0 }, atColumn(24))).toBe('🟢2')
   for (let c = 24; c <= 200; c++) {
     const g = geometry(c)
     const cf = countsFor(r, g)
     expect([counts, '🟢3 ⏳1', '🟢3'], `${c}`).toContain(cf)
     // the first form that leaves the title TITLE_MIN cells, else the shortest; a wider pane never shows less
     if (cf !== '🟢3') expect(fitCells(g.inner - 2 - textWidth(cf) - TITLE_GAP), `${c}`).toBeGreaterThanOrEqual(TITLE_MIN)
-    if (c > 24) expect(textWidth(cf), `${c}`).toBeGreaterThanOrEqual(textWidth(countsFor(r, geometry(c - 1))) - (c === WIDE_FROM ? 8 : 0))
+    if (c > 24) expect(textWidth(cf), `${c}`).toBeGreaterThanOrEqual(textWidth(countsFor(r, geometry(c - 1))) - (c === WIDE_FROM + PANE_GUTTER ? 8 : 0))
   }
   // the probe's gap of two between the title and the counts, the title flush at the reading edge (no pin drawn): 51 columns
   // leave 47 - 2 (the title's padding) - 11 (counts) - 2 (gap) = 32 → 26 cells by LINE_FIT, and the probe's third room reads
   // `בדיקת תיאטרון הסוכנים…` as it did on the desktop (round 9); pinned, the 📌 and its gap take 4 more cells (28 → 23)
   expect(TITLE_GAP).toBe(2)
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(51), counts)).toBe('בדיקת תיאטרון הסוכנים…')
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(51), counts, true)).toBe('בדיקת תיאטרון הסוכנים…')
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(44), counts, true)).toBe('בדיקת תיאטרון…')
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(36), counts)).toBe('בדיקת תיאטרון…')
-  expect(cutTitle('תיאטרון הסוכנים', geometry(51), counts)).toBe('תיאטרון הסוכנים')
-  expect(cutTitle('abcdefghijklmnopqrstuvwxyz', geometry(24), counts)).toBe('abcdefg…')   // the floor of 8
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(51), counts)).toBe('בדיקת תיאטרון הסוכנים…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(51), counts, true)).toBe('בדיקת תיאטרון הסוכנים…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(44), counts, true)).toBe('בדיקת תיאטרון…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(36), counts)).toBe('בדיקת תיאטרון…')
+  expect(cutTitle('תיאטרון הסוכנים', atColumn(51), counts)).toBe('תיאטרון הסוכנים')
+  expect(cutTitle('abcdefghijklmnopqrstuvwxyz', atColumn(24), counts)).toBe('abcdefg…')   // the floor of 8
   // BOLD LATIN (live check 5): a Latin-dominant title is cut by FIT, a Hebrew one by LINE_FIT — at 44 columns beside `🟢1 ✅1` the
   // line leaves 40 - 2 - 7 - 2 = 29 cells: the Hebrew title takes up to 24 (LINE_FIT), the Latin one up to 21 (FIT)
   expect(latinDominant('Plan the static-registry move')).toBe(true)
@@ -396,8 +402,8 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   expect(latinDominant('בדיקת Claude Code')).toBe(true)        // ten Latin letters, five Hebrew
   expect(latinDominant('תריץ 4 סוכני משנה ב-CI')).toBe(false)
   expect(latinDominant('42 🎭 ·')).toBe(false)
-  expect(cutTitle('Plan the static-registry move and the v2 config rollout', geometry(44), '🟢1 ✅1')).toBe('Plan the static-regi…')
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', geometry(44), '🟢1 ✅1')).toBe('בדיקת תיאטרון הסוכנים…')
+  expect(cutTitle('Plan the static-registry move and the v2 config rollout', atColumn(44), '🟢1 ✅1')).toBe('Plan the static-regi…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(44), '🟢1 ✅1')).toBe('בדיקת תיאטרון הסוכנים…')
   for (let columns = 24; columns <= 200; columns++) {
     const g = geometry(columns)
     for (const pinned of [false, true]) {
@@ -411,7 +417,7 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   // the sweep: a title one cell longer than the widest room of the sweep (the frozen column, unpinned: 94 - 15 = 79 → 65 cells), so
   // every cut drops something and carries the …; each (columns, pinned) cut once, its width reused for the pinned-vs-unpinned check
   const countsWidth = textWidth(counts)
-  const long = 'x'.repeat(fitLine(geometry(200).inner - 2 - countsWidth - TITLE_GAP) + 1)
+  const long = 'x'.repeat(fitLine(atColumn(200).inner - 2 - countsWidth - TITLE_GAP) + 1)
   for (let columns = 24; columns <= 200; columns++) {
     const g = geometry(columns)
     const widths = [false, true].map(pinned => {
@@ -425,16 +431,16 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
     expect(widths[1], `${columns}`).toBeLessThanOrEqual(widths[0]!)
   }
   // the pin zone (drawn or not): the border, the padding, the title's own padding, the glyph and its gap — a cell more from WIDE_FROM
-  expect(pinZone(geometry(51))).toBe(7)
-  expect(pinZone(geometry(80))).toBe(8)
+  expect(pinZone(atColumn(51))).toBe(7)
+  expect(pinZone(atColumn(80))).toBe(8)
   // the counts' zone (the room's ✅ toggle), from the far edge: the border and the paddings, then the counts as the desktop draws
   // them — wider than their cells, by FIT (11 cells → 15) — never into the pin zone
-  expect(countsZone(counts, geometry(51))).toBe(3 + Math.ceil(11 / FIT))
-  expect(countsZone(counts, geometry(51))).toBe(18)
-  expect(countsZone(counts, geometry(80))).toBe(19)
-  expect(countsZone('🟢2', geometry(51))).toBe(3 + Math.ceil(3 / FIT))
-  expect(countsZone(counts, geometry(20))).toBe(20 - pinZone(geometry(20)))
-  expect(countsZone(counts, geometry(8))).toBe(1)
+  expect(countsZone(counts, atColumn(51))).toBe(3 + Math.ceil(11 / FIT))
+  expect(countsZone(counts, atColumn(51))).toBe(18)
+  expect(countsZone(counts, atColumn(80))).toBe(19)
+  expect(countsZone('🟢2', atColumn(51))).toBe(3 + Math.ceil(3 / FIT))
+  expect(countsZone(counts, atColumn(20))).toBe(20 - pinZone(atColumn(20)))
+  expect(countsZone(counts, atColumn(8))).toBe(1)
 })
 
 test('iconLabel: a labelled control reads icon-then-word as the probe writes it — the icon TRAILS a Hebrew word in the string (`הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️`), two icons reversed, the icons alone keeping that arrangement; any other word takes the icon first', () => {
@@ -543,7 +549,7 @@ test('THE TABLE MODE (probe rounds 8-9): ONE mode for the whole office from the 
 
 test('THE HYSTERESIS (chooseMode): narrowing, a mode is dropped the instant it stops fitting — the fresh choice at every width; widening, it is regained only with HYSTERESIS cells to spare — the probe\'s office drops the word at 50 and regains it at 54, drops the model column at 38 and regains it at 42; across every threshold the widening lags the narrowing by two columns at least and catches up within three', () => {
   const w = officeWidest(probeRooms())
-  const rank = (c: number, last: number | null) => chooseMode(w, geometry(c), last).rank
+  const rank = (c: number, last: number | null) => chooseMode(w, atColumn(c), last).rank
   // narrowing from the widest: the rank at every width, each from the last
   const narrowing: number[] = []
   let last: number | null = null
@@ -562,15 +568,15 @@ test('THE HYSTERESIS (chooseMode): narrowing, a mode is dropped the instant it s
   expect(widening[41]).toBe(4)
   expect(widening[42]).toBe(1)
   // the version from MODEL_FULL_FROM, a plain threshold: the word still fits with it at 60 (need 39 ≤ 42), both ways
-  expect(chooseMode(w, geometry(60), 0)).toEqual({ rank: 0, word: true, model: 'full', nameMax: NAME_MAX })
-  expect(chooseMode(w, geometry(59), 0)).toEqual({ rank: 0, word: true, model: 'family', nameMax: NAME_MAX })
+  expect(chooseMode(w, atColumn(60), 0)).toEqual({ rank: 0, word: true, model: 'full', nameMax: NAME_MAX })
+  expect(chooseMode(w, atColumn(59), 0)).toEqual({ rank: 0, word: true, model: 'family', nameMax: NAME_MAX })
   for (let c = 24; c <= 200; c++) {
     // narrowing is the fresh choice (no hysteresis holds a mode that stopped fitting); widening is never richer than it
     expect(narrowing[c], `${c}`).toBe(rank(c, null))
     expect(widening[c]!, `${c}`).toBeGreaterThanOrEqual(narrowing[c]!)
     // a mode regained (every rank is a regain from the floor) is the ladder's own at the real budget: its names' cap is not the reduced one's
-    const regained = chooseMode(w, geometry(c), 5)
-    expect(regained, `${c}`).toEqual(modeAt(w, regained.rank, geometry(c).budget, geometry(c).full))
+    const regained = chooseMode(w, atColumn(c), 5)
+    expect(regained, `${c}`).toEqual(modeAt(w, regained.rank, atColumn(c).budget, atColumn(c).full))
     // (the inner width dips by a cell at WIDE_FROM, where the padding grows: the ranks are monotonic away from it)
     if (c > 24 && (c < WIDE_FROM - 1 || c > WIDE_FROM + 3)) {
       expect(narrowing[c]!, `${c}`).toBeLessThanOrEqual(narrowing[c - 1]!)
@@ -602,8 +608,8 @@ test('floorsOf (from WIDE_FROM): the minWidth floor of each column — the offic
   expect(floorsOf(w, { ...mode, model: 'none' }).model).toBe(1)
   expect(floorsOf(w, { ...mode, nameMax: 5 }).who).toBe(Math.ceil(8 / FIT) + 1)
   // the model builds them only from WIDE_FROM
-  expect(officeModel(props({ rooms: probeRooms(), columns: 79 })).floors).toBeNull()
-  expect(officeModel(props({ rooms: probeRooms(), columns: 80 })).floors).toEqual(floorsOf(w, officeModel(props({ rooms: probeRooms(), columns: 80 })).mode))
+  expect(officeModel(props({ rooms: probeRooms(), columns: 79 + PANE_GUTTER })).floors).toBeNull()
+  expect(officeModel(props({ rooms: probeRooms(), columns: 80 + PANE_GUTTER })).floors).toEqual(floorsOf(w, officeModel(props({ rooms: probeRooms(), columns: 80 + PANE_GUTTER })).mode))
   expect(officeModel(props({ rooms: probeRooms(), columns: 200 })).floors).not.toBeNull()
 })
 
@@ -640,13 +646,13 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
     ag('w', 2, { name: 'הזאב', status: 'stale', act: '💤 ממתין' }),
     ag('m', 3, { name: 'המכונאי', status: 'done', star: 7000, act: '✅ סיים' }),
   ] })
-  const p = props({ rooms: [r], columns: 51 })
+  const p = props({ rooms: [r], columns: 51 + PANE_GUTTER })
   const m = officeModel(p)
   expect(kinds(m.lines)).toEqual(['border', 'pad', 'title', 'blank', 'row', 'row', 'row', 'row', 'blank', 'more', 'pad', 'border', 'gap'])
   expect(m.lines.every(l => l.room === 'sess-a')).toBe(true)
   expect(m.lines.filter(l => l.kind === 'row').map(l => l.agent)).toEqual(['lead', 'a1', 'w', 'm'])
   expect(m.lines.filter(l => l.kind !== 'row').every(l => l.agent === null)).toBe(true)
-  expect(m.geo).toEqual(geometry(51))
+  expect(m.geo).toEqual(atColumn(51))
   expect(m.mode).toEqual({ rank: 0, word: true, model: 'family', nameMax: NAME_MAX })   // the probe's width draws the word and the family
   expect(m.floors).toBeNull()
   const room0 = m.rooms[0]!
@@ -664,12 +670,12 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
   expect(room0.rows.map(x => x.color)).toEqual([DOT_FG.running, DOT_FG.running, DOT_FG.stale, DOT_FG.done])
   // the weights: working = bold; waiting = regular; finished = dim; nothing failed here
   expect(room0.rows.map(x => [x.bold, x.dim, x.failed])).toEqual([[true, false, false], [true, false, false], [false, false, false], [false, true, false]])
-  expect(room0.rows.every(x => !x.focus && !x.pulse)).toBe(true)
+  expect(room0.rows.every(x => !x.focus)).toBe(true)
   for (const x of room0.rows) for (const v of [x.status, x.who, x.model, x.actEmoji, x.actWord, x.task]) { expect(v).not.toMatch(/⏱|′|min|\d+ דק/); expect(v).not.toMatch(LONE_SURROGATE); expect(v).not.toContain(' ') }
-  expect(officeModel(props({ rooms: [r], columns: 60 })).rooms[0]!.rows.map(x => x.model)).toEqual(['Opus 5.5', 'Sonnet 4.5', 'Opus 5.5', 'Opus 5.5'])
+  expect(officeModel(props({ rooms: [r], columns: 60 + PANE_GUTTER })).rooms[0]!.rows.map(x => x.model)).toEqual(['Opus 5.5', 'Sonnet 4.5', 'Opus 5.5', 'Opus 5.5'])
   // the hits (RTL): the pin zone at the right edge of the title line, the counts zone at the left edge, a row and the more line the whole width
-  const pz = pinZone(geometry(51))
-  const cz = countsZone('🟢3 ⏳1 ✅2', geometry(51))
+  const pz = pinZone(atColumn(51))
+  const cz = countsZone('🟢3 ⏳1 ✅2', atColumn(51))
   expect(m.hits).toEqual([
     { kind: 'pin', id: 'sess-a', x: 51 - pz, y: 2, w: pz, h: 1 },
     { kind: 'roomDone', id: 'sess-a', x: 0, y: 2, w: cz, h: 1 },
@@ -692,7 +698,7 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
   expect(hitAt(m, 25, 12)).toBeUndefined()       // the gap
   expect(hitAt(m, 25, 13)).toBeUndefined()       // past the office
   // LTR: the pin zone at the left edge, the counts at the right; the rows the same
-  const ltr = officeModel(props({ rooms: [r], columns: 51, rtl: false }))
+  const ltr = officeModel(props({ rooms: [r], columns: 51 + PANE_GUTTER, rtl: false }))
   expect(ltr.hits[0]).toEqual({ kind: 'pin', id: 'sess-a', x: 0, y: 2, w: pz, h: 1 })
   expect(ltr.hits[1]).toEqual({ kind: 'roomDone', id: 'sess-a', x: 51 - cz, y: 2, w: cz, h: 1 })
   expect(ltr.rooms[0]!.rows.map(x => x.status)).toEqual(['●', '●', '●', '⭐'])
@@ -718,13 +724,13 @@ test('officeModel: the line map of a card — border, pad, title, a BLANK line (
   expect(JSON.stringify(officeModel(p))).toBe(JSON.stringify(m))
 })
 
-test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker on the inner side of the status mark pointing in from the reading edge (the mark stays at the edge: no blank cell on the other rows), a pulse flags its row; nothing of it moves a line or a hit; the selection is no decor (the open drawer says which agent is selected)', () => {
+test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker on the inner side of the status mark pointing in from the reading edge (the mark stays at the edge: no blank cell on the other rows); no pulse (live check 6: the ⭐ is the whole finish); nothing of it moves a line or a hit; the selection is no decor (the open drawer says which agent is selected)', () => {
   const rooms = [room({ id: 'a' }), room({ id: 'b', agents: [ag('b1', 1)], pinned: true })]
   const p = props({ rooms, selected: 'a1' })
   const base = officeModel(p)
   expect(base.rooms.map(x => x.pin)).toEqual(['none', 'bright'])
   expect(JSON.stringify(officeModel({ ...p, selected: null }))).toBe(JSON.stringify(base))
-  expect(Object.keys(base.rooms[0]!.rows[0]!).sort()).toEqual(['actEmoji', 'actWord', 'bold', 'color', 'dim', 'failed', 'focus', 'id', 'model', 'pulse', 'status', 'task', 'who', 'y'])
+  expect(Object.keys(base.rooms[0]!.rows[0]!).sort()).toEqual(['actEmoji', 'actWord', 'bold', 'color', 'dim', 'failed', 'focus', 'id', 'model', 'status', 'task', 'who', 'y'])
   const hovered = officeModel(p, decor({ hoverRoom: 'a' }))
   expect(hovered.rooms[0]!.pin).toBe('dim')
   expect(officeModel(p, decor({ hoverRoom: 'b' })).rooms[1]!.pin).toBe('bright')
@@ -737,16 +743,13 @@ test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pin
   expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[0]!.status).toBe(`●${FOCUS_MARK.ltr}`)
   expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[1]!.status).toBe('●')
   expect(FOCUS_MARK).toEqual({ rtl: '‹', ltr: '›' })
-  const pulsing = officeModel(p, decor({ pulse: ['b1'] }))
-  expect(pulsing.rooms[1]!.rows[0]!.pulse).toBe(true)
-  expect(pulsing.rooms[0]!.rows.every(x => !x.pulse)).toBe(true)
-  for (const m of [hovered, focused, pulsing]) {
+  for (const m of [hovered, focused]) {
     expect(m.lines).toEqual(base.lines)
     expect(m.hits).toEqual(base.hits)
     expect(m.rooms.map(x => [x.top, x.height, x.title, x.counts])).toEqual(base.rooms.map(x => [x.top, x.height, x.title, x.counts]))
     expect(m.mode).toEqual(base.mode)
   }
-  expect(NO_DECOR).toEqual({ hoverRoom: null, focus: null, pulse: new Set() })
+  expect(NO_DECOR).toEqual({ hoverRoom: null, focus: null })
 })
 
 test('officeModel: the weights (round 8) — working = a bold name; waiting = a regular name; finished = dim; a ❌ row keeps a regular name (flagged `failed`); the badges never go', () => {
@@ -867,12 +870,11 @@ test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base 
   expect(cache.builds).toBe(3)
   expect(cache.measures).toBe(1)
   // the decor: nothing built, and the model is the decorated one
-  const hovered = officeModel(p, decor({ hoverRoom: 'a', focus: 'b1', pulse: ['c1'] }), cache)
+  const hovered = officeModel(p, decor({ hoverRoom: 'a', focus: 'b1' }), cache)
   expect(cache.builds).toBe(3)
   expect(hovered.rooms[0]!.pin).toBe('dim')
   expect(hovered.rooms[1]!.rows[0]!.status).toBe(`${FOCUS_MARK.rtl}●`)
-  expect(hovered.rooms[2]!.rows[0]!.pulse).toBe(true)
-  expect(JSON.stringify(hovered)).toBe(JSON.stringify(officeModel(p, decor({ hoverRoom: 'a', focus: 'b1', pulse: ['c1'] }))))
+  expect(JSON.stringify(hovered)).toBe(JSON.stringify(officeModel(p, decor({ hoverRoom: 'a', focus: 'b1' }))))
   // one room changed (an agent's activity): that room alone; the office measured once more
   const q = { ...p, rooms: rooms.map(r => r.id === 'b' ? { ...r, agents: r.agents.map(a => a.id === 'b2' ? { ...a, act: '✏️ עורך' } : a) } : r) }
   const m2 = officeModel(q, NO_DECOR, cache)
@@ -888,19 +890,19 @@ test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base 
   // the direction alone: nothing built (the base is the same; the status strings are laid per render)
   officeModel({ ...q, columns: 30, rtl: false }, NO_DECOR, cache)
   expect(cache.builds).toBe(7)
-  // the hysteresis: at this office's word threshold (need 26: 39 columns) a `last` of a poorer mode keeps it — the rooms are
+  // the hysteresis: at this office's word threshold (need 26: a 39-cell column) a `last` of a poorer mode keeps it — the rooms are
   // rebuilt (their texts follow the mode), and the model equals the uncached one with the same `last`
-  const fresh = officeModel({ ...q, columns: 39 }, NO_DECOR, cache)
+  const fresh = officeModel({ ...q, columns: 39 + PANE_GUTTER }, NO_DECOR, cache)
   expect(fresh.mode.rank).toBe(0)
   expect(cache.builds).toBe(10)
   const token = { rank: 1, key: widestKey(officeWidest(q.rooms)) }
-  const held = officeModel({ ...q, columns: 39 }, NO_DECOR, cache, token)
+  const held = officeModel({ ...q, columns: 39 + PANE_GUTTER }, NO_DECOR, cache, token)
   expect(held.mode.rank).toBe(1)
   expect(held.token).toEqual({ rank: 1, key: token.key })
   expect(cache.builds).toBe(13)
-  expect(JSON.stringify(held)).toBe(JSON.stringify(officeModel({ ...q, columns: 39 }, NO_DECOR, undefined, token)))
+  expect(JSON.stringify(held)).toBe(JSON.stringify(officeModel({ ...q, columns: 39 + PANE_GUTTER }, NO_DECOR, undefined, token)))
   // THE TOKEN: a rank kept for other widest values (the content changed) is no hysteresis — the fresh choice, as a new instance's
-  expect(officeModel({ ...q, columns: 39 }, NO_DECOR, cache, { rank: 1, key: 'other' }).mode.rank).toBe(0)
+  expect(officeModel({ ...q, columns: 39 + PANE_GUTTER }, NO_DECOR, cache, { rank: 1, key: 'other' }).mode.rank).toBe(0)
   expect(fresh.token).toEqual({ rank: 0, key: token.key })
   // a room gone: dropped from the cache; back again: built again
   officeModel({ ...q, columns: 30, rooms: q.rooms.slice(0, 2) }, NO_DECOR, cache)

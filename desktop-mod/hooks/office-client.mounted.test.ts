@@ -4,8 +4,8 @@
 // fake-surface cases of office-client.test.ts cover the module alone; these
 // read what the mounted module shows — the chrome and the cards, the keyboard
 // focus a click or `j` lands on a row (its marker), the search Input keeping
-// its text across a publish, a finisher's pulse on the fx clock (and the
-// clock stopping), the window and THE OVERLAY IN VIEW — and the effects of
+// its text across a publish, a finisher's row (the ⭐ alone: no tint, no
+// clock), the window and THE OVERLAY IN VIEW — and the effects of
 // its posts through the plugin's own `ui.message` hook (ui.tsx); register.test.ts
 // covers every message kind, office-controls.test.ts every control.
 
@@ -14,7 +14,7 @@ import { expect, test } from 'claude-code/testing'
 import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
 import { CHROME_ROWS_SEARCH, chromeRows, fixedRows, windowOf } from './office-chrome'
-import { FX_BG, FX_DONE_MS, FX_TICK_MS, SEARCH_DEBOUNCE_MS } from './office-client'
+import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { CARD_BORDER, FOCUS_MARK, nb, officeModel, rowCount } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
@@ -46,9 +46,9 @@ async function officeProps(ui: Finder): Promise<OfficeProps> {
   return c!.props.props as OfficeProps
 }
 
-/** Whether a node the module drew carries `bg` as its backgroundColor (the finish pulse on a row's four Texts). */
-async function withBg(ui: Finder, bg: string): Promise<boolean> {
-  return (await ui.findAll({ in: OFFICE_KEY })).some(n => n.props.backgroundColor === bg)
+/** Whether a node the module drew carries a backgroundColor (`bg`, or any): the office lays none (live check 6: the finish's tint flashed a near-black band on the light theme). */
+async function withBg(ui: Finder, bg?: string): Promise<boolean> {
+  return (await ui.findAll({ in: OFFICE_KEY })).some(n => (bg === undefined ? n.props.backgroundColor !== undefined : n.props.backgroundColor === bg))
 }
 
 /** The module's drawn tree: its children (the chrome lines, the settings | drawer, then the spacer and the window's cards). */
@@ -99,7 +99,7 @@ function lineOf(p: OfficeProps, id: string): number {
   return hit!.y
 }
 
-test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per room with the agent rows; a click on a row focuses it; a newcomer gets a row; a finisher\'s row turns done with no pulse of the module\'s own (the ⭐ stamp and the pulse it starts are the poll\'s: ui.test.ts)', { timeoutMs: 30_000 }, async ($, on) => {
+test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per room with the agent rows; a click on a row focuses it; a newcomer gets a row; a finisher\'s row turns done with nothing tinted and no clock of the module\'s own (the ⭐ stamp is the poll\'s: ui.test.ts)', { timeoutMs: 30_000 }, async ($, on) => {
   let agents = [agent({ id: 'lead', is_session: true, tool: '', phase: 'thinking' }), agent({ id: 'a1', persona_id: 7 })]
   const { clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -153,17 +153,17 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   expect(whoOf(p1, 'n1')).toBe(nb(`${PERSONA_EMOJI[3]} ${personaName(5, 'he')}`))   // (the payload's emoji, the persona's name, a no-break space between: nb)
   expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   expect(await focused(ui, p1)).toEqual([whoOf(p1, 'lead')])      // the focus survived the publish
-  // a finisher: its row turns ○ and `✅ סיים`, dim; nothing is tinted and no clock runs — the ⭐ stamp and the pulse it starts are
-  // the poll's, stamped off the scanner's own office (this harness rewrites the publish): ui.test.ts's hop test covers them
+  // a finisher: its row turns ○ and `✅ סיים`, dim; nothing is tinted and no clock runs — the ⭐ stamp is the poll's, stamped off
+  // the scanner's own office (this harness rewrites the publish): ui.test.ts's finish test covers it
   agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'Done.' } : a))
   await clock.advance(POLL_MS)
   const p2 = await officeProps(ui)
   expect(p2.rooms[0]?.agents.find(a => a.id === 'a1')).toMatchObject({ status: 'done', star: 0 })
   const doneRow = rowsOf((await cardsOf(ui))[0]!).find(r => r[1] === whoOf(p2, 'a1'))
   expect(doneRow).toEqual(['○', whoOf(p2, 'a1'), 'Opus', '✅', 'סיים'])
-  expect(await withBg(ui, FX_BG.done) || await withBg(ui, FX_BG.doneAlt)).toBe(false)
-  await ui.advance(FX_DONE_MS + FX_TICK_MS * 8)   // no clock: nothing happens
-  expect(await withBg(ui, FX_BG.done) || await withBg(ui, FX_BG.doneAlt)).toBe(false)
+  expect(await withBg(ui)).toBe(false)
+  await ui.advance(3000)   // no clock: nothing happens
+  expect(await withBg(ui)).toBe(false)
   expect(rowsOf((await cardsOf(ui))[0]!).find(r => r[1] === whoOf(p2, 'a1'))).toEqual(doneRow)
   await ui.unmount()
 })
@@ -255,7 +255,7 @@ test('DESKTOP (2.4): keys walk the rows (the marker moves); the search Input (dr
   const p1 = await officeProps(ui)
   expect(lineOf(p1, 'n1')).toBe(17)
   expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', ...Z, 'n1'].map(id => whoOf(p1, id)))
-  await ui.advance(FX_TICK_MS * 8)
+  await ui.advance(2000)
   expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', ...Z, 'n1'].map(id => whoOf(p1, id)))
   expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
   await ui.unmount()

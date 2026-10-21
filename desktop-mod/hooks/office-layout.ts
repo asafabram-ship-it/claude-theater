@@ -41,7 +41,8 @@
 // too long is clipped at the edge instead of breaking onto a second line, which
 // would shift every line under it: the desktop does not enforce a Text's
 // `wrap`), so the y of every line is known here, before anything is drawn:
-// the pointer's y maps to a line, a row's hit is the column's whole width,
+// the pointer's y maps to a line, a row's hit is the card's inside (its border
+// cells nothing: live check 7),
 // the title line keeps the pin zone at the reading edge (the counts are
 // read-only: live check 7). The decor (the hovered head, the keyboard focus) is the
 // module's local state handed in as data, so the model
@@ -92,6 +93,12 @@ export const HYSTERESIS = 2
 export const PIN = '📌'
 /** The card's frame colour (the probe's). */
 export const CARD_BORDER = '#56607a'
+/**
+ * THE LINK COLOUR (live check 7, Q7): what a clickable line reads as at rest — the more / hide line — a THEME key, so it
+ * follows the person's theme and reads on light and dark (`suggestion`: the engine's own link-like blue); never dim, never
+ * bold (a proportional bold widens the columns), never a background (the light theme turns one black).
+ */
+export const LINK_FG = 'suggestion'
 /** The status column's colours by status (the probe's dots): green running, amber stale, grey done. */
 export const DOT_FG: Readonly<Record<OfficeAgent['status'], string>> = { running: '#3fb950', stale: '#d29922', done: '#8b949e' }
 /**
@@ -508,10 +515,15 @@ export function chooseMode(w: Widest, geo: Geo, last: number | null): TableMode 
 /** The minWidth floors of the columns from WIDE_FROM, in cells: the office-wide widest value by FIT plus the padding cell — so the columns align across the cards. (The task column has none: it takes what is left.) */
 export type Floors = { status: number; who: number; model: number; actEmoji: number; actWord: number }
 
+/** The status column's floor: the widest mark and the focus marker's cell by FIT, and the padding cell (floorsOf's, at every width: R10). */
+export function statusFloor(w: Widest): number {
+  return Math.ceil((w.mark + 1) / FIT) + 1
+}
+
 export function floorsOf(w: Widest, mode: TableMode): Floors {
   const floor = (cells: number) => Math.ceil(cells / FIT) + 1
   return {
-    status: floor(w.mark + 1), who: floor(EMOJI_CELLS + 1 + widestName(w, mode.nameMax)),
+    status: statusFloor(w), who: floor(EMOJI_CELLS + 1 + widestName(w, mode.nameMax)),
     model: floor(mode.model === 'none' ? 0 : mode.model === 'full' ? w.modelFull : w.modelFamily),
     actEmoji: floor(w.actEmoji), actWord: floor(w.actWord),
   }
@@ -572,7 +584,12 @@ export type RoomView = {
 }
 
 /** `token` is what the caller keeps for the next render's hysteresis (the mode's rank and the widest values' key). */
-export type OfficeModel = { rooms: RoomView[]; lines: Line[]; hits: Hit[]; geo: Geo; mode: TableMode; token: ModeToken; floors: Floors | null }
+/**
+ * `statusMin` is the status column's floor at EVERY width (live check 7, R10: the keyboard focus marker `‹●` a click puts
+ * on a row widened the column under WIDE_FROM, nudging the card's columns a frame before the drawer came) — the same floor
+ * as `floors.status`.
+ */
+export type OfficeModel = { rooms: RoomView[]; lines: Line[]; hits: Hit[]; geo: Geo; mode: TableMode; token: ModeToken; floors: Floors | null; statusMin: number }
 
 /**
  * What the surface module lays on the model from its local state, by id:
@@ -647,7 +664,8 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
  * The rooms as cards, the line map and the hit rectangles of the whole office. Card lines, in order: the top border, a
  * padding line, the title (pin · title · counts), [the more / hide line — DIRECTLY UNDER THE TITLE, live check 7 Q3: it never
  * moves with the rows it reveals], the blank line, one line per agent, a padding line, the bottom border, the gap. A row's
- * hit is the column's whole width; so is the more line's; the title line keeps pinZone cells at the reading edge for the pin
+ * hit is the card's inside — the column less the frame's border cell at each edge (live check 7, R9: what is drawn as the
+ * card's); so is the more line's; the title line keeps pinZone cells at the reading edge for the pin
  * and nothing else (the ✅ counts are read-only: Q6 — the more line is the room's one toggle). The decor changes only the pin of the head it hovers and the focus marker —
  * never a line, never a hit. The table mode is chosen once for the office (chooseMode) from `last`, the
  * token the caller kept from its previous model (the hysteresis: its rank counts only while the widest values are the ones
@@ -699,7 +717,7 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
     if (more) {
       moreAt = lines.length
       line('more', room.id)
-      hits.push({ kind: 'moreDone', id: room.id, x: 0, y: moreAt, w: geo.W, h: 1 })
+      hits.push({ kind: 'moreDone', id: room.id, x: 1, y: moreAt, w: geo.W - 2, h: 1 })
     }
     const blankAt = lines.length
     line('blank', room.id)
@@ -711,7 +729,7 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
       const status = !focus ? r.mark : rtl ? `${FOCUS_MARK.rtl}${r.mark}` : `${r.mark}${FOCUS_MARK.ltr}`
       rows.push({ id: r.id, y, status, color: r.color, who: r.who, model: r.model, actEmoji: r.actEmoji, actWord: r.actWord, task: r.task, bold: r.bold, dim: r.dim, failed: r.failed, focus })
       line('row', room.id, r.id)
-      hits.push({ kind: 'agent', id: r.id, x: 0, y, w: geo.W, h: 1 })
+      hits.push({ kind: 'agent', id: r.id, x: 1, y, w: geo.W - 2, h: 1 })
     }
     line('pad', room.id)
     line('border', room.id)
@@ -724,7 +742,7 @@ export function officeModel(props: OfficeProps, decor: OfficeDecor = NO_DECOR, c
     })
   })
   if (cache) for (const id of [...cache.rooms.keys()]) if (!seen.has(id)) cache.rooms.delete(id)
-  return { rooms, lines, hits, geo, mode, token, floors }
+  return { rooms, lines, hits, geo, mode, token, floors, statusMin: statusFloor(widest) }
 }
 
 /** The agent or room control under cell (x, y) of the reading column, if any. */

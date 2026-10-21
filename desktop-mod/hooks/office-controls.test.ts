@@ -325,13 +325,17 @@ async function click(ui: Ui, kind: Hit['kind'], id: string): Promise<void> {
   const p = await officeProps(ui)
   const hit = hitOf(p, kind, id)
   await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit.x + Math.floor(hit.w / 2), y: chromeRows(p) + hit.y, button: 'left' })
+  // (a pin keeps the cards where they are until the pointer leaves the office — live check 7, Q4: office-buttons.test.ts — so
+  // these tests, which read the cards in the props' order, let it leave)
+  if (kind === 'pin') await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
 }
-/** The pointer moved over the LINE of the layout hit (the column's middle cell: on a title line, the title's field, not the pin zone). */
+/** The pointer moved over the layout hit: a pin's zone, or the LINE of any other hit (the column's middle cell). */
 async function moveOver(ui: Ui, kind: Hit['kind'], id: string): Promise<void> {
   const p = await officeProps(ui)
   const hit = hitOf(p, kind, id)
   const geo = geometry(p.columns)
-  await ui.pointer({ in: OFFICE_KEY, type: 'move', x: geo.margin + Math.floor(geo.W / 2), y: chromeRows(p) + hit.y })
+  // (a pin: the middle of its zone — the hover zone is the hit zone, live check 7 R9; any other line: the column's middle cell)
+  await ui.pointer({ in: OFFICE_KEY, type: 'move', x: geo.margin + (kind === 'pin' ? hit.x + Math.floor(hit.w / 2) : Math.floor(geo.W / 2)), y: chromeRows(p) + hit.y })
 }
 /** A left click inside the Client at the column's middle cell of Client row `y`. */
 async function clickRow(ui: Ui, y: number): Promise<void> {
@@ -414,7 +418,7 @@ function suite(COLUMNS: Columns): void {
     expect([await label(ui, 'demo'), await label(ui, 'still'), await label(ui, 'lang')]).toEqual(W.settings)
     expect([await hotkeyOf(ui, 'demo'), await hotkeyOf(ui, 'still'), await hotkeyOf(ui, 'lang')]).toEqual(W.hotkeys ? ['d', 's', 'l'] : [undefined, undefined, undefined])
     expect(propsOf((await overlay(ui))!).height).toBe(W.helpRows)
-    expect(await hotkeyOf(ui, 'closeHelp')).toBeUndefined()
+    expect(await hotkeyOf(ui, 'closeHelp')).toBe('x')   // (as the drawer's close: live check 7, R9)
     await ui.unmount()
   })
 
@@ -744,7 +748,7 @@ function suite(COLUMNS: Columns): void {
     const { ui, captured } = await mountOffice($, on)
     const p0 = await officeProps(ui)
     const more = hitOf(p0, 'moreDone', SA)
-    expect(more.w).toBe(GEO.W)   // the whole line is the hit
+    expect([more.x, more.w]).toEqual([1, GEO.W - 2])   // the whole line inside the card's frame is the hit (live check 7, R9)
     expect(more.y).toBe(officeModel(p0).rooms[0]!.titleAt + 1)
     expect((await headOf(ui, p0, SA)).more).toBe(MORE_LINE)
     expect(officeModel(p0).hits.some(h => h.kind === 'moreDone' && h.id === SB)).toBe(false)   // room B holds no finished: no such line
@@ -798,10 +802,12 @@ function suite(COLUMNS: Columns): void {
     expect((await ui.findAll({ in: OFFICE_KEY, type: 'Box' })).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)   // no selection band
     expect(rowsOf(await cardOf(ui, p1, SA)).map(r => r[1])).toContain(whoOf(p1, 'a1'))
     expect(whoOf(p1, 'a1')).toContain(personaName(7, 'he'))
-    // THE COLUMN'S BOUNDS: a row's hit is the column's whole width — its last cell opens the row (d1's drawer); the cell past the
-    // column (the pane's edge, or the right margin from CENTRE_AT) and the left margin's last cell open nothing
+    // THE CARD'S BOUNDS: a row's hit is the card's inside (live check 7, R9) — its last cell inside the frame opens the row (d1's
+    // drawer); the frame's border cell, the cell past the column (the pane's edge, or the right margin from CENTRE_AT) and the
+    // left margin's last cell open nothing
     const yD1 = chromeRows(p1) + hitOf(p1, 'agent', 'd1').y
-    await ui.pointer({ in: OFFICE_KEY, type: 'down', x: GEO.margin + GEO.W - 1, y: yD1, button: 'left' })
+    await deadRow(ui, yD1, 'the border cell beside the row', GEO.margin + GEO.W - 1)
+    await ui.pointer({ in: OFFICE_KEY, type: 'down', x: GEO.margin + GEO.W - 2, y: yD1, button: 'left' })
     const pd = await officeProps(ui)
     expect(pd.drawer?.id).toBe('d1')
     const yA1 = chromeRows(pd) + hitOf(pd, 'agent', 'a1').y   // (d1's drawer is taller than a1's: the result's lines — the chrome re-read)

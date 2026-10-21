@@ -55,7 +55,7 @@ function fixture(): Agent[] {
 
 type Ui = {
   find: (q: { type?: string; key?: string; text?: RegExp; in?: string }) => Promise<{ text?: string; props: Record<string, unknown> } | undefined>
-  pointer: (ev: { in?: string; type: 'down'; x: number; y: number; button: 'left' }) => Promise<void>
+  pointer: (ev: { in?: string; type: 'down' | 'leave'; x: number; y: number; button?: 'left' }) => Promise<void>
   post: (data: JsonValue, scope?: { in?: string }) => Promise<void>
 }
 
@@ -71,7 +71,9 @@ async function click(ui: Ui, kind: Hit['kind'], id: string): Promise<void> {
   const p = await propsOf(ui)
   const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit).toBeDefined()
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x + Math.floor(hit!.w / 2), y: chromeRows(p) + hit!.y, button: 'left' })
+  // (a pin keeps the cards where they are until the pointer leaves the office: live check 7, Q4)
+  if (kind === 'pin') await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
 }
 
 /** The writes an act made, by key ($.state, then $.store): only the non-zero ones. */

@@ -310,11 +310,13 @@ async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Pro
  * the module hit-tests it and POSTS the message, the plugin's `ui.message` hook (ui.tsx) applies it.
  * (A toolbar Button of the module is pressed by its key: `ui.press({ key })`.)
  */
-async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Record<string, unknown> } | undefined>; pointer: (ev: { in?: string; type: 'down'; x: number; y: number; button: 'left' }) => Promise<void> }, kind: Hit['kind'], id: string): Promise<void> {
+async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Record<string, unknown> } | undefined>; pointer: (ev: { in?: string; type: 'down' | 'leave'; x: number; y: number; button?: 'left' }) => Promise<void> }, kind: Hit['kind'], id: string): Promise<void> {
   const p = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
   const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
   expect(hit).toBeDefined()
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x, y: chromeRows(p) + hit!.y, button: 'left' })
+  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x + Math.floor(hit!.w / 2), y: chromeRows(p) + hit!.y, button: 'left' })
+  // (a pin keeps the cards where they are until the pointer leaves the office: live check 7, Q4)
+  if (kind === 'pin') await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
 }
 
 /** DESKTOP (the Client office): whether the module lays any background (live check 6: the finish's tint flashed a near-black band on the light theme — the ⭐ is the whole finish). */

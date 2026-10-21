@@ -14,7 +14,7 @@
 // on a line of its own below that, and only while the office holds more than
 // SEARCH_FROM agents or a search is active — then a framed card per room: the
 // title line (the title flush at the reading edge — a 📌 before it only when
-// the room is pinned or its head is under the pointer — the read-only counts
+// the room is pinned or its pin zone is under the pointer — the read-only counts
 // at the other edge, the title cut on a word), under it the room's ONE finished
 // toggle (`▸ עוד 2 שסיימו` / `▾ הסתר שסיימו`, only past RECENT_DONE finished:
 // live check 7, Q3 + Q6), a BLANK line (no rule), and the agents
@@ -119,7 +119,7 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import { CARD_BORDER, FIT, LINK_FG, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeBatch, OfficeItem, OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
@@ -172,6 +172,12 @@ export type OfficeInst = {
   drawn: Set<string>
   /** THE ROOM MEMO (office-layout.ts roomCache): a room's texts are measured again only when its props, the width or the mode changed. */
   cache: RoomCache
+  /**
+   * THE PIN'S PLACE (live check 7, Q4): the rooms' order as drawn when a pin was clicked, kept until the pointer leaves the
+   * office — the pinned card shows its bright 📌 at once but moves to the top only then, so a second click on the same cell
+   * is the same pin (it once jumped to the top under the pointer, and the cell became another card's row). Null: the props' order.
+   */
+  frozen: string[] | null
   drawerKey: string
   drawer: DrawerLine[]
   query: string
@@ -209,6 +215,18 @@ function send(surface: Surface, inst: OfficeInst, m: OfficeMessage): void {
 // the instance
 // ---------------------------------------------------------------------------
 
+/**
+ * THE PIN'S PLACE (live check 7, Q4): the props with their rooms in `order` (the order drawn when a pin was clicked) — a room
+ * not in it after those, in the props' order; one no longer in the props dropped. Null: the props as they are.
+ */
+export function inOrder(p: OfficeProps, order: readonly string[] | null): OfficeProps {
+  if (!order) return p
+  const at = new Map(order.map((id, i) => [id, i]))
+  const key = (id: string, i: number) => at.get(id) ?? order.length + i
+  const rooms = p.rooms.map((r, i) => ({ r, k: key(r.id, i) })).sort((a, b) => a.k - b.k).map(x => x.r)
+  return rooms.every((r, i) => r === p.rooms[i]) ? p : { ...p, rooms }
+}
+
 /** The decor from the local state: the hovered head and the keyboard focus. */
 function decorOf(s: OfficeState): OfficeDecor {
   return { hoverRoom: s.hoverRoom, focus: s.focus }
@@ -237,7 +255,7 @@ function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
 
 function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
-    props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null }, lastMode: null,
+    props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null, statusMin: 0 }, lastMode: null, frozen: null,
     rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
     query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null,
     id: Math.random().toString(36).slice(2, 10) || 'office', seq: 0, outbox: [], flush: null,
@@ -285,17 +303,23 @@ function listen(surface: Surface): void {
           if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
           send(surface, inst, { t: 'open', id: hit.id })
         } else if (hit.kind === 'pin') {
-          // the click reorders the rooms (the pinned first): the head hover goes with it, so a dim 📌 cannot ride the room to its
-          // new card — the next move sets it on whatever head is then under the pointer
+          // THE PIN'S PLACE (Q4): the rooms keep the order drawn now until the pointer leaves the office (the pinned card moves to
+          // the top then); the head hover goes, the props' bright 📌 replacing it
+          inst.frozen ??= inst.model.rooms.map(r => r.id)
           if (cur.hoverRoom !== null) surface.setState({ ...cur, hoverRoom: null })
           send(surface, inst, { t: 'pin', room: hit.id })
         } else send(surface, inst, { t: 'roomDone', room: hit.id })   // the "more / hide finished" line under the title: the room's one toggle
       } else if (ev.type === 'move' || ev.type === 'leave') {
-        // the unpinned room whose title line is under the pointer (its dim 📌): one setState when it changes; a pointer in a
-        // centring margin (off the column's cells, as for a click) hovers nothing
+        // the unpinned room whose PIN ZONE is under the pointer (its dim 📌 — live check 7, R9: the hover zone is the hit zone,
+        // once the whole title line lit a pin that only seven cells pinned): one setState when it changes; a pointer in a
+        // centring margin (off the column's cells, as for a click) hovers nothing. The pointer leaving the office releases THE
+        // PIN'S PLACE: the rooms in the props' order (a pinned card to the top)
         const inColumn = x >= 0 && x < inst.model.geo.W
-        const room = ev.type === 'leave' || !drawn || !inColumn ? null : inst.titleAt.get(y) ?? null
-        if (room !== cur.hoverRoom) surface.setState({ ...cur, hoverRoom: room })
+        const onPin = hit !== undefined && hit.kind === 'pin' && inst.titleAt.get(y) === hit.id
+        const room = ev.type === 'leave' || !drawn || !inColumn || !onPin ? null : hit.id
+        const thaw = ev.type === 'leave' && inst.frozen !== null
+        if (thaw) inst.frozen = null
+        if (room !== cur.hoverRoom || thaw) surface.setState({ ...cur, hoverRoom: room })
       }
     } catch {
       // a listener must never throw (the instance would unmount)
@@ -362,7 +386,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     inst.props = props
 
     // --- the model: the geometry, the office's table mode (from the last rank: the hysteresis), the cards, the line map, the hits ---
-    setModel(inst, props, decorOf(s))
+    // (the rooms in THE PIN'S PLACE while a pin click holds them: the props' order once the pointer left)
+    setModel(inst, inOrder(props, inst.frozen), decorOf(s))
     const model = inst.model
     const geo = model.geo
     const mode = model.mode
@@ -546,7 +571,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, children: rows.map(([, keys]) => Text({ dimColor: true, children: [nb(keys)] })) }),
       ] })
       overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, height: helpH, marginBottom: OVERLAY_GAP, width: '100%', overflow: 'hidden', children: [
-        line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 3))] }), Button({ key: 'closeHelp', plain: true, label: '✕', onPress: () => send(surface, inst, { t: 'help' }) })], { justifyContent: 'space-between', width: '100%' }),
+        // (its close as the drawer's — live check 7, R9: the native close role, the ✕ then the word, x; a close, never a flip)
+        line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
           Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, inst, { t: 'demo' }) }),
           Button({ key: 'still', ...hk('s'), plain: true, label: hb[1]!, onPress: () => send(surface, inst, { t: 'still' }) }),
@@ -621,7 +647,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
        * FIT), so the columns align across the cards — the task column takes what is left and has none.
        */
       const column = (name: keyof Floors | 'task', rows: readonly RowView[], pick: (r: RowView) => string, style: (r: RowView) => Record<string, unknown>, grow: boolean) => Box({
-        flexDirection: 'column', alignItems: edge, flexShrink: 0, flexGrow: grow ? 1 : 0, ...padEdge, ...(floors && name !== 'task' ? { minWidth: floors[name] } : {}),
+        flexDirection: 'column', alignItems: edge, flexShrink: 0, flexGrow: grow ? 1 : 0, ...padEdge, ...(name === 'status' ? { minWidth: model.statusMin } : floors && name !== 'task' ? { minWidth: floors[name] } : {}),
         children: rows.map(r => cell(pick(r), style(r))),
       })
       /**
@@ -638,8 +664,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const blank = (): RenderElement => Box({ height: 1 })
       /** The frame's bottom in a fragment (which has no border): one dim rule the column's width, cut by its Box. */
       const rule = (): RenderElement => Box({ height: 1, overflow: 'hidden', width: '100%', children: [Text({ dimColor: true, children: ['─'.repeat(Math.max(4, geo.W))] })] })
-      /** The `▸ עוד N שסיימו` / `▾ הסתר שסיימו` line, directly under the title (live check 7, Q3: it never moves with the rows it reveals). */
-      const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [room.more] })] })
+      /** The `▸ עוד N שסיימו` / `▾ הסתר שסיימו` line, directly under the title (live check 7, Q3: it never moves with the rows it reveals), in THE LINK COLOUR (Q7: what is clickable reads so at rest). */
+      const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ color: LINK_FG, children: [room.more] })] })
       /**
        * The table of a card: the window's rows as cells in the column Boxes the mode draws — the status, the who, the model (unless
        * the mode dropped it), the activity's emoji, its word (when the mode has it), the dim task from CENTRE_AT (the last column

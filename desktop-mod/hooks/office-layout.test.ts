@@ -673,34 +673,36 @@ test('officeModel: the line map of a card — border, pad, title, [the more line
   const pz = pinZone(atColumn(51))
   expect(m.hits).toEqual([
     { kind: 'pin', id: 'sess-a', x: 51 - pz, y: 2, w: pz, h: 1 },
-    { kind: 'moreDone', id: 'sess-a', x: 0, y: 3, w: 51, h: 1 },
-    { kind: 'agent', id: 'lead', x: 0, y: 5, w: 51, h: 1 },
-    { kind: 'agent', id: 'a1', x: 0, y: 6, w: 51, h: 1 },
-    { kind: 'agent', id: 'w', x: 0, y: 7, w: 51, h: 1 },
-    { kind: 'agent', id: 'm', x: 0, y: 8, w: 51, h: 1 },
+    { kind: 'moreDone', id: 'sess-a', x: 1, y: 3, w: 49, h: 1 },
+    { kind: 'agent', id: 'lead', x: 1, y: 5, w: 49, h: 1 },
+    { kind: 'agent', id: 'a1', x: 1, y: 6, w: 49, h: 1 },
+    { kind: 'agent', id: 'w', x: 1, y: 7, w: 49, h: 1 },
+    { kind: 'agent', id: 'm', x: 1, y: 8, w: 49, h: 1 },
   ])
   expect(hitAt(m, 50, 2)?.kind).toBe('pin')
   expect(hitAt(m, 3, 2)).toBeUndefined()         // the counts: read-only
   expect(hitAt(m, 25, 2)).toBeUndefined()        // the title itself is no control
   expect(hitAt(m, 25, 3)?.kind).toBe('moreDone') // the more line, under the title
   expect(hitAt(m, 25, 4)).toBeUndefined()        // the blank line
-  expect(hitAt(m, 0, 5)?.id).toBe('lead')
-  expect(hitAt(m, 50, 8)?.id).toBe('m')
+  expect(hitAt(m, 0, 5)).toBeUndefined()         // the card's border cells: nothing (live check 7, R9: the hit is the card's inside)
+  expect(hitAt(m, 50, 8)).toBeUndefined()
+  expect(hitAt(m, 1, 5)?.id).toBe('lead')
+  expect(hitAt(m, 49, 8)?.id).toBe('m')
   expect(hitAt(m, 25, 9)).toBeUndefined()        // the padding line
   expect(hitAt(m, 25, 11)).toBeUndefined()       // the gap
   expect(hitAt(m, 25, 12)).toBeUndefined()       // past the office
   // LTR: the pin zone at the left edge; the more line and the rows the same
   const ltr = officeModel(props({ rooms: [r], columns: 51 + PANE_GUTTER, rtl: false }))
   expect(ltr.hits[0]).toEqual({ kind: 'pin', id: 'sess-a', x: 0, y: 2, w: pz, h: 1 })
-  expect(ltr.hits[1]).toEqual({ kind: 'moreDone', id: 'sess-a', x: 0, y: 3, w: 51, h: 1 })
+  expect(ltr.hits[1]).toEqual({ kind: 'moreDone', id: 'sess-a', x: 1, y: 3, w: 49, h: 1 })
   expect(ltr.rooms[0]!.rows.map(x => x.status)).toEqual(['●', '●', '●', '⭐'])
   // THE FROZEN COLUMN: from CENTRE_AT the hits are the column's cells (x from the column's left edge, w its width), never the pane's
   const wide = officeModel(props({ rooms: [r], columns: 200 }))
   expect(wide.geo.margin).toBe(50)
-  expect(wide.hits.find(h => h.kind === 'agent')).toMatchObject({ x: 0, w: 100 })
+  expect(wide.hits.find(h => h.kind === 'agent')).toMatchObject({ x: 1, w: 98 })
   expect(wide.hits.find(h => h.kind === 'pin')).toMatchObject({ x: 100 - pinZone(geometry(200)), w: pinZone(geometry(200)) })
-  expect(hitAt(wide, 99, 5)?.id).toBe('lead')
-  expect(hitAt(wide, 100, 5)).toBeUndefined()
+  expect(hitAt(wide, 98, 5)?.id).toBe('lead')
+  expect(hitAt(wide, 99, 5)).toBeUndefined()
   // no more label: no more line
   const plain = officeModel(props({ rooms: [room()] }))
   expect(plain.hits.map(h => h.kind)).toEqual(['pin', 'agent', 'agent'])

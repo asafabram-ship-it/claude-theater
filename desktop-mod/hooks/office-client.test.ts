@@ -450,7 +450,9 @@ test('render: the chrome (header with the words and a blank line, the toolbar wi
   const cols = columnsOf(card!)
   expect(cols).toHaveLength(5)
   expect(cols.map(c => c.props.flexGrow)).toEqual([0, 0, 0, 0, 1])
-  expect(cols.every(c => c.props.flexShrink === 0 && c.props.flexDirection === 'column' && c.props.alignItems === 'flex-end' && c.props.paddingLeft === 1 && c.props.paddingRight === undefined && c.props.minWidth === undefined)).toBe(true)
+  expect(cols.every(c => c.props.flexShrink === 0 && c.props.flexDirection === 'column' && c.props.alignItems === 'flex-end' && c.props.paddingLeft === 1 && c.props.paddingRight === undefined)).toBe(true)
+  // the status column floored at every width (live check 7, R10: the focus marker never widens it); the others from WIDE_FROM
+  expect(cols.map(c => c.props.minWidth)).toEqual([officeModel(p).statusMin, undefined, undefined, undefined, undefined])
   for (const col of cols) {
     const cells = cellsOf(col)
     expect(cells).toHaveLength(2)
@@ -752,8 +754,10 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   f.pointer({ type: 'down', x: X(LAST - 2), y: C + y('agent', 'lead'), button: 'left' })
   expect(f.posts).toEqual([{ t: 'open', id: 'lead' }])
   f.pointer({ type: 'up', x: X(LAST - 2), y: C + y('agent', 'lead'), button: 'left' })
-  // the second row, at its far end
+  // the second row, at its far end inside the frame (the border cell beside it is nothing: live check 7, R9)
   f.pointer({ type: 'down', x: X(0), y: C + y('agent', 'a1'), button: 'left' })
+  expect(f.posts).toHaveLength(1)
+  f.pointer({ type: 'down', x: X(1), y: C + y('agent', 'a1'), button: 'left' })
   expect(f.posts[1]).toEqual({ t: 'open', id: 'a1' })
   // the pin zone at the right edge of the title line; the counts at the left edge are read-only (live check 7, Q6), the title
   // between them is nothing
@@ -771,11 +775,15 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   f.pointer({ type: 'down', x: 5, y: C + y('agent', 'lead'), button: 'right' })
   expect(f.posts.length).toBe(4)
   // the head hover: a move over the title line → setState with hoverRoom, the card draws a dim 📌; a second move there changes nothing
+  // (over the PIN ZONE alone — live check 7, R9: the hover zone is the hit zone; the title's middle lights nothing)
   const sets = f.setStates()
   f.pointer({ type: 'move', x: 20, y: C + y('pin', 'A') })
+  expect(f.surface.state!.hoverRoom).toBe(null)
+  expect(f.setStates()).toBe(sets)
+  f.pointer({ type: 'move', x: X(LAST - 2), y: C + y('pin', 'A') })
   expect(f.surface.state!.hoverRoom).toBe('A')
   expect(f.setStates()).toBe(sets + 1)
-  f.pointer({ type: 'move', x: 30, y: C + y('pin', 'A') })
+  f.pointer({ type: 'move', x: X(LAST - 1), y: C + y('pin', 'A') })
   expect(f.setStates()).toBe(sets + 1)
   let tree = Office(p, f.surface)
   const pinOfTree = (t: unknown) => pinOf(cards(t)[0]!)
@@ -792,9 +800,11 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   expect(pinOfTree(tree)).toBeUndefined()   // no pin cell at all: the title flush at the reading edge again
   expect((partsOf(cards(tree)[0]!).title.children as Node[]).map(n => n.type)).toEqual(['Box', 'Box'])
   expect(nodes(tree).some(n => typeof n.props.backgroundColor === 'string')).toBe(false)
+  expect(f.surface.state!.inst.frozen).not.toBeNull()   // (THE PIN'S PLACE: the pin click above holds the cards' order...)
   f.pointer({ type: 'leave', x: 0, y: 0 })
+  expect(f.surface.state!.inst.frozen).toBeNull()       // (... until the pointer leaves: one redraw releases it)
   f.pointer({ type: 'leave', x: 0, y: 0 })
-  expect(f.setStates()).toBe(sets + 2)
+  expect(f.setStates()).toBe(sets + 3)
   expect(f.posts.length).toBe(4)   // no post for any move/leave
   // a click on a row also takes the keyboard focus there: the marker on the inner side of its status mark (the mark itself at the edge)
   expect(f.surface.state!.focus).toBe('a1')
@@ -813,8 +823,8 @@ test('pointer: down → hit → one post (open on a row, pin at the reading edge
   expect(pinOfTree(Office(q, g.surface))!.props.dimColor).toBeUndefined()
   g.pointer({ type: 'down', x: X(LAST), y: Cq + 2, button: 'left' })
   expect(g.posts).toEqual([{ t: 'pin', room: 'B' }])
-  // a pin click clears the head hover with it (the rooms reorder: a dim 📌 must not ride the room to its new card)
-  f.pointer({ type: 'move', x: 20, y: C + y('pin', 'A') })
+  // a pin click clears the head hover with it (the props' bright 📌 replaces it)
+  f.pointer({ type: 'move', x: X(LAST - 2), y: C + y('pin', 'A') })
   expect(f.surface.state!.hoverRoom).toBe('A')
   f.pointer({ type: 'down', x: X(LAST), y: C + y('pin', 'A'), button: 'left' })
   expect(f.surface.state!.hoverRoom).toBeNull()
@@ -961,7 +971,7 @@ test('THE OVERLAY IN VIEW (render): a drawer or the settings opened while the pa
   const f3 = byKey(atTitle, 'fragment')!
   expect((f3.children as Node[]).length).toBe(5)
   expect(texts((f3.children as Node[])[0])).toContain(nb('room B'))
-  g.pointer({ type: 'move', x: 20, y: C2 + 39 })
+  g.pointer({ type: 'move', x: geometry(45).margin + geometry(45).W - 2, y: C2 + 39 })
   expect(g.surface.state!.hoverRoom).toBe('B')
   expect(texts(((byKey(Office({ ...two, offset: 6 + 39 }, g.surface), 'fragment')!.children as Node[])[0]!.children as Node[])[0])).toBe(PIN)
   g.pointer({ type: 'down', x: geometry(45).margin + geometry(45).W - 1, y: C2 + 39, button: 'left' })
@@ -1124,7 +1134,7 @@ test('the row budget\'s cut: the cut card is drawn whole in the viewport — its
   expect(f.posts).toHaveLength(1)
   f.pointer({ type: 'move', x: 20, y: C + 130 })                         // B's title: no head hover (nothing drawn there)
   expect(f.surface.state!.hoverRoom).toBeNull()
-  f.pointer({ type: 'move', x: 20, y: C + 2 })                           // A's title: in the window
+  f.pointer({ type: 'move', x: 41, y: C + 2 })                           // A's pin zone: in the window
   expect(f.surface.state!.hoverRoom).toBe('A')
   f.pointer({ type: 'down', x: 5, y: C + 104, button: 'left' })         // the last row drawn
   expect(f.posts[1]).toEqual({ t: 'open', id: 'g99' })
@@ -1445,7 +1455,8 @@ test('the drawer (a card in the cards\' style), the settings popover and the emp
   expect(texts(tree)).not.toMatch(/found 3 docs/)
   const closeHelp = nodes(tree).find(n => n.type === 'Button' && n.props.key === 'closeHelp')!
   ;(closeHelp.props.onPress as () => void)()
-  expect(f.posts[1]).toEqual({ t: 'help' })
+  expect(f.posts[1]).toEqual({ t: 'close' })   // (a close, never a flip — as the drawer's: live check 7, R9)
+  expect(closeHelp.props).toMatchObject({ role: 'dismiss', hotkey: 'x', label: 'סגירה ✕' })
   // the toolbar, and the settings' own Buttons (the popover is open here)
   for (const [key, t2] of [['showDone', 'showDone'], ['mute', 'mute'], ['help', 'help'], ['demo', 'demo'], ['still', 'still'], ['lang', 'lang']] as const) {
     const b = nodes(tree).find(n => n.type === 'Button' && n.props.key === key)!
@@ -1957,7 +1968,8 @@ test('THE READING COLUMN (probe round 8; live check 6): the root is the column �
   const narrow = Office(props({ columns: 81, rooms }), fake(81).surface) as unknown as Node
   expect(narrow.props).toEqual({ flexDirection: 'column', width: 79, flexShrink: 0, marginLeft: 1 })
   expect(cards(narrow)[0]!.props.paddingX).toBe(1)
-  expect(columnsOf(cards(narrow)[0]!).every(c => c.props.minWidth === undefined)).toBe(true)
+  expect(columnsOf(cards(narrow)[0]!).slice(1).every(c => c.props.minWidth === undefined)).toBe(true)   // (the status column's floor at every width: R10)
+  expect(typeof columnsOf(cards(narrow)[0]!)[0]!.props.minWidth).toBe('number')
   expect(columnsOf(cards(narrow)[0]!)).toHaveLength(5)
   // from WIDE_FROM: the padding 2, the floors on every column, the same on every card
   const wide = Office(props({ columns: 82, rooms }), fake(82).surface) as unknown as Node
@@ -1996,13 +2008,13 @@ test('THE READING COLUMN (probe round 8; live check 6): the root is the column �
   f.pointer({ type: 'down', x: 20 + 100 + 3, y: C + yLead, button: 'left' })
   f.pointer({ type: 'down', x: 139, y: C + 2, button: 'left' })
   expect(f.posts).toHaveLength(2)
-  f.pointer({ type: 'move', x: 20 + 50, y: C + 2 })
+  f.pointer({ type: 'move', x: 20 + 97, y: C + 2 })   // (the pin zone: the hover zone is the hit zone)
   expect(f.surface.state!.hoverRoom).toBe('A')
   expect(f.surface.state!.inst.margin).toBe(20)
   // a pointer in a margin hovers nothing (as a click there hits nothing): off the column's cells on either side of A's title line
   f.pointer({ type: 'move', x: 5, y: C + 2 })
   expect(f.surface.state!.hoverRoom).toBeNull()
-  f.pointer({ type: 'move', x: 20 + 50, y: C + 2 })
+  f.pointer({ type: 'move', x: 20 + 97, y: C + 2 })
   expect(f.surface.state!.hoverRoom).toBe('A')
   f.pointer({ type: 'move', x: 20 + 100 + 2, y: C + 2 })
   expect(f.surface.state!.hoverRoom).toBeNull()

@@ -22,7 +22,7 @@ import {
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
 import { REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
-import { geometry, officeModel, rowCount, type Hit } from './office-layout'
+import { geometry, officeModel, rowCount } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'

@@ -1,32 +1,42 @@
 // The desktop office: ONE surface module draws the whole pane (chrome + the
-// room cards) from OfficeProps, hit-tests the pointer and posts actions to the
-// hooks. No `$` here: everything reaches the hooks through `surface.post`, and
-// the hooks reach the module through new props (a redraw, or a `ui.message`
-// hook answering `{ props }`). The chrome's pure maths (heights, the drawer's
-// lines, the window) are office-chrome.ts, shared with the hooks; the view
-// model, the geometry, the table mode and the line map are office-layout.ts.
+// room cards) from OfficeProps and posts the person's actions to the hooks —
+// every click a native Button's press (phase B). No `$` here: everything
+// reaches the hooks through `surface.post`, and the hooks reach the module
+// through new props (a redraw, or a `ui.message` hook answering `{ props }`).
+// The chrome's pure maths (heights, the drawer's lines, the window) are
+// office-chrome.ts, shared with the hooks; the view model, the geometry, the
+// table mode and the line map are office-layout.ts.
 //
 // THE CARDS (docs/superpowers/specs/2026-10-19-office-cards-design.md; the
-// approved probe docs/research/2026-10-19-cards-probe/register.tsx, round 9):
-// the header line (bold counts at the reading edge, the dim 5h meter at the
-// other), the toolbar (`הצג שסיימו ☐` · `צליל 🔔` · `הגדרות ⚙️`, gap 2) — the
-// search field beside it on the same line from ONE_LINE_FROM columns, under it
-// on a line of its own below that, and only while the office holds more than
-// SEARCH_FROM agents or a search is active — then a framed card per room: the
-// title line (the title flush at the reading edge — a 📌 before it only when
-// the room is pinned or its pin zone is under the pointer — the read-only counts
-// at the other edge, the title cut on a word), under it the room's ONE finished
-// toggle (`עוד 2 שסיימו ◂` / `הסתר שסיימו ▾`, read arrow first — iconLabel —
-// only past RECENT_DONE finished: live check 7, Q3 + Q6), a BLANK line (no
-// rule), and the agents
-// as a COLUMN-MAJOR table — rigid column Boxes (status mark · who · [model] ·
+// approved probe docs/research/2026-10-19-cards-probe/register.tsx, round 9;
+// phase B: its "Paint probe" and "Phase B, decided" sections — decision 26 of
+// the client-office spec): the header line (bold counts at the reading edge,
+// the dim 5h meter at the other), the toolbar (`הצג שסיימו ☐` · `צליל 🔔` ·
+// `הגדרות ⚙️`, gap 2) — the search field beside it on the same line from
+// ONE_LINE_FROM columns, under it on a line of its own below that, and only
+// while the office holds more than SEARCH_FROM agents or a search is active —
+// then a framed card per room: the title line (THE PIN: a plain Button on
+// EVERY title — the colour 📌 of a pinned room, the monochrome 📌︎ (PIN_OFF,
+// VS15) otherwise, one width either way, so the title never moves and nothing
+// is revealed on hover: none draws inside a Client on the desktop — then the
+// title flush at the reading edge, the read-only counts at the other edge, the
+// title cut on a word), under it the room's ONE finished toggle (`עוד 2 שסיימו
+// ◂` / `הסתר שסיימו ▾`, the arrow at the string's end — office-layout.ts
+// MORE_MARK, iconLabel — only past RECENT_DONE finished: live check 7, Q3 + Q6;
+// a plain Button of regular weight), a BLANK line (no rule), and the agents as
+// a COLUMN-MAJOR table — rigid column Boxes (status mark · who · [model] ·
 // activity emoji · [activity word] · [task]), the padding cell on the column's
-// reading side, every value ONE Text with no plain space in it (office-layout.ts
-// nb: a value a little too long is clipped at the card's edge, never wrapped
-// onto a second line — the desktop does not enforce `wrap: 'truncate'`), so
-// rows align across the desktop's proportional font and no wrap can change a
-// row's height — and a row costs the desktop one Text per column and no Box
-// (THE RENDER COST: office-client.test.ts guards the node count per row and per
+// reading side, every value ONE line with no plain space in it
+// (office-layout.ts nb: a value a little too long is clipped at the card's
+// edge, never wrapped onto a second line — the desktop does not enforce
+// `wrap: 'truncate'`), so rows align across the desktop's proportional font and
+// no wrap can change a row's height. The status mark is a coloured Text; every
+// other value is a plain Button whose one Text child carries the row's weights
+// — inside a Button the desktop keeps bold and dim alone (colour, underline
+// and italic are lost there: paint probe 22.10), and a native Button hits right
+// at any depth, where a y hit-test did not — so a row costs the desktop the
+// mark's Text and a Button-with-Text pair per value column, and no Box (THE
+// RENDER COST: office-client.test.ts guards the node count per row and per
 // card). THE WIDTH (probe rounds 8-9, office-layout.ts geometry): one reading
 // column, the pane less a cell at each edge (PANE_GUTTER, live check 6: the
 // Client lays out a hair wider than the visible pane, and the cards' right
@@ -51,7 +61,8 @@
 // at the reading edge); ⭐ ❌ ⏰ ride the status column (office-layout.ts
 // markOf) — the ⭐ is the whole finish: no tint on the row (live check 6: the
 // tint flashed a near-black band on the light theme), so the module lays no
-// background on anything. The drawer is a card
+// background on anything of the column (the floating overlay's is the theme's,
+// below). The drawer is a card
 // in the same style with ONE dim status line (`● עובד · זמן 12 דק׳ · Explore`)
 // and a blank line before its content; the settings popover (titled הגדרות)
 // holds the demo and language Buttons (no motion toggle: nothing read it — live
@@ -65,44 +76,55 @@
 // demo's cast is never taken for the office (the chrome a row taller:
 // office-chrome.ts DEMO_ROWS).
 //
-// Geometry (spec §2 item 11, Phase 0): the engine scrolls natively over a
-// Client as tall as the content (`officeHeight`); `props.offset` is the
-// engine's window offset — clamped to the content (live check 7: a click that
-// shortened the office hands the old offset until the engine asks again, and
-// every redraw until then keeps the clamp) —
-// and `props.rows` the pane's body height. The module
-// draws the fixed chrome, then ONE spacer Box for the lines above the window's
-// first card, then only the cards the window touches: every card drawn whole
-// (its frame, title, more line, blank line), its agent rows only where they lie
-// in the window (office-layout.ts trimWindow caps them at WINDOW_ROWS), a
-// spacer Box in each column standing in for the rows above and below — the
-// lines above the window lie above the viewport, which the native scroll
-// hides. The settings | drawer: under the fixed chrome while the pane is at the
-// top or the overlay is as tall as the window; else (office-chrome.ts
-// overlayInWindow) AT THE WINDOW'S TOP — after a spacer of every line above
-// the window, at Client row `offset`, so it opens in view however far the pane
-// is scrolled and the cards under it stay where they were — and the card the
-// window's top cuts through goes on under it from the window's first line as
-// a frameless FRAGMENT (its lines from there to its bottom, the frame's bottom
-// a rule, nothing of it above the window). Layout line y is Client row
-// chromeRows + y either way, so a hit is `hitAt(model, x - margin, y - chromeRows)`
-// on the line map (the centring margin off the pointer's x) — on the lines
-// DRAWN in the viewport only: the window's lines, and past the row budget's cut
-// the frame, title and more lines of a card the window touches (drawn whole, so
-// live); a row the budget left blank, a card past the cut or the spacer above
-// answers nothing. The keyboard walk (j / k) keeps to the agent rows drawn, and
-// `o` opens the focus only while its row is among them.
+// Geometry (spec §2 item 11, Phase 0; phase B, decision 26): the engine
+// scrolls natively over a Client as tall as the content (`officeHeight`);
+// `props.offset` is the engine's window offset — clamped to the content (live
+// check 7: a press that shortened the office hands the old offset until the
+// engine asks again, and every redraw until then keeps the clamp) — and
+// `props.rows` the pane's body height. THE WINDOW WITH OVERSCAN: on the desktop
+// a card frame's border rows are half a cell (paint probe 22.10: six frames
+// above a row put the engine's y, the scroll offset and an absolute Box's top
+// about six rows off the drawn lines), so a window computed from the offset
+// starts about a card too early or too late; the module therefore draws every
+// line while the office has at most WINDOW_ROWS lines, and otherwise up to a
+// body of lines on each side of the window the offset names, capped so the
+// window never passes WINDOW_ROWS lines (office-chrome.ts overscanOf, windowOf:
+// the drift is about a line per card above the window, so sixteen lines on a
+// 39-row body cover sixteen cards; the serialized tree stays under the
+// engine's bound) — the drift can never leave a blank row in view — and the
+// row budget (office-layout.ts trimWindow, WINDOW_ROWS) still caps the agent
+// rows. The module draws the fixed chrome, then ONE spacer Box for the
+// lines above the first card drawn, then only the cards the window touches:
+// every card drawn whole (its frame, title, more line, blank line), its agent
+// rows only where they lie in the window, a spacer Box in each table standing
+// in for the rows above and below — the lines above the window lie above the
+// viewport, which the native scroll hides. THE FLOATING OVERLAY: the settings |
+// drawer is ONE absolute Box from the root — `position: 'absolute'` at
+// `top: max(offset, chrome)` (the engine lays an absolute Box against the root
+// in its own cells, as the offset is: it sits at the visible window's top
+// however far the pane is scrolled, under the fixed chrome at the top), at the
+// reading column's margin and width, on `backgroundColor: 'inverseText'` (the
+// theme's: it hides the rows under it on the light and the dark pane alike,
+// where a raw colour tinted the light one), its fixed height per width — so it
+// takes no row of the flow (chromeRows no longer counts it, officeHeight
+// shrank by it) and nothing under it moves when it opens; painted after the
+// column, as the root's last child. The keyboard walk (j / k) keeps to the
+// agent rows drawn, and `o` opens the focus only while its row is among them.
 //
-// The clicks (live check 7, "the buttons are not smooth"): a row's click opens
-// its drawer and a second click on the open one closes it; a row's and the more
-// line's hit is the card's inside, the dim 📌 lights over the pin's zone alone;
-// a pin click keeps the cards in the order drawn until the pointer leaves the
-// office (THE PIN'S PLACE, `inst.frozen`: the bright 📌 at once, the card to the
-// top then — never a jump under the pointer) and the hover on the clicked room
-// (its 📌 drawn dim until the answer brings the bright one: the title never
-// slides between the two); the demo's switches post their
-// target; an Enter that follows typing in the search is the field's
-// (`inst.typing`), o and an Enter after a click or a walk key open the focus.
+// The clicks (phase B, decision 26 — live check 7's "the buttons are not
+// smooth" was the y drift above): every click is a native plain Button — the
+// row's cells (who, model, emoji, word, task: a press opens the agent's drawer,
+// or closes it when it is the open one — a close, never a flip in the hooks),
+// the pin on every title, the more line, the closes (`role: 'dismiss'`), the
+// toolbar's and the settings' — so nothing is hit-tested by y and the pointer's
+// x is never read; the pointer is read for ONE thing, its `leave` (it reaches
+// the module without a Button): a pin press keeps the cards in the order drawn
+// until the pointer leaves the office (THE PIN'S PLACE, `inst.frozen`: the
+// colour 📌 at once, the card to the top then — never a jump under the
+// pointer); no hover of any kind draws inside a Client on the desktop, so none
+// is kept. The demo's switches post their target; an Enter that follows typing
+// in the search is the field's (`inst.typing`), o and an Enter after a press
+// or a walk key open the focus.
 //
 // Discipline (spec §7.3-7.4, Phase 0): no clock runs but the search's debounce
 // and THE OUTBOX's clearing (`surface.every`, one-shots started from events:
@@ -110,7 +132,8 @@
 // 7, R12); the render never calls `setState` (the one
 // init aside) — what must survive between renders without a redraw lives in
 // `state.inst`, a record mutated in place (the model, the mode's rank, the
-// search text); `setState` is called only from events (a pointer, a key). The
+// search text); `setState` is called only from events (a press, a key, the
+// pointer's leave). The
 // search Input draws the text typed, not `props.search`, so a publish between
 // keystrokes cannot reset it; the `search` post is debounced. The render is
 // wrapped in try/catch and draws a short red Text instead of throwing (spec
@@ -134,10 +157,10 @@
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { COMPACT_BELOW, DRAWER_FRAME_ROWS, OVERLAY_GAP, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overlayInWindow, searchShown, windowOf } from './office-chrome'
+import { COMPACT_BELOW, DRAWER_FRAME_ROWS, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overscanOf, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { CARD_BORDER, FIT, LINK_FG, NBSP, NO_DECOR, PIN, TITLE_GAP, cut, fitCells, fitLine, geometry, hitAt, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
-import type { Floors, Geo, Hit, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
+import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import type { Floors, Geo, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeBatch, OfficeItem, OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
 
@@ -169,9 +192,8 @@ const KEY_MESSAGES: Record<string, OfficeMessage> = {
 /** What survives between renders without a redraw: mutated in place, never replaced. */
 export type OfficeInst = {
   props: OfficeProps
+  /** The fixed chrome's rows (fixedRows and the footer): the Client row the layout's line 0 starts at. The overlay floats and takes none. */
   chrome: number
-  /** The reading column's centring margin as last drawn: taken off the pointer's x before the hit test. */
-  margin: number
   model: OfficeModel
   /** THE HYSTERESIS: the table mode last chosen — its rank and the widest values it was chosen from (office-layout.ts ModeToken), null before the first model. Never in the props. */
   lastMode: ModeToken | null
@@ -179,19 +201,13 @@ export type OfficeInst = {
   rowAt: Map<string, number>
   /** The agent ids in line order. */
   order: string[]
-  /** Line y → the UNPINNED room whose title line it is: the head hover. A pinned head draws its 📌 anyway, so the pointer moving over it sets no hoverRoom — no setState, no redraw for a change nothing would show (a pin click sets it on the clicked room, pinned or not: its unpin is drawn dim at once). */
-  titleAt: Map<number, string>
-  /** The window last drawn: [from, from + count) — the lines whose agent rows are drawn (the row budget's cut included). */
+  /** The window last drawn: [from, from + count) — the lines whose agent rows are drawn (the overscan included, the row budget's cut applied): what the keyboard walk keeps to. */
   win: { from: number; count: number }
-  /** The viewport's lines from `win.from` (before the row budget's cut): a line of a drawn card past the cut is drawn too, and live, unless it is an agent row. */
-  view: number
-  /** The rooms whose card the window touches: drawn whole (or as the fragment), so their non-row lines past the row budget are live. */
-  drawn: Set<string>
   /** THE ROOM MEMO (office-layout.ts roomCache): a room's texts are measured again only when its props, the width or the mode changed. */
   cache: RoomCache
   /**
-   * THE PIN'S PLACE (live check 7, Q4): the rooms' order as drawn when a pin was clicked, kept until the pointer leaves the
-   * office — the pinned card shows its bright 📌 at once but moves to the top only then, so a second click on the same cell
+   * THE PIN'S PLACE (live check 7, Q4): the rooms' order as drawn when a pin was pressed, kept until the pointer leaves the
+   * office — the pinned card shows its colour 📌 at once but moves to the top only then, so a second press on the same Button
    * is the same pin (it once jumped to the top under the pointer, and the cell became another card's row). Null: the props' order.
    */
   frozen: string[] | null
@@ -203,7 +219,7 @@ export type OfficeInst = {
   debounce: (() => void) | null
   /** The Client rows of the content last drawn under an offset of its own (chrome and layout lines) — kept, the taller, while the offset handed is stale: what tells a stale offset (THE STALE OFFSET, R13). */
   height: number
-  /** Text was typed into the search field since the last click or walk key: an Enter onKey sees then is the field's (R14). */
+  /** Text was typed into the search field since the last press or walk key: an Enter onKey sees then is the field's (R14). */
   typing: boolean
   /** THE OUTBOX: this instance's id (the hooks number its actions apart from another instance's), the last number given, the actions not yet cleared, the clock that clears them. */
   id: string
@@ -211,8 +227,8 @@ export type OfficeInst = {
   outbox: OfficeItem[]
   flush: (() => void) | null
 }
-/** The local state: what a redraw reads (`setState` only from events). `hoverRoom` is the room whose title line is under the pointer. */
-export type OfficeState = { hoverRoom: string | null; focus: string | null; inst: OfficeInst }
+/** The local state: what a redraw reads (`setState` only from events). `focus` is the keyboard focus (j / k): the one decor the model lays. */
+export type OfficeState = { focus: string | null; inst: OfficeInst }
 
 type Surface = ClientSurface<OfficeState>
 
@@ -232,12 +248,41 @@ function send(surface: Surface, inst: OfficeInst, m: OfficeMessage): void {
   inst.flush = stop
 }
 
+// --- the presses: every click in the office is a native plain Button's (phase B, decision 26); each makes the keyboard's Enter the
+//     office's again (R14: an Enter after a press opens the focus, not the search field) ---
+
+/** A row cell's press: the agent's drawer opens — or closes when it is the open one (live check 7, Q2: a close, never a flip in the hooks); the keyboard focus follows the press; an Enter after it is the office's again (R14). */
+function pressAgent(surface: Surface, id: string): void {
+  const cur = surface.state
+  if (!cur) return
+  const inst = cur.inst
+  inst.typing = false
+  if (cur.focus !== id) surface.setState({ ...cur, focus: id })
+  send(surface, inst, inst.props.drawer?.id === id ? { t: 'close' } : { t: 'open', id })
+}
+/** The pin Button's press: THE PIN'S PLACE (Q4) — the rooms keep the order drawn now until the pointer leaves the office (the pinned card moves to the top then, never under the pointer); the answer's props draw the colour 📌 on the same Button, one width with the monochrome one: no reflow. */
+function pressPin(surface: Surface, room: string): void {
+  const cur = surface.state
+  if (!cur) return
+  const inst = cur.inst
+  inst.typing = false
+  inst.frozen ??= inst.model.rooms.map(r => r.id)
+  send(surface, inst, { t: 'pin', room })
+}
+/** The more / hide line's press: the room's one finished toggle (Q3, Q6). */
+function pressMore(surface: Surface, room: string): void {
+  const cur = surface.state
+  if (!cur) return
+  cur.inst.typing = false
+  send(surface, cur.inst, { t: 'roomDone', room })
+}
+
 // ---------------------------------------------------------------------------
 // the instance
 // ---------------------------------------------------------------------------
 
 /**
- * THE PIN'S PLACE (live check 7, Q4): the props with their rooms in `order` (the order drawn when a pin was clicked) — a room
+ * THE PIN'S PLACE (live check 7, Q4): the props with their rooms in `order` (the order drawn when a pin was pressed) — a room
  * not in it after those, in the props' order; one no longer in the props dropped. Null: the props as they are.
  */
 export function inOrder(p: OfficeProps, order: readonly string[] | null): OfficeProps {
@@ -248,21 +293,18 @@ export function inOrder(p: OfficeProps, order: readonly string[] | null): Office
   return rooms.every((r, i) => r === p.rooms[i]) ? p : { ...p, rooms }
 }
 
-/** The decor from the local state: the hovered head and the keyboard focus. */
+/** The decor from the local state: the keyboard focus (no hover: the desktop draws none inside a Client — paint probe 22.10). */
 function decorOf(s: OfficeState): OfficeDecor {
-  return { hoverRoom: s.hoverRoom, focus: s.focus }
+  return { focus: s.focus }
 }
 
-/** The model of the props under the decor (the table mode from the last one's token: the hysteresis), and the indexes the events read from it (the rows' lines, their order, the unpinned heads). */
+/** The model of the props under the decor (the table mode from the last one's token: the hysteresis), and the indexes the keys read from it (the rows' lines, their order). */
 function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
   const model = officeModel(p, d, inst.cache, inst.lastMode)
   inst.lastMode = model.token
   const rowAt = new Map<string, number>()
   const order: string[] = []
-  const titleAt = new Map<number, string>()
-  const pinned = new Set(p.rooms.filter(r => r.pinned).map(r => r.id))
   for (const room of model.rooms) {
-    if (!pinned.has(room.id)) titleAt.set(room.titleAt, room.id)
     for (const row of room.rows) {
       rowAt.set(row.id, row.y)
       order.push(row.id)
@@ -271,13 +313,12 @@ function setModel(inst: OfficeInst, p: OfficeProps, d: OfficeDecor): void {
   inst.model = model
   inst.rowAt = rowAt
   inst.order = order
-  inst.titleAt = titleAt
 }
 
 function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
-    props: p, chrome: 0, margin: 0, model: { rooms: [], lines: [], hits: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null, statusMin: 0 }, lastMode: null, frozen: null,
-    rowAt: new Map(), order: [], titleAt: new Map(), win: { from: 0, count: 0 }, view: 0, drawn: new Set(), cache: roomCache(), drawerKey: '', drawer: [],
+    props: p, chrome: 0, model: { rooms: [], lines: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null, statusMin: 0 }, lastMode: null, frozen: null,
+    rowAt: new Map(), order: [], win: { from: 0, count: 0 }, cache: roomCache(), drawerKey: '', drawer: [],
     query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null, typing: false, height: 0,
     id: Math.random().toString(36).slice(2, 10) || 'office', seq: 0, outbox: [], flush: null,
   }
@@ -305,48 +346,14 @@ function postSearch(surface: Surface, inst: OfficeInst, q: string): void {
 function listen(surface: Surface): void {
   surface.onPointer(ev => {
     try {
+      // every click is a native Button's press (phase B, decision 26: the engine's y drifts a row per card against the drawn
+      // rows); the pointer is read for one thing — its LEAVE releases THE PIN'S PLACE, so a pinned card moves to the top
+      // only once the pointer is out of the office
+      if (ev.type !== 'leave') return
       const cur = surface.state
-      if (!cur) return
-      const inst = cur.inst
-      // only the lines drawn in the viewport answer: the window's lines, and — past the row budget's cut but inside the
-      // viewport — the frame, title and more lines of a card the window touches (drawn whole); not the chrome, not the
-      // spacer above the window, not a row the budget left blank, not a card past the cut. The x in the reading column's
-      // cells: the centring margin off it (a pointer in a margin lies outside the column's hits and hits nothing)
-      const y = ev.y - inst.chrome
-      const x = ev.x - inst.margin
-      const { from, count } = inst.win
-      const line = inst.model.lines[y]
-      const drawn = (y >= from && y < from + count) || (y >= from + count && y < from + inst.view && line !== undefined && line.kind !== 'row' && inst.drawn.has(line.room))
-      const hit: Hit | undefined = drawn ? hitAt(inst.model, x, y) : undefined
-      if (ev.type === 'down') {
-        if (ev.button !== 'left') return
-        inst.typing = false   // (a click: the keyboard's Enter is the office's again)
-        if (!hit) return
-        if (hit.kind === 'agent') {
-          if (cur.focus !== hit.id) surface.setState({ ...cur, focus: hit.id })
-          // a second click on the agent whose drawer is open closes it (live check 7, Q2) — a close, never a flip in the hooks
-          send(surface, inst, inst.props.drawer?.id === hit.id ? { t: 'close' } : { t: 'open', id: hit.id })
-        } else if (hit.kind === 'pin') {
-          // THE PIN'S PLACE (Q4): the rooms keep the order drawn now until the pointer leaves the office (the pinned card moves to
-          // the top then); the head hover set ON the clicked room (live check 7 review: cleared, the 📌 went until the answer
-          // came — the title slid by the pin and its gap and back; dim and bright are one width, so a pin goes dim → bright and
-          // an unpin bright → dim with no reflow, and a click with no hover before it shows the dim 📌 at once)
-          inst.frozen ??= inst.model.rooms.map(r => r.id)
-          if (cur.hoverRoom !== hit.id) surface.setState({ ...cur, hoverRoom: hit.id })
-          send(surface, inst, { t: 'pin', room: hit.id })
-        } else send(surface, inst, { t: 'roomDone', room: hit.id })   // the "more / hide finished" line under the title: the room's one toggle
-      } else if (ev.type === 'move' || ev.type === 'leave') {
-        // the unpinned room whose PIN ZONE is under the pointer (its dim 📌 — live check 7, R9: the hover zone is the hit zone,
-        // once the whole title line lit a pin that only seven cells pinned): one setState when it changes; a pointer in a
-        // centring margin (off the column's cells, as for a click) hovers nothing. The pointer leaving the office releases THE
-        // PIN'S PLACE: the rooms in the props' order (a pinned card to the top)
-        const inColumn = x >= 0 && x < inst.model.geo.W
-        const onPin = hit !== undefined && hit.kind === 'pin' && inst.titleAt.get(y) === hit.id
-        const room = ev.type === 'leave' || !drawn || !inColumn || !onPin ? null : hit.id
-        const thaw = ev.type === 'leave' && inst.frozen !== null
-        if (thaw) inst.frozen = null
-        if (room !== cur.hoverRoom || thaw) surface.setState({ ...cur, hoverRoom: room })
-      }
+      if (!cur || cur.inst.frozen === null) return
+      cur.inst.frozen = null
+      surface.setState({ ...cur })
     } catch {
       // a listener must never throw (the instance would unmount)
     }
@@ -411,25 +418,24 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     let s = surface.state
     if (s === undefined) {
       listen(surface)
-      s = { hoverRoom: null, focus: null, inst: newInst(props) }
+      s = { focus: null, inst: newInst(props) }
       surface.setState(s)
     }
     const inst = s.inst
     inst.props = props
 
-    // --- the model: the geometry, the office's table mode (from the last rank: the hysteresis), the cards, the line map, the hits ---
-    // (the rooms in THE PIN'S PLACE while a pin click holds them: the props' order once the pointer left)
+    // --- the model: the geometry, the office's table mode (from the last rank: the hysteresis), the cards, the line map ---
+    // (the rooms in THE PIN'S PLACE while a pin press holds them: the props' order once the pointer left)
     setModel(inst, inOrder(props, inst.frozen), decorOf(s))
     const model = inst.model
     const geo = model.geo
     const mode = model.mode
     const floors: Floors | null = model.floors
-    inst.margin = geo.margin
 
-    // --- the drawer's lines, memoised (they decide the chrome's height); the key assigned after the lines ---
+    // --- the drawer's lines, memoised (they decide the overlay's height); the key assigned after the lines ---
     const inner = drawerInner(props.columns)
     if (props.drawer && !props.helpOpen) {
-      // (padded as the hooks' overlayRows pads it: drawerMax, or what a short pane leaves it — drawerPad)
+      // (padded as the hooks' overlayHeight pads it: drawerMax, or what a short pane leaves it — drawerPad)
       const limits = drawerLimits(props.columns)
       const pad = drawerPad(limits, props.rows)
       const dk = JSON.stringify([props.columns, props.lang, pad, props.drawer])
@@ -448,13 +454,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (inst.debounce) { inst.debounce(); inst.debounce = null }
       }
     }
-    // (the settings | drawer rows: chromeRows' overlayRows, from the memoised lines, the gap under the overlay included; the
-    // search field by the props AND the text typed into it — a poll between keystrokes never takes the field away)
+    // (the chrome: the fixed rows and the footer — the settings | drawer float and take none (chromeRows); the search field by
+    // the props AND the text typed into it — a poll between keystrokes never takes the field away)
     const note = props.oversized ?? ''
     const helpH = helpRows(props.columns, note !== '')
-    const overlayRows = props.helpOpen ? helpH + OVERLAY_GAP : props.drawer ? DRAWER_FRAME_ROWS + inst.drawer.length + OVERLAY_GAP : 0
     const search = searchShown(props, inst.query)
-    inst.chrome = fixedRows(props, inst.query) + (props.footer ? 1 : 0) + overlayRows
+    inst.chrome = fixedRows(props, inst.query) + (props.footer ? 1 : 0)
 
     const L = props.labels
     const lbl = (k: string) => L[k] ?? ''
@@ -517,8 +522,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     // --- THE DEMO LINE (live check 5: Asaf watched the demo without knowing it): while the demo runs, the first line under the
     //     header says so — the note (`🎬 זו הדגמה - הסוכנים לא אמיתיים`, amber, one no-break value) at the reading edge, the exit
     //     Button (`יציאה`, the demo toggle's post) at the other, a blank line under them; the longest note that fits beside the
-    //     Button by LINE_FIT (office-chrome.ts demoLine). The chrome counts it (fixedRows: DEMO_ROWS), so the line map's hits
-    //     stay exact. No hotkey: `d` is the settings' demo Button's, live with the popover closed too (KEY_MESSAGES) ---
+    //     Button by LINE_FIT (office-chrome.ts demoLine). The chrome counts it (fixedRows: DEMO_ROWS), so the window's lines stay
+    //     exact. No hotkey: `d` is the settings' demo Button's, live with the popover closed too (KEY_MESSAGES) ---
     if (props.demo) {
       const d = demoLine(props)
       kids.push(Box({ key: 'demoLine', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
@@ -581,9 +586,13 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     chop it at the edge without one) ---
     if (props.footer) kids.push(Box({ key: 'footer', flexDirection: row, height: 1, overflow: 'hidden', children: [Text({ dimColor: true, children: [cut(props.footer, Math.max(1, fit))] })] }))
 
-    // --- settings popover | drawer: fixed heights, so the cards under them never move; pushed further down — at the window's
-    //     top (THE OVERLAY IN VIEW, below), or under the fixed chrome ---
-    let overlay: RenderElement | null = null
+    // --- settings popover | drawer: THE FLOATING OVERLAY — built here, laid after the cards (it needs the clamped offset) as ONE
+    //     absolute Box from the root at max(offset, chrome), the column's margin and width, on the theme's inverseText (paint
+    //     probe 22.10: it hides the rows under it on either theme; a raw colour tinted the light pane), its fixed height per width
+    //     (decision 26) — it takes no row of the flow, so the cards under it never move; `overlay` is the Box at a `top` ---
+    const floatBox = (key: string, height: number, children: RenderElement[], extra: Record<string, unknown>) => (top: number): RenderElement =>
+      Box({ key, position: 'absolute', top, left: geo.margin, width: geo.W, height, backgroundColor: 'inverseText', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, flexDirection: 'column', overflow: 'hidden', ...extra, children })
+    let overlay: ((top: number) => RenderElement) | null = null
     if (props.helpOpen) {
       // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs) and
       // the language (the other language's name) — the motion toggle is gone (live check 7, Q9: nothing read it) — their words when
@@ -612,7 +621,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, ...padEdge, children: rows.map(([k]) => Text({ children: [nb(cut(lbl(k) || k, labelMax))] })) }),
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, children: rows.map(([, keys]) => Text({ dimColor: true, children: [nb(keys)] })) }),
       ] })
-      overlay = Box({ key: 'help', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, height: helpH, marginBottom: OVERLAY_GAP, width: '100%', overflow: 'hidden', children: [
+      overlay = floatBox('help', helpH, [
         // (its close as the drawer's — live check 7, R9: the native close role, the ✕ then the word, x; a close, never a flip)
         line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
@@ -623,11 +632,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         // THE TOO-LONG CONVERSATIONS NOTE (live check 6): one dim line under the shortcuts, cut to the popover's inner width by
         // LINE_FIT, its spaces no-break (it never wraps out of its row: helpRows counts it)
         ...(note ? [line([Text({ dimColor: true, children: [nb(cut(note, Math.max(1, fitLine(geo.inner))))] })], { key: 'oversized' })] : []),
-      ] })
+      ], {})
     } else if (props.drawer) {
       // the drawer as a card in the cards' style: every line in a height-1 Box, so the rows under it never move; ONE height at a
       // width whoever it shows (office-chrome.ts drawerMax: its lines padded with blank lines — live check 7, Q2; on a pane too
-      // short for that to ride the window's top, padded to what still does — drawerPad)
+      // short for that to fit the window, padded to what does — drawerPad)
       const items: RenderElement[] = inst.drawer.map((l, i) => {
         // the name line: the persona (bold) at the reading edge, the close Button (read ✕ THEN the word: iconLabel) at the other
         if (l.kind === 'name') return line([
@@ -643,15 +652,15 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (l.kind === 'head' || l.kind === 'dim' || l.kind === 'note') return line([Text({ dimColor: true, children: [l.text] })], { key: `d${i}` })
         return line([Text({ children: [l.text] })], { key: `d${i}` })
       })
-      overlay = Box({ key: 'drawer', flexDirection: 'column', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, marginBottom: OVERLAY_GAP, width: '100%', height: DRAWER_FRAME_ROWS + inst.drawer.length, overflow: 'hidden', alignItems: edge, children: items })
+      overlay = floatBox('drawer', DRAWER_FRAME_ROWS + inst.drawer.length, items, { alignItems: edge })
     }
 
+    /** The offset the overlay rides: the props' — clamped to the content once the cards are laid (THE STALE OFFSET, below). */
+    let offset = props.offset
     if (props.empty) {
-      // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no cards, so nothing to click ---
+      // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no cards, so no row to press; the overlay (if
+      //     any) still floats, at the offset handed ---
       inst.win = { from: 0, count: 0 }
-      inst.view = 0
-      inst.drawn = new Set()
-      if (overlay) kids.push(overlay)
       const e = emptyLines(props)
       kids.push(Box({ key: 'empty', flexDirection: 'column', alignItems: 'center', children: [
         Text({ children: ['🏢'] }),
@@ -660,85 +669,92 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, inst, { t: 'demo', on: true }) })] : []),
       ] }))
     } else {
-      // --- the cards: the settings | drawer, a spacer, then every card the window touches, its rows windowed by line. THE
-      //     OVERLAY IN VIEW (office-chrome.ts overlayInWindow): an overlay that leaves the window a row rides the window's top —
-      //     after a spacer of every line above the window, at Client row `offset` — and the card the window's top cuts through
-      //     goes on under it from the window's first line as a frameless FRAGMENT (its lines above `from` cannot be drawn before
-      //     the overlay: they would push it above the viewport). One as tall as the window stays under the fixed chrome, before
-      //     a spacer of the cards above the first drawn one, which is drawn whole: its lines above the window lie above the
-      //     viewport. (A window past the content — an offset the engine never hands a Client of this height — draws its spacer
-      //     alone.) ---
+      // --- the cards: a spacer, then every card the window (with its overscan) touches, its rows windowed by line. A window past
+      //     the content (an offset the engine never hands a Client of this height: windowOf clamps its `from` to the content) draws
+      //     its spacer alone ---
       const body = props.rows > 0 ? props.rows : 30
-      // THE STALE OFFSET (live check 7, R13): a click that shortened the office (a "hide finished") hands the module the offset
-      // the engine had before it — past the new end until the engine asks again; clamped to the content, the window drawn and
-      // hit-tested is the one the engine shows once it clamps its own (no blank rows, no dead clicks meanwhile). Stale = one the
+      // THE STALE OFFSET (live check 7, R13): a press that shortened the office (a "hide finished") hands the module the offset
+      // the engine had before it — past the new end until the engine asks again; clamped to the content, the window drawn (and
+      // the top the overlay rides) is the one the engine shows once it clamps its own (no blank rows meanwhile). Stale = one the
       // taller content the module drew before allowed; an offset no content of it ever allowed is no engine's, and is drawn as
-      // handed. The taller height is kept WHILE the offset stays stale — the redraws that follow with it (the click's own focus
-      // setState, a hover, the next {props} answer) clamp alike — and dropped once the engine hands an offset of the content
+      // handed. The taller height is kept WHILE the offset stays stale — the redraws that follow with it (the press's own focus
+      // setState, the next {props} answer) clamp alike — and dropped once the engine hands an offset of the content
       const height = inst.chrome + model.lines.length
       const stale = props.offset > height - body && props.offset <= Math.max(height, inst.height) - body
-      const offset = stale ? Math.max(0, height - body) : props.offset
+      offset = stale ? Math.max(0, height - body) : props.offset
       inst.height = stale ? inst.height : height
-      const w0 = windowOf(inst.chrome, offset, body, model.lines.length, overlayRows)
+      // THE WINDOW WITH OVERSCAN (decision 26): the lines the offset names, drawn with up to a body of lines on each side — every
+      // line while the office has at most WINDOW_ROWS lines, else capped so the window never passes WINDOW_ROWS lines (overscanOf:
+      // the tree must stay under the engine's 100,000 characters) — so the desktop's half-cell frame rows, which put the engine's
+      // offset about a row per card off the drawn lines, never leave a blank row in view; the row budget still caps the agent rows
+      // drawn (trimWindow), and what it leaves blank has no Button
+      const over = overscanOf(model.lines.length, body)
+      const w0 = windowOf(inst.chrome, offset, body, model.lines.length, over)
       const { from, count } = trimWindow(model, w0.from, w0.count, WINDOW_ROWS)
       inst.win = { from, count }
-      inst.view = w0.count
       const hi = from + count
       const drawn = count > 0 ? model.rooms.filter(r => r.top < hi && r.top + r.height > from) : []
-      inst.drawn = new Set(drawn.map(r => r.id))
-      const atTop = overlay !== null && overlayInWindow(overlayRows, body)
-      const fragmentFirst = atTop && drawn.length > 0 && from > drawn[0]!.top
-      const spacer = fragmentFirst || drawn.length === 0 ? from : drawn[0]!.top
-      if (overlay && !atTop) kids.push(overlay)
+      const spacer = drawn.length === 0 ? from : drawn[0]!.top
       if (spacer > 0) kids.push(Box({ key: 'spacer', height: spacer }))
-      if (overlay && atTop) kids.push(overlay)
-      /** One value of the table: ONE Text that never wraps (no plain space in it; an empty value a no-break space: the row stays one line tall), on no background. */
-      const cell = (text: string, style: Record<string, unknown>) => Text({ wrap: 'truncate', ...style, children: [text || NBSP] })
       /**
-       * One column of the table: the window's rows one Text each, aligned to the reading edge, the padding cell on the column's
-       * reading side (the probe's cell padding, once per column); from WIDE_FROM its minWidth floor (the office-wide widest value by
-       * FIT), so the columns align across the cards — the task column takes what is left and has none.
+       * One value of the table: a plain Button keyed by the agent and the column (`agent:<id>:<col>` — a press opens the agent's
+       * drawer, or closes it when it is the open one), its Text child ONE line that never wraps (no plain space in it; an empty
+       * value a no-break space: the row stays one line tall) in the row's weights — bold and dim are what a Button's child keeps
+       * on the desktop (paint probe 22.10: colour, underline and italic are lost there), and a native Button hits right at any
+       * depth, where the y hit-test drifted a row per card (decision 26). On no background.
        */
-      const column = (name: keyof Floors | 'task', rows: readonly RowView[], pick: (r: RowView) => string, style: (r: RowView) => Record<string, unknown>, grow: boolean) => Box({
+      const cell = (id: string, col: string, text: string, style: Record<string, unknown>): RenderElement =>
+        Button({ key: `agent:${id}:${col}`, plain: true, onPress: () => pressAgent(surface, id), children: [Text({ wrap: 'truncate', ...style, children: [text || NBSP] })] })
+      /** The status mark: a coloured Text — a Button would lose its colour; the mark is not a click target (the row's other cells are). */
+      const mark = (r: RowView): RenderElement => Text({ wrap: 'truncate', color: r.color, children: [r.status || NBSP] })
+      /**
+       * One column of the table: the window's rows one cell each (`pick`), aligned to the reading edge, the padding cell on the
+       * column's reading side (the probe's cell padding, once per column); from WIDE_FROM its minWidth floor (the office-wide
+       * widest value by FIT), so the columns align across the cards — the task column takes what is left and has none.
+       */
+      const column = (name: keyof Floors | 'task', rows: readonly RowView[], pick: (r: RowView) => RenderElement, grow: boolean) => Box({
         flexDirection: 'column', alignItems: edge, flexShrink: 0, flexGrow: grow ? 1 : 0, ...padEdge, ...(name === 'status' ? { minWidth: model.statusMin } : floors && name !== 'task' ? { minWidth: floors[name] } : {}),
-        children: rows.map(r => cell(pick(r), style(r))),
+        children: rows.map(pick),
       })
       /**
-       * The title line: the 📌 only when there is one to draw (bright pinned, dim under the pointer — then the title shifts by the
-       * pin and its gap; otherwise the title sits flush at the reading edge, as the probe's), the title cut on a word, the dim
-       * counts at the far edge — read-only (live check 7, Q6: the more line under the title is the room's one toggle); the gap the
-       * probe's (office-layout.ts TITLE_GAP: pinZone and cutTitle count it).
+       * The title line: THE PIN (decision 26) — a plain Button on every card, the colour 📌 of a pinned room, the monochrome PIN_OFF
+       * otherwise (no hover exists on the desktop, and dim does not dim a colour emoji); one width either way, so the title never
+       * moves (the model reserves the pin's cells on every title: office-layout.ts cutTitle) — then the title cut on a word, the
+       * dim counts at the far edge — read-only (live check 7, Q6: the more line under the title is the room's one toggle); the gap
+       * the probe's (TITLE_GAP).
        */
       const titleLine = (room: RoomView): RenderElement => Box({ flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, paddingX: 1, gap: TITLE_GAP, overflow: 'hidden', children: [
-        ...(room.pin === 'none' ? [] : [Text({ ...(room.pin === 'dim' ? { dimColor: true } : {}), children: [PIN] })]),
+        Button({ key: `pin:${room.id}`, plain: true, label: room.pinned ? PIN : PIN_OFF, onPress: () => pressPin(surface, room.id) }),
         Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: edge, children: [Text({ bold: true, children: [room.title] })] }),
         Box({ flexShrink: 0, height: 1, children: [Text({ dimColor: true, children: [room.counts] })] }),
       ] })
       /** The blank line under the title (round 9: no rule — it never stretched with the card; the title's emphasis is its bold and this line). */
       const blank = (): RenderElement => Box({ height: 1 })
-      /** The frame's bottom in a fragment (which has no border): one dim rule the column's width, cut by its Box. */
-      const rule = (): RenderElement => Box({ height: 1, overflow: 'hidden', width: '100%', children: [Text({ dimColor: true, children: ['─'.repeat(Math.max(4, geo.W))] })] })
-      /** The `עוד N שסיימו ◂` / `הסתר שסיימו ▾` line (read arrow first: office-layout.ts iconLabel), directly under the title (live check 7, Q3: it never moves with the rows it reveals), in THE LINK COLOUR (Q7: what is clickable reads so at rest). */
-      const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Text({ color: LINK_FG, children: [room.more] })] })
       /**
-       * The table of a card: the window's rows as cells in the column Boxes the mode draws — the status, the who, the model (unless
-       * the mode dropped it), the activity's emoji, its word (when the mode has it), the dim task from CENTRE_AT (the last column
-       * grows) — the rows below the window and the `above` ones (the rows above the window in a whole card; none in a fragment,
-       * which starts at the window) ONE spacer each, around the table in a column Box; no row in the window: one spacer of the
-       * rows it stands for. The weights: working = a bold who; finished = a dim who (unless ❌), emoji and task; the model always
-       * dim; the word dim unless working.
+       * The `עוד N שסיימו ◂` / `הסתר שסיימו ▾` line (the arrow at the string's end: office-layout.ts MORE_MARK, iconLabel), directly
+       * under the title (live check 7, Q3: it never moves with the rows it reveals): a plain Button of regular weight — a Button
+       * draws no colour on the desktop (decision 26: Q7's link colour is withdrawn); the arrow is the cue that it is a control.
        */
-      const table = (room: RoomView, above: number): RenderElement => {
+      const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Button({ key: `more:${room.id}`, plain: true, label: room.more, onPress: () => pressMore(surface, room.id) })] })
+      /**
+       * The table of a card: the window's rows as cells in the column Boxes the mode draws — the status mark, the who, the model
+       * (unless the mode dropped it), the activity's emoji, its word (when the mode has it), the dim task from CENTRE_AT (the last
+       * column grows) — the rows above and below the window ONE spacer each, around the table in a column Box; no row in the
+       * window: one spacer of the rows it stands for. The weights: working = a bold who; finished = a dim who (unless ❌), emoji
+       * and task; the model always dim; the word dim unless working.
+       */
+      const table = (room: RoomView): RenderElement => {
         const rows = room.rows.filter(r => r.y >= from && r.y < hi)
+        const above = room.rows.filter(r => r.y < from).length
         const below = room.rows.filter(r => r.y >= hi).length
         if (rows.length === 0) return Box({ height: above + below })
         const tbl = Box({ flexDirection: row, width: '100%', children: [
-          column('status', rows, r => r.status, r => ({ color: r.color }), false),
-          column('who', rows, r => r.who, r => ({ bold: r.bold, dimColor: r.dim && !r.failed }), false),
-          ...(mode.model !== 'none' ? [column('model', rows, r => r.model, () => ({ dimColor: true }), false)] : []),
-          column('actEmoji', rows, r => r.actEmoji, r => ({ dimColor: r.dim }), !mode.word && !geo.centred),
-          ...(mode.word ? [column('actWord', rows, r => r.actWord, r => ({ dimColor: !r.bold }), !geo.centred)] : []),
-          ...(geo.centred ? [column('task', rows, r => r.task, () => ({ dimColor: true }), true)] : []),
+          column('status', rows, r => mark(r), false),
+          column('who', rows, r => cell(r.id, 'who', r.who, { bold: r.bold, dimColor: r.dim && !r.failed }), false),
+          ...(mode.model !== 'none' ? [column('model', rows, r => cell(r.id, 'model', r.model, { dimColor: true }), false)] : []),
+          column('actEmoji', rows, r => cell(r.id, 'emoji', r.actEmoji, { dimColor: r.dim }), !mode.word && !geo.centred),
+          ...(mode.word ? [column('actWord', rows, r => cell(r.id, 'word', r.actWord, { dimColor: !r.bold }), !geo.centred)] : []),
+          ...(geo.centred ? [column('task', rows, r => cell(r.id, 'task', r.task, { dimColor: true }), true)] : []),
         ] })
         if (above === 0 && below === 0) return tbl
         return Box({ flexDirection: 'column', width: '100%', children: [...(above > 0 ? [Box({ height: above })] : []), tbl, ...(below > 0 ? [Box({ height: below })] : [])] })
@@ -748,42 +764,22 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         titleLine(room),
         ...(room.more ? [moreLine(room)] : []),
         blank(),
-        table(room, room.rows.filter(r => r.y < from).length),
+        table(room),
       ] })
-      /**
-       * The window's first card drawn from line `from` inside it (under an overlay at the window's top): a frameless column Box with
-       * the frame's cells as padding, holding the card's lines from `from` on — the top padding line, the title, the more line, the
-       * blank line, the rows (none above `from`), the bottom padding line, the frame's bottom as a rule — each only
-       * when `from` lies at or before it, the gap after the card as its margin; its height exact, so every line y sits at Client
-       * row chrome + y as in a whole card. From the gap line alone, a one-row spacer.
-       */
-      const fragment = (room: RoomView): RenderElement => {
-        const end = room.top + room.height - 1          // the gap line
-        if (from >= end) return Box({ key: 'fragment', height: 1 })
-        const lines: RenderElement[] = []
-        if (from <= room.top + 1) lines.push(Box({ height: 1 }))
-        if (from <= room.titleAt) lines.push(titleLine(room))
-        if (room.more && from <= room.moreAt) lines.push(moreLine(room))
-        if (from <= room.blankAt) lines.push(blank())
-        if (room.rows.some(r => r.y >= from)) lines.push(table(room, 0))
-        if (from <= end - 2) lines.push(Box({ height: 1 }))
-        lines.push(rule())
-        return Box({ key: 'fragment', flexDirection: 'column', paddingX: geo.px + 1, marginBottom: 1, width: '100%', height: end - from, overflow: 'hidden', children: lines })
-      }
-      drawn.forEach((room, i) => kids.push(fragmentFirst && i === 0 ? fragment(room) : card(room)))
+      drawn.forEach(room => kids.push(card(room)))
     }
     // THE READING COLUMN: geo.W cells — the pane less a cell at each edge (PANE_GUTTER: no card border ever touches the pane's
-    // edge, live check 6), frozen at CENTRE_AT — centred by a left margin (an explicit margin, not alignItems: the pointer's x maps
-    // to the column by the same number — inst.margin)
-    return Box({ flexDirection: 'column', width: geo.W, flexShrink: 0, marginLeft: geo.margin, children: kids })
+    // edge, live check 6), frozen at CENTRE_AT — centred by a left margin (an explicit margin, not alignItems: the floating
+    // overlay is laid against the root at the same margin). The root: the column, then THE FLOATING OVERLAY at max(offset, chrome)
+    // — the clamped offset: the window's top the engine shows, never above the fixed chrome — painted last, so it covers the rows
+    return Box({ key: 'root', flexDirection: 'column', width: '100%', children: [
+      Box({ key: 'column', flexDirection: 'column', width: geo.W, flexShrink: 0, marginLeft: geo.margin, children: kids }),
+      ...(overlay ? [overlay(Math.max(offset, inst.chrome))] : []),
+    ] })
   } catch (err) {
-    // nothing of the office is drawn now: the pointer must not hit-test the window of the last good render
+    // nothing of the office is drawn now: the keyboard walk must not open a row of the last good render
     const st = surface.state
-    if (st) {
-      st.inst.win = { from: 0, count: 0 }
-      st.inst.view = 0
-      st.inst.drawn = new Set()
-    }
+    if (st) st.inst.win = { from: 0, count: 0 }
     return Text({ color: 'red', children: [`office: ${err instanceof Error ? err.message : String(err)}`] })
   }
 }

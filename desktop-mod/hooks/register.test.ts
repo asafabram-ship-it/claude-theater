@@ -1,7 +1,8 @@
 // The desktop office's way back into the hooks, driven through the kit on the
 // real mount (Task 2.5): the office Client (office-client.tsx) POSTS what the
-// person did — a toolbar Button, a letter key, a click on a tile or a room
-// head, the search Input — and the plugin's `ui.message` hook (ui.tsx) turns
+// person did — a toolbar Button, a letter key, a press on a row's or a room
+// head's Button (phase B: every click in the office a native Button, pressed
+// here by its key), the search Input — and the plugin's `ui.message` hook (ui.tsx) turns
 // each post into the same prefs / view / $.store change the text cards' press
 // makes, one atom per message; anything else it ignores. And the fallback: a
 // `ui.fault` of the office (register.tsx) draws the text cards and toasts
@@ -16,9 +17,8 @@ import type { JsonValue } from 'claude-code'
 
 import type { Agent } from './model'
 import { PERSONA_EMOJI, POLL_MS } from './model'
-import { SEARCH_MAX, chromeRows } from './office-chrome'
+import { SEARCH_MAX } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
-import { geometry, officeModel } from './office-layout'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { T0, beneath } from './test-kit'
 import { FOCUS_ON_SELECTED } from './ui'
@@ -55,6 +55,7 @@ function fixture(): Agent[] {
 
 type Ui = {
   find: (q: { type?: string; key?: string; text?: RegExp; in?: string }) => Promise<{ text?: string; props: Record<string, unknown> } | undefined>
+  press: (target: { key: string }) => Promise<unknown>
   pointer: (ev: { in?: string; type: 'down' | 'leave'; x: number; y: number; button?: 'left' }) => Promise<void>
   post: (data: JsonValue, scope?: { in?: string }) => Promise<void>
 }
@@ -66,13 +67,15 @@ async function propsOf(ui: Ui): Promise<OfficeProps> {
   return c!.props.props as OfficeProps
 }
 
-/** A left click inside the Client on the layout hit `kind`/`id` (a row, a room's pin or its ✅ counts), where the module draws it. */
-async function click(ui: Ui, kind: Hit['kind'], id: string): Promise<void> {
-  const p = await propsOf(ui)
-  const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
-  expect(hit).toBeDefined()
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x + Math.floor(hit!.w / 2), y: chromeRows(p) + hit!.y, button: 'left' })
-  // (a pin keeps the cards where they are until the pointer leaves the office: live check 7, Q4)
+/**
+ * A click on the office's controls as the desktop does it (phase B, decision 26): the module's Button pressed by its key — a
+ * row's who cell `agent:<id>:who`, a room head's pin `pin:<room>`, a room's more line `more:<room>` (the ✅ counts are no
+ * Button: read-only, live check 7 Q6); the kit presses a Client's Button by its key alone.
+ */
+async function click(ui: Ui, kind: 'agent' | 'pin' | 'more', id: string): Promise<void> {
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: kind === 'agent' ? `agent:${id}:who` : `${kind}:${id}` }), `${kind} ${id}`).toBeDefined()
+  await ui.press({ key: kind === 'agent' ? `agent:${id}:who` : kind === 'pin' ? `pin:${id}` : `more:${id}` })
+  // (a pin keeps the cards where they are until the pointer leaves the office: live check 7, Q4 — its leave alone the pointer's)
   if (kind === 'pin') await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
 }
 
@@ -87,7 +90,7 @@ async function writesOf(captured: ReturnType<typeof beneath>['captured'], act: (
   return out
 }
 
-test('ui.message: the office Client\'s own posts — toolbar Buttons, letter keys, tile and room-head clicks, the search Input — change prefs / view / the store as the text cards\' presses do, one atom per message', { timeoutMs: 30_000 }, async ($, on) => {
+test('ui.message: the office Client\'s own posts — toolbar Buttons, letter keys, row and room-head presses, the search Input — change prefs / view / the store as the text cards\' presses do, one atom per message', { timeoutMs: 30_000 }, async ($, on) => {
   let agents = fixture()
   const { captured, clock } = beneath(on, () => agents, PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
@@ -125,7 +128,7 @@ test('ui.message: the office Client\'s own posts — toolbar Buttons, letter key
   await ui.press({ key: 'help' })
   expect((await propsOf(ui)).helpOpen).toBe(false)
 
-  // a click on a1's tile opens its drawer (selected, the help closed, the text cards' focus on its card); ✕ closes it
+  // a press on a1's row opens its drawer (selected, the help closed, the text cards' focus on its card); ✕ closes it
   expect(await writesOf(captured, () => click(ui, 'agent', 'a1'))).toEqual({ view: 1 })
   expect(captured.view).toMatchObject({ selected: 'a1', helpOpen: false, focusIndex: FOCUS_ON_SELECTED })
   expect((await propsOf(ui)).drawer?.id).toBe('a1')
@@ -238,7 +241,12 @@ test('ui.message: what is not an office message is ignored — content / pull (d
   await ui.unmount()
 })
 
-/** An engine scroll offset past the tallest Box a surface draws (10,000 rows): the module's spacer for the rows scrolled past fails the surface's validation. */
+/**
+ * An engine scroll offset past the surface's bound on a Box's position (`top` an integer within 10,000 cells): with the
+ * settings open, the module lays THE FLOATING OVERLAY at `top: max(offset, chromeRows)` — an offset no content of the module
+ * ever allowed is drawn as handed (office-client.tsx THE STALE OFFSET) — so the tree fails the surface's validation. (Phase B:
+ * the old trigger, a spacer taller than the bound, is gone — office-chrome.ts windowOf clamps the window to the content.)
+ */
 const FAULT_OFFSET = 20_000
 
 // (mounts, faults and redraws through the kit: past the 5 s default under a full suite on a loaded machine with no code change —
@@ -252,20 +260,24 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
   expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
-  // a real fault of the module: a redraw hands it an engine scroll offset of FAULT_OFFSET, so the spacer it draws for the
-  // rows scrolled past is a Box taller than a surface draws (the bound is 10,000 rows): the surface refuses the tree,
-  // unmounts the instance and reports `ui.fault` (phase `render`) for element `office`. (A live engine's offset stays
-  // inside the Client's height, itself under that bound; the kit's redraw takes any offset. The module's old trigger —
-  // a search post over the post bound — is gone: the module caps its search text, cleanSearch.)
+  // a real fault of the module: the settings open (view.helpOpen, kept over the fallback and the retry), then a redraw hands
+  // it an engine scroll offset of FAULT_OFFSET, so the floating popover's `top` lies past the bound a surface draws a Box at
+  // (10,000 cells): the surface refuses the tree, unmounts the instance and reports `ui.fault` (phase `render`) for element
+  // `office`. (A live engine's offset stays inside the Client's height, itself under that bound; the kit's redraw takes any
+  // offset. The module's older triggers — a search post over the post bound, a spacer past the bound — are gone: the module
+  // caps its search text, cleanSearch, and clamps its window to the content, windowOf.)
+  await ui.press({ key: 'help' })
+  expect((await propsOf(ui)).helpOpen).toBe(true)
+  expect((await ui.find({ in: OFFICE_KEY, type: 'Box', key: 'help' }))?.props).toMatchObject({ position: 'absolute', top: 4 })
   await ui.redraw({ ...PANE.props, scroll: { offset: FAULT_OFFSET, bodyRows: 40 } })
   expect(captured.toasts).toHaveLength(1)
   expect(captured.toasts[0]).toMatch(/\/theater/)
   expect(captured.toasts[0]).toMatch(/כרטיסים/) // Hebrew, as the prefs say
   expect(captured.toastTimeouts).toEqual([undefined]) // its stay the engine's default (live check 5 shortened the finish toast alone)
   expect(logs.filter(l => l.startsWith('office Client failed'))).toHaveLength(1)
-  expect(logs.find(l => l.startsWith('office Client failed'))).toMatch(/^office Client failed \(render\): .*height/)
+  expect(logs.find(l => l.startsWith('office Client failed'))).toMatch(/^office Client failed \(render\): .*"top"/)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect(await ui.find({ key: 'open:a1' })).toBeDefined() // the text cards
+  expect(await ui.find({ key: 'open:a1' })).toBeDefined() // the text cards (their help card drawn above them: the view kept)
   expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
   // the fallback holds over the redraws (the window back in range) and the polls; no second toast
   await ui.redraw({ ...PANE.props })
@@ -277,6 +289,7 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
   expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
   expect((await propsOf(ui)).offset).toBe(0)
+  expect((await propsOf(ui)).helpOpen).toBe(true)   // (the settings still open: the popover under the chrome, in range)
   // it fails again: the cards again, one more toast
   await ui.redraw({ ...PANE.props, scroll: { offset: FAULT_OFFSET, bodyRows: 40 } })
   expect(captured.toasts).toHaveLength(2)

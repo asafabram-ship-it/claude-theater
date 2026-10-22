@@ -22,7 +22,7 @@ import {
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
 import { REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
-import { geometry, officeModel, rowCount } from './office-layout'
+import { rowCount } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'
@@ -305,24 +305,28 @@ async function messageOf(ui: { find: (q: { type: string; text?: RegExp }) => Pro
 }
 
 /**
- * DESKTOP (the Client office): a left click inside the office Client on the layout hit `kind`/`id` — a
- * row (`agent`), a room head's pin (`pin`) or its more line under the title (`moreDone`; the ✅ counts are
- * read-only: live check 7, Q6) — where the module draws it:
- * the module hit-tests it and POSTS the message, the plugin's `ui.message` hook (ui.tsx) applies it.
- * (A toolbar Button of the module is pressed by its key: `ui.press({ key })`.)
+ * DESKTOP (the Client office): a click inside the office Client as the desktop does it (phase B, decision 26: every click a
+ * native plain Button) — the module's Button pressed by its key: a row's who cell (`agent` → `agent:<id>:who`), a room
+ * head's pin (`pin` → `pin:<room>`) or its more line under the title (`more` → `more:<room>`; the ✅ counts are no Button:
+ * read-only, live check 7 Q6). The module POSTS the message, the plugin's `ui.message` hook (ui.tsx) applies it. (A
+ * toolbar Button of the module is pressed by its key too: `ui.press({ key })`.)
  */
-async function clickIn(ui: { find: (q: { type: string }) => Promise<{ props: Record<string, unknown> } | undefined>; pointer: (ev: { in?: string; type: 'down' | 'leave'; x: number; y: number; button?: 'left' }) => Promise<void> }, kind: Hit['kind'], id: string): Promise<void> {
-  const p = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
-  const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
-  expect(hit).toBeDefined()
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: geometry(p.columns).margin + hit!.x + Math.floor(hit!.w / 2), y: chromeRows(p) + hit!.y, button: 'left' })
-  // (a pin keeps the cards where they are until the pointer leaves the office: live check 7, Q4)
+async function clickIn(ui: { find: (q: { in?: string; type: string; key?: string }) => Promise<{ props: Record<string, unknown> } | undefined>; press: (target: { key: string }) => Promise<unknown>; pointer: (ev: { in?: string; type: 'leave'; x: number; y: number }) => Promise<void> }, kind: 'agent' | 'pin' | 'more', id: string): Promise<void> {
+  const key = kind === 'agent' ? `agent:${id}:who` : kind === 'pin' ? `pin:${id}` : `more:${id}`
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key }), key).toBeDefined()
+  await ui.press({ key })
+  // (a pin keeps the cards where they are until the pointer leaves the office: live check 7, Q4 — its leave alone the pointer's)
   if (kind === 'pin') await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
 }
 
-/** DESKTOP (the Client office): whether the module lays any background (live check 6: the finish's tint flashed a near-black band on the light theme — the ⭐ is the whole finish). */
+/**
+ * DESKTOP (the Client office): whether the module lays any background (live check 6: the finish's tint flashed a near-black
+ * band on the light theme — the ⭐ is the whole finish) — but THE FLOATING OVERLAY's: the settings | drawer, absolute on the
+ * theme's inverseText (decision 26: it hides the rows under it on either theme), the one background the office lays.
+ */
 async function tintShown(ui: { findAll: (q: { in?: string; type?: string }) => Promise<Array<{ props: Record<string, unknown> }>> }): Promise<boolean> {
-  return (await ui.findAll({ in: OFFICE_KEY })).some(n => n.props.backgroundColor !== undefined)
+  const overlay = (n: Record<string, unknown>) => (n.key === 'help' || n.key === 'drawer') && n.position === 'absolute' && n.backgroundColor === 'inverseText'
+  return (await ui.findAll({ in: OFFICE_KEY })).some(n => n.props.backgroundColor !== undefined && !overlay(n.props))
 }
 
 /** A quiet office on disk (HOME = C:/Users/test): one open conversation (its lead answering on Fable) with two subagents, one of them on Opus. */
@@ -717,6 +721,22 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     // the plugin's own tree never holds the text toolbar's keys on the desktop: the 🎞/🖼 toggle is the Client's alone
     expect(await ui.find({ key: 'still' })).toBeUndefined()
     expect(await ui.find({ key: 'showDone' })).toBeUndefined()
+    // a drawer opened (a row's press): it floats (no chrome row) and the Client's height stays officeHeight's — the content's
+    // lines, or THE OVERLAY'S ROOM on an office shorter than the drawer (office-chrome.ts: the Client reaches the floating
+    // card's bottom, so the desktop never clips it); closed, the content's again
+    const closedH = wide?.props.height as number
+    await clickIn(ui, 'agent', 'a1')
+    const open = await ui.find({ type: 'Client' })
+    const po = open?.props.props as OfficeProps
+    expect(po.drawer?.id).toBe('a1')
+    expect(chromeRows(po)).toBe(chromeRows(pw))
+    expect(open?.props.height).toBe(officeHeight(po, rowCount(po)))
+    expect(open?.props.height).toBe(Math.max(closedH, chromeRows(po) + overlayHeight(po)))
+    expect(rowCount(po)).toBeLessThan(overlayHeight(po))   // (this office is shorter than the drawer: the Client grows to its bottom)
+    expect(open?.props.height).toBe(chromeRows(po) + overlayHeight(po))
+    expect(open?.props.height as number).toBeGreaterThan(closedH)
+    await ui.press({ key: 'close' })
+    expect((await ui.find({ type: 'Client' }))?.props.height).toBe(closedH)
   } finally {
     await ui.unmount()
   }
@@ -857,6 +877,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await ui.press({ key: 'help' })
   expect((await officePropsOf(ui))?.helpOpen).toBe(true)
   expect((await cardOf(ui, 'q1'))?.star).toBeGreaterThan(0)
+  expect((await ui.find({ in: OFFICE_KEY, type: 'Box', key: 'help' }))?.props).toMatchObject({ position: 'absolute', backgroundColor: 'inverseText' })   // (the floating popover: its theme background the one tintShown leaves out)
   expect(await tintShown(ui)).toBe(false)
   await ui.press({ key: 'help' })
   expect((await officePropsOf(ui))?.helpOpen).toBe(false)
@@ -1041,7 +1062,7 @@ test('THE FOOTER (live check 6): an oversized transcript is the too-long convers
   expect(chromeRows(p)).toBe(fixedRows(p))
   expect(await desk.find({ in: OFFICE_KEY, type: 'Text', text: /too long|transcript/ })).toBeUndefined()
   expect(await term.find({ type: 'Text', text: /^One conversation is too long to show$/ })).toBeDefined()
-  // the settings popover opened: its last line the note (dim), the popover a row taller
+  // the settings popover opened: its last line the note (dim) — the floating popover's height a row more (helpRows with the note)
   await desk.press({ key: 'help' })
   p = (await officePropsOf(desk))!
   expect(p.helpOpen).toBe(true)

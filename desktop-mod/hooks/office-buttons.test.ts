@@ -1,10 +1,19 @@
 // THE BUTTONS (live check 7, 2026-10-21: "the buttons are not smooth" — slow, no response or the wrong action, the office
 // jumping under the pointer, unclear what is clickable). Each test drives the real mount in Asaf's set-up — the DEMO,
 // Hebrew, a 53-column pane (a 51-cell reading column: the toolbar on its own line, the search on a line of its own under
-// it, no hotkeys) — through the office Client's Button, key or pointer → the post → ui.message → the props the module
-// draws, and asserts what the person expects to see. The causes (R1-R14) and Asaf's answers (Q1-Q10) are decision 24 of
+// it, no hotkeys) — through the office Client's Button or key → the post → ui.message → the props the module draws, and
+// asserts what the person expects to see. The causes (R1-R14) and Asaf's answers (Q1-Q10) are decision 24 of
 // docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md and the "Live check 7" section of
 // docs/superpowers/specs/2026-10-19-office-cards-design.md. A failing test here is a bug in the owning file.
+//
+// THE CLICKS THROUGH THE BUTTONS (phase B, decision 26; the paint probe of 22.10, which found the cause of "not smooth": a
+// card frame's border rows are half a cell on the desktop, so the engine's y drifted a row per card against the lines the
+// module hit-tested): every click in the office is a native plain Button, pressed here by its key as the desktop presses it
+// — a row's cells `agent:<id>:who|model|emoji|word|task`, the pin on every title `pin:<room>` (the colour 📌 pinned, the
+// monochrome PIN_OFF otherwise: one width, no hover — none draws inside a Client), the more line `more:<room>` (a regular
+// plain Button: Q7's link colour withdrawn, a Button draws none). The pointer is read for its `leave` alone, which releases
+// THE PIN'S PLACE (Q4). So the hit zones, the dim hover 📌 and the link colour of phase A are gone from these tests; what
+// they guarded — the right action on the right control, nothing moving under the pointer — is asserted through the presses.
 
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
@@ -13,8 +22,8 @@ import type { Engine, Mounted } from 'claude-code/testing'
 import { DEFAULT_PREFS, DEFAULT_VIEW, PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
 import { I18N } from './i18n'
-import { HELP, chromeRows } from './office-chrome'
-import { LESS_MARK, MORE_MARK, geometry, nb, officeModel, rowCount } from './office-layout'
+import { HELP, chromeRows, overlayHeight } from './office-chrome'
+import { LESS_MARK, MORE_MARK, PIN, PIN_OFF, nb, officeModel, rowCount } from './office-layout'
 import { LABEL_KEYS, OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
 import { demoPayload } from './scanner'
@@ -43,18 +52,19 @@ const roomOf = (p: OfficeProps, id: string) => {
   return r!
 }
 const idsOf = (p: OfficeProps, id: string) => roomOf(p, id).agents.map(a => a.id)
-const hitOf = (p: OfficeProps, kind: Hit['kind'], id: string): Hit => {
-  const hit = officeModel(p).hits.find(h => h.kind === kind && h.id === id)
-  expect(hit, `${kind} ${id}`).toBeDefined()
-  return hit!
-}
-/** The Client cell a person aims at for a hit: its middle cell, past the centring margin, at Client row chromeRows + y. */
-function cellOf(p: OfficeProps, hit: Hit): { x: number; y: number } {
-  return { x: geometry(p.columns).margin + hit.x + Math.floor(hit.w / 2), y: chromeRows(p) + hit.y }
-}
-async function down(ui: Ui, at: { x: number; y: number }): Promise<void> {
-  await ui.pointer({ in: OFFICE_KEY, type: 'down', x: at.x, y: at.y, button: 'left' })
-}
+/**
+ * A click on the office's controls as the desktop does it (phase B): the Button's press by its key — the kit presses a
+ * Client's Button by its key alone. A row opens by its who cell (any of its cells would); `clickPin` lets the pointer leave
+ * after the press (THE PIN'S PLACE: the cards keep the order drawn until it does — the R5 tests press the pin alone).
+ */
+const press = (ui: Ui, key: string) => ui.press({ key })
+const clickAgent = (ui: Ui, id: string) => press(ui, `agent:${id}:who`)
+const clickPin = async (ui: Ui, room: string) => { await press(ui, `pin:${room}`); await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 }) }
+const clickMore = (ui: Ui, room: string) => press(ui, `more:${room}`)
+/** The pin Button's label on a drawn card: PIN when pinned, PIN_OFF otherwise. */
+const pinLabelOf = async (ui: Ui, room: string) => (await ui.find({ in: OFFICE_KEY, type: 'Button', key: `pin:${room}` }))?.props.label
+/** The more / hide line's label as the module drew it (undefined when the room draws no such line). */
+const moreLabelOf = async (ui: Ui, room: string) => (await ui.find({ in: OFFICE_KEY, type: 'Button', key: `more:${room}` }))?.props.label
 
 function agent(id: string, over: Partial<Agent> = {}): Agent {
   return {
@@ -164,13 +174,13 @@ test('R2 · a press reaches the module in the ui.message hook answer ({ props },
   const p0 = await officeProps(ui)
   expect(roomOf(p0, S2).showDone).toBe(false)
   swallow.on = true
-  await down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  await clickMore(ui, S2)
   expect(captured.store.roomDone).toEqual({ [S2]: true })
   expect(swallow.n, 'the redraw was asked for').toBeGreaterThanOrEqual(1)
   // (the Client element's props are the render's — no render ran; what the MODULE draws came from the answer: the room's
   // line now hides its finished, and every finished row of it is drawn)
   expect((await officeProps(ui)).rooms.find(r => r.id === S2)?.showDone, 'no render ran').toBe(false)
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /הסתר/ }), 'drawn from the answer').toBeDefined()
+  expect(await moreLabelOf(ui, S2), 'drawn from the answer').toMatch(/הסתר/)
   for (const id of ['demo-dedupe-kk', 'demo-label-ll']) {
     const who = officeModel(buildOfficeProps({ payload: demoPayload(T0, 1), prefs: { ...DEFAULT_PREFS }, view: { ...DEFAULT_VIEW, demo: true }, roomDone: { [S2]: true }, offset: 0, columns: COLUMNS, rows: ROWS, now: T0, usage: null })).rooms.flatMap(r => r.rows).find(r => r.id === id)!.who
     expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: who }), id).toBeDefined()
@@ -178,15 +188,15 @@ test('R2 · a press reaches the module in the ui.message hook answer ({ props },
   await ui.unmount()
 })
 
-test('R3 · a room\'s finished toggle is drawn at once — no latch to wait for: the more line clicked, the room shows every finished in the next props, the clock not moved; clicked again, hidden again', { timeoutMs: 30_000 }, async ($, on) => {
+test('R3 · a room\'s finished toggle is drawn at once — no latch to wait for: the more line pressed, the room shows every finished in the next props, the clock not moved; pressed again, hidden again', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
   expect(roomOf(p0, S2).showDone).toBe(false)
-  await down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  await clickMore(ui, S2)
   expect(captured.store.roomDone).toEqual({ [S2]: true })
   const p1 = await officeProps(ui)
   expect(roomOf(p1, S2).showDone, 'drawn without the clock moving').toBe(true)
-  await down(ui, cellOf(p1, hitOf(p1, 'moreDone', S2)))
+  await clickMore(ui, S2)
   expect(roomOf(await officeProps(ui), S2).showDone).toBe(false)
   expect(captured.store.roomDone).toEqual({})
   await ui.unmount()
@@ -196,13 +206,15 @@ test('R3 · a room\'s finished toggle is drawn at once — no latch to wait for:
 // R1 (Q1): the search field by the office's agents — a finished toggle never adds or removes chrome
 // ---------------------------------------------------------------------------
 
-/** The header line and the search line as drawn: each child's text (the meter's place among them). */
+/** The header line and the search line as drawn (the reading column's children: the root holds the column, then the floating overlay): each child's text (the meter's place among them). */
 async function chromeTexts(ui: Ui): Promise<string> {
   type Drawn = { type: string; props?: Record<string, unknown>; children?: Array<Drawn | string> }
   const isNode = (n: unknown): n is Drawn => typeof n === 'object' && n !== null && 'type' in n
   const textOf = (n: Drawn | string | undefined): string => (typeof n === 'string' ? n : isNode(n) ? (n.children ?? []).map(textOf).join('') : '')
   const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as Drawn
-  return (root.children ?? []).filter(isNode).filter(k => ['header', 'searchLine'].includes(String(k.props?.key)))
+  const column = (root.children ?? []).filter(isNode).find(k => k.props?.key === 'column')
+  expect(column, 'the column Box').toBeDefined()
+  return (column!.children ?? []).filter(isNode).filter(k => ['header', 'searchLine'].includes(String(k.props?.key)))
     .map(k => `${String(k.props?.key)}: ${(k.children ?? []).filter(isNode).map(c => `[${textOf(c)}]`).join(' ')}`).join(' || ')
 }
 
@@ -239,8 +251,7 @@ const HIDE = nb(`${I18N.he.hideDone} ${LESS_MARK}`)
 
 test('R8 · the toolbar ☐ / ☑ sets EVERY card (Q6): after a card line showed its finished, ☑ then ☐ hides them again; after ☑ and a card hide line, ☐ then ☑ shows them again — the press clears every per-room override', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
-  const p0 = await officeProps(ui)
-  await down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  await clickMore(ui, S2)
   expect(roomOf(await officeProps(ui), S2).showDone).toBe(true)
   await ui.press({ key: 'showDone' })      // ☑
   expect(captured.store.roomDone).toEqual({})
@@ -249,8 +260,7 @@ test('R8 · the toolbar ☐ / ☑ sets EVERY card (Q6): after a card line showed
   expect(roomOf(await officeProps(ui), S2).showDone, 'the toolbar is ☐ but the card still shows its finished').toBe(false)
   // ☑, the card's hide line, ☐, ☑: the card shows its finished
   await ui.press({ key: 'showDone' })
-  const p1 = await officeProps(ui)
-  await down(ui, cellOf(p1, hitOf(p1, 'moreDone', S2)))
+  await clickMore(ui, S2)
   expect(roomOf(await officeProps(ui), S2).showDone).toBe(false)
   await ui.press({ key: 'showDone' })
   await ui.press({ key: 'showDone' })
@@ -260,45 +270,46 @@ test('R8 · the toolbar ☐ / ☑ sets EVERY card (Q6): after a card line showed
   await ui.unmount()
 })
 
-test('R5 · the card one finished line sits DIRECTLY UNDER ITS TITLE (Q3): `עוד 2 שסיימו ◂` collapsed, `הסתר שסיימו ▾` open — it never moves, so a second click on the same cell toggles it back (never a row drawer)',{ timeoutMs: 30_000 }, async ($, on) => {
+test('R5 · the card one finished line sits DIRECTLY UNDER ITS TITLE (Q3): `עוד 2 שסיימו ◂` collapsed, `הסתר שסיימו ▾` open — it never moves and it is ONE Button (`more:<room>`), so a second press on it toggles it back (never a row drawer)', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
   const card = officeModel(p0).rooms.find(r => r.id === S2)!
-  const more = hitOf(p0, 'moreDone', S2)
-  expect(more.y).toBe(card.titleAt + 1)
+  expect(card.moreAt).toBe(card.titleAt + 1)
   expect(card.more).toBe(MORE(2))
-  expect(card.rows[0]!.y).toBeGreaterThan(more.y)
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: MORE(2) })).toBeDefined()
-  const at = cellOf(p0, more)
-  await down(ui, at)
+  expect(card.rows[0]!.y).toBeGreaterThan(card.moreAt)
+  expect(await moreLabelOf(ui, S2)).toBe(MORE(2))
+  await clickMore(ui, S2)
   const p1 = await officeProps(ui)
   expect(roomOf(p1, S2).showDone).toBe(true)
-  expect(hitOf(p1, 'moreDone', S2).y).toBe(more.y)
-  expect(officeModel(p1).rooms.find(r => r.id === S2)!.more).toBe(HIDE)
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: HIDE })).toBeDefined()
-  await down(ui, at)                        // the same cell again
+  const open = officeModel(p1).rooms.find(r => r.id === S2)!
+  expect(open.moreAt).toBe(card.moreAt)
+  expect(open.more).toBe(HIDE)
+  expect(await moreLabelOf(ui, S2)).toBe(HIDE)
+  await clickMore(ui, S2)                    // the same Button again
   const p2 = await officeProps(ui)
-  expect(p2.drawer, 'the second click opened a drawer').toBeNull()
-  expect(roomOf(p2, S2).showDone, 'the second click did not toggle the room back').toBe(false)
+  expect(p2.drawer, 'the second press opened a drawer').toBeNull()
+  expect(roomOf(p2, S2).showDone, 'the second press did not toggle the room back').toBe(false)
+  expect(await moreLabelOf(ui, S2)).toBe(MORE(2))
   await ui.unmount()
 })
 
-test('R8 · the line only where it hides or shows something (Q6): the demo frontend room with its one finisher draws none, ☐ or ☑; the title ✅ counts are read-only (no hit but the pin on the title line, a click on the counts changes nothing)', { timeoutMs: 30_000 }, async ($, on) => {
+test('R8 · the line only where it hides or shows something (Q6): the demo frontend room with its one finisher draws none, ☐ or ☑; the title ✅ counts are read-only (the title line\'s one Button its pin; the counts a dim Text)', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, clock } = await demoAt($, on, 1)
   await clock.advance(POLL_MS)              // phase 6: the poll publishes the finisher done
   const p0 = await officeProps(ui)
   expect(roomOf(p0, S1).agents.some(a => a.status === 'done')).toBe(true)
   expect(roomOf(p0, S1).moreLabel).toBe('')
-  expect(officeModel(p0).hits.some(h => h.kind === 'moreDone' && h.id === S1)).toBe(false)
+  expect(await moreLabelOf(ui, S1)).toBeUndefined()
+  expect(await moreLabelOf(ui, S2)).toBeDefined()
   await ui.press({ key: 'showDone' })
   expect(roomOf(await officeProps(ui), S1).moreLabel).toBe('')
-  const p1 = await officeProps(ui)
-  const card = officeModel(p1).rooms.find(r => r.id === S2)!
-  expect(officeModel(p1).hits.filter(h => h.y === card.titleAt).map(h => h.kind)).toEqual(['pin'])
-  const before = JSON.stringify(p1)
-  const geo = geometry(p1.columns)
-  await down(ui, { x: geo.margin + 3, y: chromeRows(p1) + card.titleAt })   // (RTL: the counts at the column's left edge)
-  expect(JSON.stringify(await officeProps(ui))).toBe(before)
+  expect(await moreLabelOf(ui, S1)).toBeUndefined()
+  for (const room of [S1, S2]) {
+    const line = await titleLineOf(ui, room)
+    expect(allNodes(line).filter(n => n.type === 'Button').map(n => n.props?.key), room).toEqual([`pin:${room}`])
+    const counts = (line.children ?? []).filter(isDrawn).filter(k => k.type === 'Box')[1]
+    expect((counts?.children ?? []).filter(isDrawn).map(n => [n.type, n.props?.dimColor]), room).toEqual([['Text', true]])
+  }
   await ui.unmount()
 })
 
@@ -334,37 +345,52 @@ type DrawnNode = { type: string; props?: Record<string, unknown>; children?: Arr
 const isDrawn = (n: unknown): n is DrawnNode => typeof n === 'object' && n !== null && 'type' in n
 const drawnText = (n: DrawnNode | string | undefined): string => (typeof n === 'string' ? n : isDrawn(n) ? (n.children ?? []).map(drawnText).join('') : '')
 const allNodes = (n: unknown): DrawnNode[] => (isDrawn(n) ? [n, ...(n.children ?? []).flatMap(allNodes)] : [])
+/** The room cards as drawn: the reading column's Boxes keyed `room:<id>`, in order (the root holds the column, then the floating overlay). */
+async function drawnCards(ui: Ui): Promise<DrawnNode[]> {
+  const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
+  const column = (root.children ?? []).filter(isDrawn).find(k => k.props?.key === 'column')
+  expect(column, 'the column Box').toBeDefined()
+  return (column!.children ?? []).filter(isDrawn).filter(k => String(k.props?.key ?? '').startsWith('room:'))
+}
 /** The room cards as drawn, in order: their title Texts (the bold Text of each card's title line). */
 async function drawnTitles(ui: Ui): Promise<string[]> {
-  const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
-  return (root.children ?? []).filter(isDrawn).filter(k => String(k.props?.key ?? '').startsWith('room:') || (k.props?.borderStyle === 'round' && k.props?.key === undefined))
-    .map(card => drawnText(allNodes(card).find(n => n.type === 'Text' && n.props?.bold === true)))
+  return (await drawnCards(ui)).map(card => drawnText(allNodes(card).find(n => n.type === 'Text' && n.props?.bold === true)))
+}
+/** A room's title line as drawn: the card's first child (the pin Button, the title Box, the counts Box). */
+async function titleLineOf(ui: Ui, room: string): Promise<DrawnNode> {
+  const card = (await drawnCards(ui)).find(c => c.props?.key === `room:${room}`)
+  const line = (card?.children ?? []).find(isDrawn)
+  expect(line, `the title line of ${room}`).toBeDefined()
+  return line!
 }
 
-test('R5 · a pin shows at once and its card stays where it is under the pointer (Q4): a second click on the same cell unpins it (never another card\'s row); pinned again, the card moves to the top only once the pointer leaves the office', { timeoutMs: 30_000 }, async ($, on) => {
+test('R5 · a pin shows at once and its card stays where it is under the pointer (Q4): a second press on the same Button unpins it (never another card\'s row); pinned again, the card moves to the top only once the pointer leaves the office', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
   const second = p0.rooms[1]!.id
   const order0 = await drawnTitles(ui)
-  const at = cellOf(p0, hitOf(p0, 'pin', second))
-  await down(ui, at)
+  expect(await pinLabelOf(ui, second)).toBe(PIN_OFF)
+  await press(ui, `pin:${second}`)
   expect((captured.store.prefs as { pins: string[] }).pins).toEqual([second])
   const p1 = await officeProps(ui)
   expect(roomOf(p1, second).pinned).toBe(true)
+  expect(p1.rooms[0]!.id, 'the props put the pinned room first').toBe(second)
   expect(await drawnTitles(ui), 'the card moved under the pointer').toEqual(order0)
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: '📌' }), 'the bright 📌 at once').toBeDefined()
-  await down(ui, at)                          // the same cell again: unpins
-  expect((captured.store.prefs as { pins: string[] }).pins, 'the second click did not unpin').toEqual([])
+  expect(await pinLabelOf(ui, second), 'the colour 📌 at once').toBe(PIN)
+  await press(ui, `pin:${second}`)            // the same Button again: unpins
+  expect((captured.store.prefs as { pins: string[] }).pins, 'the second press did not unpin').toEqual([])
   expect((await officeProps(ui)).drawer).toBeNull()
-  await down(ui, at)                          // pinned again; the pointer leaves: the card goes to the top
+  expect(await pinLabelOf(ui, second)).toBe(PIN_OFF)
+  await press(ui, `pin:${second}`)            // pinned again; the pointer leaves: the card goes to the top
   expect(await drawnTitles(ui)).toEqual(order0)
   await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
   expect(await drawnTitles(ui)).toEqual([order0[1], order0[0]])
+  expect(await pinLabelOf(ui, second)).toBe(PIN)
   await ui.unmount()
 })
 
 // ---------------------------------------------------------------------------
-// R10 + R9 (no hover style yet) + Q7: nothing reflows under a decoration; hit zones are what is drawn; the more line a link
+// R10 + R9 + Q7 (phase B): nothing reflows under a decoration; the controls are the Buttons drawn; the more line a plain Button
 // ---------------------------------------------------------------------------
 
 test('R10 · the status column is floored at every width: the keyboard focus marker a click puts on a row never widens it (53 columns, under WIDE_FROM)', { timeoutMs: 30_000 }, async ($, on) => {
@@ -376,44 +402,35 @@ test('R10 · the status column is floored at every width: the keyboard focus mar
   const before = await statusMin()
   expect(before.length).toBeGreaterThan(0)
   for (const w of before) expect(typeof w, 'a floor on every status column').toBe('number')
-  const p0 = await officeProps(ui)
-  await down(ui, cellOf(p0, hitOf(p0, 'agent', 'demo-mcp-dd')))
+  await clickAgent(ui, 'demo-mcp-dd')
+  expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
   expect(await statusMin()).toEqual(before)
   await ui.unmount()
 })
 
-test('R9 · the hit zones are what is drawn: the dim 📌 shows over the pin zone alone (the title\'s middle draws none and pins nothing); a row and the more line answer inside the card frame (its border cell beside them is nothing); the more line reads as a link — a theme link colour at rest, never dim, bold or on a background (Q7); the two close Buttons alike (role dismiss, the ✕ and the word, x)', { timeoutMs: 30_000 }, async ($, on) => {
-  const { ui, captured } = await demoAt($, on, 1)
+test('R9 · the controls are what is drawn (phase B, decision 26: every click a native plain Button): the pin a Button on EVERY title — the monochrome PIN_OFF unpinned, no 📌 Text anywhere on the title, never dim; the more line a plain Button of regular weight with no colour (Q7\'s link colour withdrawn: a Button draws none on the desktop), never on a background; a row\'s values its Buttons, the status mark a Text; the two close Buttons alike (role dismiss, the ✕ and the word, x)', { timeoutMs: 30_000 }, async ($, on) => {
+  const { ui } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
-  const geo = geometry(p0.columns)
-  const card = officeModel(p0).rooms.find(r => r.id === S1)!
-  const y = chromeRows(p0) + card.titleAt
-  // the title's middle: no dim 📌, no pin
-  await ui.pointer({ in: OFFICE_KEY, type: 'move', x: geo.margin + Math.floor(geo.W / 2), y })
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: '📌' }), 'a 📌 over the title').toBeUndefined()
-  await down(ui, { x: geo.margin + Math.floor(geo.W / 2), y })
-  expect((captured.store.prefs as { pins: string[] }).pins).toEqual([])
-  // the pin zone: the dim 📌
-  await ui.pointer({ in: OFFICE_KEY, type: 'move', ...cellOf(p0, hitOf(p0, 'pin', S1)) })
-  expect((await ui.find({ in: OFFICE_KEY, type: 'Text', text: '📌' }))?.props.dimColor).toBe(true)
-  await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
-  // the card's border cells beside a row and beside the more line: nothing
-  const before = JSON.stringify(await officeProps(ui))
-  for (const [kind, id] of [['agent', 'demo-mcp-dd'], ['moreDone', S2]] as const) {
-    const hit = hitOf(p0, kind, id)
-    expect(hit.x, kind).toBe(1)
-    expect(hit.w, kind).toBe(geo.W - 2)
-    for (const x of [geo.margin, geo.margin + geo.W - 1]) await down(ui, { x, y: chromeRows(p0) + hit.y })
+  // the pin on every title: one Button, its label PIN_OFF, no colour or dim; no Text 📌 elsewhere on the title line
+  for (const room of p0.rooms.map(r => r.id)) {
+    const line = await titleLineOf(ui, room)
+    const pins = allNodes(line).filter(n => n.type === 'Button')
+    expect(pins.map(n => [n.props?.key, n.props?.label]), room).toEqual([[`pin:${room}`, PIN_OFF]])
+    expect([pins[0]!.props?.plain, pins[0]!.props?.color, pins[0]!.props?.dimColor], room).toEqual([true, undefined, undefined])
+    expect(allNodes(line).filter(n => n.type === 'Text' && drawnText(n).includes(PIN)), room).toEqual([])
   }
-  expect(JSON.stringify(await officeProps(ui))).toBe(before)
-  // the more line: a link colour at rest
-  const more = await ui.find({ in: OFFICE_KEY, type: 'Text', text: officeModel(p0).rooms.find(r => r.id === S2)!.more })
-  expect(more?.props).toMatchObject({ color: LINK_FG })
-  expect(more?.props.dimColor).toBeUndefined()
-  expect(more?.props.bold).toBeUndefined()
-  expect(more?.props.backgroundColor).toBeUndefined()
+  // the more line: a plain Button of regular weight, no colour, no dim, on no background
+  const more = await ui.find({ in: OFFICE_KEY, type: 'Button', key: `more:${S2}` })
+  expect(more?.props).toMatchObject({ plain: true, label: officeModel(p0).rooms.find(r => r.id === S2)!.more })
+  for (const k of ['color', 'dimColor', 'bold', 'backgroundColor'] as const) expect(more?.props[k], k).toBeUndefined()
+  // a row: its values Buttons keyed by the agent and the column; the status mark a Text, no Button
+  const keys = (await ui.findAll({ in: OFFICE_KEY, type: 'Button' })).map(b => String(b.props.key)).filter(k => k.startsWith('agent:demo-mcp-dd:'))
+  expect(keys[0]).toBe('agent:demo-mcp-dd:who')
+  expect(keys.length).toBeGreaterThanOrEqual(3)
+  expect(keys.some(k => k.endsWith(':status'))).toBe(false)
   // the closes: the drawer's and the settings'
-  await down(ui, cellOf(p0, hitOf(p0, 'agent', 'demo-mcp-dd')))
+  await press(ui, keys.at(-1)!)
+  expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
   const close = await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'close' })
   await ui.press({ key: 'close' })
   await ui.press({ key: 'help' })
@@ -429,30 +446,35 @@ test('R9 · the hit zones are what is drawn: the dim 📌 shows over the pin zon
 // Q2 (phase A): the drawer one height per width, a second click closes it, the settings close it
 // ---------------------------------------------------------------------------
 
-test('Q2 · the drawer is ONE height at a width, whoever it shows (a result or none, a long task or a short one): browsing the agents never moves the cards; a second click on the open agent closes it; the settings Button closes an open drawer, and closing the settings brings no old drawer back', { timeoutMs: 30_000 }, async ($, on) => {
+test('Q2 · the drawer is ONE height at a width, whoever it shows (a result or none, a long task or a short one): it floats (THE FLOATING OVERLAY: no chrome row), so browsing the agents never moves the cards; a second press on the open agent closes it; the settings Button closes an open drawer, and closing the settings brings no old drawer back', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
   const heights = new Set<number>()
+  const results = new Set<string>()
+  const chromes = new Set<number>()
   const tops = new Set<string>()
   for (const id of ['demo-mcp-dd', 'demo-writer-ff', 'demo-build-ee', 'demo-conv-research', 'demo-finisher-gg', 'demo-reader-bb']) {
-    const p = await officeProps(ui)
-    await down(ui, cellOf(p, hitOf(p, 'agent', id)))
+    await clickAgent(ui, id)
     const q = await officeProps(ui)
     expect(q.drawer?.id, id).toBe(id)
-    heights.add(chromeRows(q))
+    heights.add(overlayHeight(q))
+    expect((await ui.find({ in: OFFICE_KEY, type: 'Box', key: 'drawer' }))?.props.height, id).toBe(overlayHeight(q))
+    results.add(String(q.drawer?.result ?? ''))
+    chromes.add(chromeRows(q))
     tops.add(JSON.stringify(officeModel(q).rooms.map(r => r.top)))
   }
+  expect(results.size, 'agents with different results').toBeGreaterThan(1)
   expect([...heights], 'the drawer changed height between agents').toHaveLength(1)
+  expect([...chromes], 'the drawer took a chrome row').toEqual([chromeRows(p0)])
   expect(tops.size).toBe(1)
   // the same row again: closed
-  const p1 = await officeProps(ui)
-  await down(ui, cellOf(p1, hitOf(p1, 'agent', 'demo-reader-bb')))
+  await clickAgent(ui, 'demo-reader-bb')
   const p2 = await officeProps(ui)
-  expect(p2.drawer, 'a second click on the open agent').toBeNull()
+  expect(p2.drawer, 'a second press on the open agent').toBeNull()
   expect(p2.selected).toBeNull()
   expect(chromeRows(p2)).toBe(chromeRows(p0))
   // the settings close an open drawer; closed, nothing comes back
-  await down(ui, cellOf(p2, hitOf(p2, 'agent', 'demo-mcp-dd')))
+  await clickAgent(ui, 'demo-mcp-dd')
   expect((await officeProps(ui)).drawer?.id).toBe('demo-mcp-dd')
   await ui.press({ key: 'help' })
   const p3 = await officeProps(ui)
@@ -541,15 +563,6 @@ async function drawnRows(ui: Ui): Promise<number> {
   const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
   return allNodes(root).filter(n => n.type === 'Text' && /^[‹›]?[●○⭐❌⏰][‹›]?$/u.test(drawnText(n))).length
 }
-/** The room's title line as the module drew it: its pin ('none' | 'dim' | 'bright') and its children (pin · title · counts). */
-async function drawnTitle(ui: Ui, room: string): Promise<{ pin: string; kids: number; title: string }> {
-  const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
-  const card = allNodes(root).find(n => n.props?.key === `room:${room}`)
-  const line = (card?.children ?? []).find(isDrawn)
-  const kids = (line?.children ?? []).filter(isDrawn)
-  const pin = kids.find(k => k.type === 'Text' && drawnText(k) === '📌')
-  return { pin: pin ? (pin.props?.dimColor ? 'dim' : 'bright') : 'none', kids: kids.length, title: drawnText(kids.find(k => k.type === 'Box')) }
-}
 
 test('THE OUTBOX applies an action ONCE when posts overlap: a post of two actions still applying its first (its $.store write held) when the next frame\'s post carries them again — the later post applies the second, and the first then skips it (mute pressed once: the office ends muted, one prefs write)', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
@@ -558,7 +571,7 @@ test('THE OUTBOX applies an action ONCE when posts overlap: a post of two action
   const prefs0 = captured.writes.prefs
   const release = hold(captured, 'roomDone')
   // one frame: the more line (roomDone, its store write held) and mute — one post [roomDone, mute]
-  const first = Promise.all([down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2))), ui.press({ key: 'mute' })])
+  const first = Promise.all([clickMore(ui, S2), ui.press({ key: 'mute' })])
   expect(await until(() => captured.seq.includes('held:roomDone')), 'the roomDone write held').toBe(true)
   // the next frame: settings — its post carries [roomDone, mute, help] (no frame cleared the outbox in between)
   const views = captured.writes.view
@@ -578,10 +591,9 @@ test('THE OUTBOX applies an action ONCE when posts overlap: a post of two action
 
 test('THE NEWEST ANSWER: a slower post answering after a newer one never draws over it — the more line (its $.store write held), then mute: once the held write lands the module draws 🔕 and the room\'s hide line, as the prefs and the store say (the older answer, read before mute wrote, once drew 🔔 and stuck: equal props, no redraw)', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
-  const p0 = await officeProps(ui)
   expect(await drawnMute(ui)).toContain('🔔')
   const release = hold(captured, 'roomDone')
-  const more = down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  const more = clickMore(ui, S2)
   expect(await until(() => captured.seq.includes('held:roomDone'))).toBe(true)
   const mute = ui.press({ key: 'mute' })
   expect(await until(() => storedPrefs(captured).muted === true), 'mute applied while roomDone is held').toBe(true)
@@ -592,7 +604,8 @@ test('THE NEWEST ANSWER: a slower post answering after a newer one never draws o
   const p1 = await officeProps(ui)
   expect([storedPrefs(captured).muted, p1.prefs.muted, roomOf(p1, S2).showDone]).toEqual([true, true, true])
   expect(await drawnMute(ui), 'the module draws the sound as the prefs say').toContain('🔕')
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: officeModel(p1).rooms.find(r => r.id === S2)!.more })).toBeDefined()
+  expect(await moreLabelOf(ui, S2), 'the room\'s hide line drawn').toBe(officeModel(p1).rooms.find(r => r.id === S2)!.more)
+  expect(await moreLabelOf(ui, S2)).toBe(HIDE)
   await ui.unmount()
 })
 
@@ -621,7 +634,7 @@ test('THE NEWEST ANSWER: a poll publish inside a post\'s hook — the more line 
   expect(idsOf(p0, S2)).not.toContain(NEWCOMER)
   const total = (p: OfficeProps) => p.rooms.reduce((n, r) => n + r.agents.length, 0)
   const release = hold(captured, 'roomDone')
-  const more = down(ui, cellOf(p0, hitOf(p0, 'moreDone', S2)))
+  const more = clickMore(ui, S2)
   expect(await until(() => captured.seq.includes('held:roomDone'))).toBe(true)
   const payloads = captured.writes.payload
   const advance = clock.advance(POLL_MS)       // the next poll (phase 6): the newcomer in, the finisher done
@@ -638,44 +651,36 @@ test('THE NEWEST ANSWER: a poll publish inside a post\'s hook — the more line 
   await ui.unmount()
 })
 
-test('R5 · pinning the HOVERED pin keeps the 📌 on every draw (dim → bright; unpinned, bright → dim) and the title never slides: the click keeps the hover on the clicked room — dim and bright one width (once cleared: the title slid by the pin and back as the answer came); a click with no hover before it shows the dim pin at once', { timeoutMs: 30_000 }, async ($, on) => {
+test('R5 · a pin press draws the colour 📌 on the SAME Button once its answer lands — before the pointer leaves — and the title never slides (PIN and PIN_OFF one width: the title cut once for both); the cards keep the order drawn until the leave; the frame between the press and its answer draws nothing new (no hover exists to keep); unpinned, PIN_OFF again', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, captured } = await demoAt($, on, 1)
   const p0 = await officeProps(ui)
   const second = p0.rooms[1]!.id
-  const at = cellOf(p0, hitOf(p0, 'pin', second))
-  await ui.pointer({ in: OFFICE_KEY, type: 'move', ...at })
-  const hovered = await drawnTitle(ui, second)
-  expect(hovered).toMatchObject({ pin: 'dim', kids: 3 })
-  // the pin's prefs write held beneath: the frame between the click and its answer
+  const titles0 = await drawnTitles(ui)
+  expect(await pinLabelOf(ui, second)).toBe(PIN_OFF)
+  // the pin's prefs write held beneath: the frame between the press and its answer
   const release = hold(captured, 'state:prefs')
-  const pin = down(ui, at)
+  const pin = press(ui, `pin:${second}`)
   expect(await until(() => captured.seq.includes('held:state:prefs'))).toBe(true)
   await until(() => false, 20)
-  expect(await drawnTitle(ui, second), 'the frame between the click and the answer').toEqual(hovered)
+  expect(await pinLabelOf(ui, second), 'the frame between the press and the answer').toBe(PIN_OFF)
+  expect(await drawnTitles(ui)).toEqual(titles0)
   release()
   await pin
-  // (the pointer's act settles before a held hook does: the hook's last write awaited)
+  // (the press's act settles before a held hook does: the hook's last write awaited)
   expect(await until(() => storedPrefs(captured).pins.length > 0)).toBe(true)
   await until(() => false, 20)
   expect(storedPrefs(captured).pins).toEqual([second])
-  // (the title may be cut a little shorter pinned: cutTitle counts a pinned room's pin, the hover's rides the fit's slack)
-  expect(await drawnTitle(ui, second)).toMatchObject({ pin: 'bright', kids: 3 })
-  await down(ui, at)                            // unpinned, the pointer still over the pin
+  expect(await pinLabelOf(ui, second), 'the colour 📌 before the pointer left').toBe(PIN)
+  expect(await drawnTitles(ui), 'a title slid, or a card moved before the leave').toEqual(titles0)
+  await press(ui, `pin:${second}`)              // unpinned, the pointer still in the office
   expect(storedPrefs(captured).pins).toEqual([])
-  expect(await drawnTitle(ui, second), 'unpinned under the pointer').toEqual(hovered)
-  // the other card, clicked with no hover before it: the dim pin at once, the bright one with the answer
-  const first = p0.rooms[0]!.id
-  await ui.pointer({ in: OFFICE_KEY, type: 'leave', x: 0, y: 0 })
-  const release2 = hold(captured, 'state:prefs')
-  const pin2 = down(ui, cellOf(p0, hitOf(p0, 'pin', first)))
-  expect(await until(() => captured.seq.includes('held:state:prefs'))).toBe(true)
-  await until(() => false, 20)
-  expect((await drawnTitle(ui, first)).pin, 'a click with no hover before it').toBe('dim')
-  release2()
-  await pin2
-  expect(await until(() => storedPrefs(captured).pins.includes(first))).toBe(true)
-  await until(() => false, 20)
-  expect((await drawnTitle(ui, first)).pin).toBe('bright')
+  expect(await pinLabelOf(ui, second)).toBe(PIN_OFF)
+  expect(await drawnTitles(ui)).toEqual(titles0)
+  // pinned again, then the pointer leaves: the card goes to the top, its title as it was
+  await clickPin(ui, second)
+  expect(storedPrefs(captured).pins).toEqual([second])
+  expect(await pinLabelOf(ui, second)).toBe(PIN)
+  expect(await drawnTitles(ui)).toEqual([titles0[1], titles0[0]])
   await ui.unmount()
 })
 

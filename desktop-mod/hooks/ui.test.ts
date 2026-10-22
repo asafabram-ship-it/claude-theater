@@ -21,7 +21,7 @@ import {
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
-import { OVERLAY_GAP, REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight } from './office-chrome'
+import { REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
 import { geometry, officeModel, rowCount, type Hit } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
@@ -1045,7 +1045,8 @@ test('THE FOOTER (live check 6): an oversized transcript is the too-long convers
   await desk.press({ key: 'help' })
   p = (await officePropsOf(desk))!
   expect(p.helpOpen).toBe(true)
-  expect(chromeRows(p)).toBe(fixedRows(p) + helpRows(p.columns, true) + OVERLAY_GAP)
+  expect(chromeRows(p)).toBe(fixedRows(p))   // (the popover floats: no chrome row)
+  expect(overlayHeight(p)).toBe(helpRows(p.columns, true))
   const noteText = await desk.find({ in: OFFICE_KEY, type: 'Text', text: /One.conversation.is.too.long.to.show/ })
   expect(noteText).toBeDefined()
   expect(noteText!.props.dimColor).toBe(true)

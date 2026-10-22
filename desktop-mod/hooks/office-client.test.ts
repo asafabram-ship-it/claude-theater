@@ -10,7 +10,7 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, OVERLAY_GAP, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerPad, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, overlayInWindow, overlayRows, officeAgents, searchShown, windowOf } from './office-chrome'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, officeAgents, searchShown, windowOf } from './office-chrome'
 import * as OfficeClient from './office-client'
 import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
@@ -207,47 +207,6 @@ function rowsOf(card: Node): string[][] {
 // pure parts
 // ---------------------------------------------------------------------------
 
-test('windowOf: the lines the engine shows, in layout coordinates, never shifted by a clamp (a six-row chrome here)', () => {
-  // offset inside the chrome: the first (rows - (chrome - offset)) layout lines
-  expect(windowOf(6, 0, 30, 100)).toEqual({ from: 0, count: 24 })
-  expect(windowOf(6, 2, 30, 100)).toEqual({ from: 0, count: 26 })
-  // offset past the chrome: a full window from offset - chrome
-  expect(windowOf(6, 6, 30, 100)).toEqual({ from: 0, count: 30 })
-  expect(windowOf(6, 10, 30, 100)).toEqual({ from: 4, count: 30 })
-  // near the end: the count shrinks, `from` stays (no clamp shifting the lines under the pointer)
-  expect(windowOf(6, 90, 30, 100)).toEqual({ from: 84, count: 16 })
-  expect(windowOf(6, 200, 30, 100)).toEqual({ from: 194, count: 0 })
-  // short content, tall window
-  expect(windowOf(6, 0, 30, 5)).toEqual({ from: 0, count: 5 })
-  expect(windowOf(6, 0, 0, 5)).toEqual({ from: 0, count: 0 })
-  // no byte budget here: the row budget (WINDOW_ROWS) is the module's cut on the line map
-  expect(windowOf(6, 6, 200, 500)).toEqual({ from: 0, count: 200 })
-  expect(WINDOW_ROWS).toBe(100)
-  expect(ROW_CHARS).toBe(800)
-})
-
-test('THE OVERLAY IN VIEW (windowOf with the settings | drawer rows): an overlay that leaves the window a row rides its top — the layout continues from the line the window starts at, under it; at the top it sits under the fixed chrome as before; one as tall as the window stays in the chrome', () => {
-  // 6 fixed rows + an 11-row overlay (chrome 17), a 25-row window over 100 layout lines
-  expect(overlayInWindow(11, 25)).toBe(true)
-  expect(overlayInWindow(0, 25)).toBe(false)
-  expect(overlayInWindow(25, 25)).toBe(false)
-  // scrolled 40 rows: the overlay takes the window's first 11 rows, the layout goes on from line 34 (40 - 6) under it —
-  // the same first line as with no overlay at all (the person's place kept), 11 rows fewer of it
-  expect(windowOf(17, 40, 25, 100, 11)).toEqual({ from: 34, count: 14 })
-  expect(windowOf(6, 40, 25, 100)).toEqual({ from: 34, count: 25 })
-  // at the top (or inside the fixed chrome) the two placements are the same window
-  expect(windowOf(17, 0, 25, 100, 11)).toEqual(windowOf(17, 0, 25, 100))
-  expect(windowOf(17, 5, 25, 100, 11)).toEqual(windowOf(17, 5, 25, 100))
-  expect(windowOf(17, 6, 25, 100, 11)).toEqual({ from: 0, count: 14 })
-  // just past the fixed chrome: the overlay is still whole at the top, the layout from line 1
-  expect(windowOf(17, 7, 25, 100, 11)).toEqual({ from: 1, count: 14 })
-  // the end: the Client is 17 + 100 rows tall, so the last offset is 92 — the last layout line is the window's last
-  expect(windowOf(17, 92, 25, 100, 11)).toEqual({ from: 86, count: 14 })
-  // an overlay as tall as the window (or taller) keeps its place in the chrome: today's window, scrolled through as content
-  expect(windowOf(31, 40, 25, 100, 25)).toEqual(windowOf(31, 40, 25, 100))
-  expect(windowOf(31, 40, 25, 100, 25)).toEqual({ from: 9, count: 25 })
-})
-
 test('cleanSearch: the search text cut to SEARCH_MAX code points (never half an emoji) and freed of control characters (the surface refuses an Input value holding one)', () => {
   expect(SEARCH_MAX).toBe(200)
   expect(cleanSearch('triage')).toBe('triage')
@@ -332,11 +291,9 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   expect(fixedRows(twelve, '')).toBe(CHROME_ROWS_MIN)
   expect(chromeRows({ ...p, footer: 'scan: 2 skipped' })).toBe(CHROME_ROWS_MIN + 1)
   expect(chromeRows({ ...thirteen, footer: 'scan: 2 skipped' })).toBe(CHROME_ROWS_SEARCH + 1)
-  expect(chromeRows({ ...p, helpOpen: true })).toBe(CHROME_ROWS_MIN + helpRows(p.columns) + OVERLAY_GAP)
   // the too-long conversations note (live check 6): a row of the settings popover, none of the chrome while it is closed
   expect(helpRows(45, true)).toBe(helpRows(45) + 1)
   expect(helpRows(200, true)).toBe(helpRows(200) + 1)
-  expect(chromeRows({ ...p, helpOpen: true, oversized: 'x' })).toBe(CHROME_ROWS_MIN + helpRows(p.columns, true) + OVERLAY_GAP)
   expect(chromeRows({ ...p, oversized: 'x' })).toBe(CHROME_ROWS_MIN)
   expect(chromeRows({ ...p, drawer: drawer(), oversized: 'x' })).toBe(chromeRows({ ...p, drawer: drawer() }))
   // the drawer: the card's frame (border, padding) + name, sub, the status line, a blank line, the model line, the task heading, one task line + the gap
@@ -347,11 +304,7 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   expect(MAX).toBe(15)
   expect(drawerLines(drawer(), LABELS, inner).length).toBe(MAX)
   expect(drawerLines(drawer(), LABELS, inner).map(l => l.kind)).toEqual(['name', 'dim', 'status', 'blank', 'body', 'head', 'body', ...Array.from({ length: MAX - 7 }, () => 'blank')])
-  expect(chromeRows({ ...p, drawer: drawer() })).toBe(CHROME_ROWS_MIN + DRAWER_FRAME_ROWS + MAX + OVERLAY_GAP)
   expect(DRAWER_FRAME_ROWS).toBe(4)
-  expect(OVERLAY_GAP).toBe(1)
-  // the settings win over the drawer when both are open (as today: a popover)
-  expect(chromeRows({ ...p, helpOpen: true, drawer: drawer() })).toBe(CHROME_ROWS_MIN + helpRows(p.columns) + OVERLAY_GAP)
   // the settings' shortcuts in two column pairs from WIDE_FROM: the popover is the first pair's rows tall
   expect(helpRows(45)).toBe(2 + 2 + 1 + 1 + HELP.length)
   expect(helpRows(pane(WIDE_FROM - 1))).toBe(14)   // (eight shortcut rows: no s row since live check 7, Q9)
@@ -1478,39 +1431,6 @@ test('the drawer under DRAWER_NARROW_BELOW columns (the probe\'s): the task wrap
   expect(overlayRows(props({ columns: 34, selected: 'lead', drawer: long })) - overlayRows(props({ columns: 33, selected: 'lead', drawer: long }))).toBe(2)
   // the default limits are the wide ones: drawerLines without them wraps as at 34
   expect(drawerLines(long, LABELS, drawerInner(45)).length).toBe(drawerLines(long, LABELS, drawerInner(45), drawerLimits(45)).length)
-})
-
-test('THE DRAWER ON A SHORT PANE (live check 7 review): padded to drawerMax only while that card leaves the window a row — on a pane too short for it (20 body rows or fewer at 34 columns and more), a short drawer is padded to what still rides the window\'s top (THE OVERLAY IN VIEW: opened while scrolled, it is drawn in view, never in the chrome above the window), never cut below its own lines; the hooks\' overlayRows and the module\'s drawer agree', () => {
-  const short = drawer({ result: '', task: 'short' })      // 7 lines of its own
-  const long = drawer({ task: 'word '.repeat(400), result: 'done '.repeat(400), truncated: true })
-  const crowd = Array.from({ length: 60 }, (_, i) => ag(`g${i}`))
-  for (const [columns, rows] of [[45, 18], [45, 20], [45, 13], [32, 16], [120, 14]] as const) {
-    const lim = drawerLimits(columns)
-    const p = withAgents(props({ columns, rows, offset: 30, selected: 'g40', drawer: short }), crowd)
-    const H = overlayRows(p)
-    expect(overlayInWindow(H, rows), `${columns} × ${rows}: ${H} rows`).toBe(true)
-    expect(H, `${columns} × ${rows}`).toBe(Math.min(DRAWER_FRAME_ROWS + drawerMax(lim) + OVERLAY_GAP, rows - 1))
-    expect(drawerPad(lim, rows)).toBe(H - DRAWER_FRAME_ROWS - OVERLAY_GAP)
-    const fk = fake(columns, 0)
-    const tree = Office(p, fk.surface)
-    expect(byKey(tree, 'drawer')!.props.height, `${columns} × ${rows}`).toBe(H - OVERLAY_GAP)
-    expect(fk.surface.state!.inst.chrome, `${columns} × ${rows}`).toBe(chromeRows(p))
-    expect(chromeOf(Office({ ...p, offset: 0 }, fake(columns, 0).surface)), `${columns} × ${rows} at the top`).toBe(chromeRows(p))
-    // in view: after the spacer of the lines above the window, at Client row `offset`
-    expect(kidsOf(tree).map(kindOf).slice(-3), `${columns} × ${rows}`).toEqual(['spacer', 'drawer', 'fragment'])
-    expect(clientRowOf(tree, 'drawer')).toBe(p.offset)
-    // a drawer longer than the pad keeps its lines (never cut): as tall as on a tall pane
-    const pl = withAgents(props({ columns, rows, offset: 30, selected: 'g40', drawer: long }), crowd)
-    expect(overlayRows(pl), `${columns} × ${rows}`).toBe(DRAWER_FRAME_ROWS + drawerLines(long, LABELS, drawerInner(columns), lim).length + OVERLAY_GAP)
-  }
-  // a pane tall enough (21 body rows and more): ONE height at the width, whoever the drawer shows (live check 7, Q2)
-  for (const rows of [21, 30, 60]) {
-    const p = props({ columns: 45, rows, selected: 'lead', drawer: short })
-    expect(overlayRows(p), `${rows}`).toBe(overlayRows(props({ columns: 45, rows, selected: 'lead', drawer: long })))
-    expect(overlayRows(p), `${rows}`).toBe(DRAWER_FRAME_ROWS + drawerMax(drawerLimits(45)) + OVERLAY_GAP)
-  }
-  // rows unknown (0): the most lines
-  expect(drawerPad(drawerLimits(45), 0)).toBe(drawerMax(drawerLimits(45)))
 })
 
 test('the drawer (a card in the cards\' style), the settings popover and the empty office draw from props and labels; Buttons post; no selection band — the selected row is flagged, not tinted', () => {

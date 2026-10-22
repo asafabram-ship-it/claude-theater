@@ -3,12 +3,14 @@
 // their blank lines; the search on the toolbar's line from ONE_LINE_FROM
 // columns, else on a line of its own with a blank line above it — and only
 // while the office holds more than SEARCH_FROM agents or a search is active;
-// the footer line; the settings popover or the drawer), their exact heights
-// (the search counted on the agents IN the office, never the ones shown: live
-// check 7), the drawer's wrapped lines and its one status line, padded to one
-// height at a width (drawerMax; drawerPad on a pane too short for it to ride the
-// window's top), and the window of layout
-// lines the engine's scroll offset shows; and the ONE definition of the characters the surfaces refuse
+// the footer line), their exact heights (the search counted on the agents IN
+// the office, never the ones shown: live check 7); the settings popover and the
+// drawer, which FLOAT over the cards as an absolute overlay (phase B, decision
+// 26) and so take no row of the Client's flow — overlayHeight is what the module
+// gives the floating Box; the drawer's wrapped lines and its one status line,
+// padded to one height at a width (drawerMax; drawerPad on a pane too short for
+// that whole card), and the window of layout lines the engine's scroll offset
+// shows, drawn with an overscan (windowOf, overscanOf); and the ONE definition of the characters the surfaces refuse
 // (REFUSED_RE), with the two cleaners built on it: cleanSearch (the search
 // text) and cleanAgentText (every agent text the payload carries, cleaned by
 // the hooks' poll). Shared by the surface module (office-client.tsx draws with it)
@@ -22,8 +24,8 @@ import type { OfficeDrawer, OfficeProps } from './office-props'
 /**
  * The chrome rows always there, by the width (the probe's rounds 8-9): the header and a blank line, the toolbar and a blank
  * line — 4 rows — and, under ONE_LINE_FROM columns while the search field is drawn, the search line with a blank line above
- * it: 6. From ONE_LINE_FROM the search shares the toolbar's line. (`fixedRows`; the demo line, the overlay and the footer
- * come on top.)
+ * it: 6. From ONE_LINE_FROM the search shares the toolbar's line. (`fixedRows`; the demo line and the footer come on
+ * top: the settings popover and the drawer float and take no row.)
  */
 export const CHROME_ROWS_MIN = 4
 export const CHROME_ROWS_SEARCH = 6
@@ -31,7 +33,7 @@ export const CHROME_ROWS_SEARCH = 6
 export const SEARCH_FROM = 12
 /** Under this many columns the pane draws no key-hint chips (ui.tsx's rule; the Client's toolbar puts hotkeys on its Buttons only from here, since the desktop draws a chip per hotkey). */
 export const COMPACT_BELOW = 60
-/** The drawer's task and result wrap to at most this many lines each (the drawer's height must be exact: the rows under it are hit-tested); under DRAWER_NARROW_BELOW columns one line fewer each (the probe's: a pane that narrow is short too). */
+/** The drawer's task and result wrap to at most this many lines each; under DRAWER_NARROW_BELOW columns one line fewer each (the probe's: a pane that narrow is short too). */
 export const TASK_LINES = 4
 export const RESULT_LINES = 3
 export const TASK_LINES_NARROW = 3
@@ -73,9 +75,7 @@ export function helpPairs(wide: boolean): ReadonlyArray<ReadonlyArray<readonly [
 export function helpRows(columns: number, note = false): number {
   return 2 + 2 + 1 + HELP_BUTTON_ROWS + helpPairs(geometry(columns).wide)[0]!.length + (note ? 1 : 0)
 }
-/** The blank line under the settings popover | the drawer, before the first card (the cards' own gap). */
-export const OVERLAY_GAP = 1
-/** The drawer card's frame: its border and its padding line, top and bottom (the cards' style). */
+/** The border and padding rows of the drawer's card, top and bottom (the floating overlay: office-client.tsx). */
 export const DRAWER_FRAME_ROWS = 4
 
 /**
@@ -215,39 +215,22 @@ export function cleanSearch(q: string): string {
 export type DrawerLine = { kind: 'name' | 'dim' | 'status' | 'blank' | 'head' | 'body' | 'note'; text: string; mark?: string; color?: string }
 
 /**
- * THE OVERLAY IN VIEW: whether the settings popover | the drawer (`overlay` rows, part of the chrome) is drawn at
- * the top of the engine's window rather than under the fixed chrome — whenever it leaves the window a row for the
- * office. Under the native scroll the chrome scrolls away with the content, so a drawer opened while the pane is
- * scrolled down would otherwise be drawn above the window: the person would see the cards jump and no drawer.
- * Drawn at the window's top instead — after a spacer of every layout line above the window, at Client row
- * `offset` — it opens in view and the cards under it stay where they were (the person's place is kept; the card
- * the window's top cuts through goes on under the overlay from the window's first line as a frameless fragment:
- * office-client.tsx); scrolled back to the top it sits under the fixed chrome as before. An overlay as tall as the
- * window keeps its place in the chrome, so the person can still scroll through all of it.
+ * THE WINDOW WITH OVERSCAN (phase B, decision 26): the layout lines the module draws for the engine's window. `offset` and
+ * `bodyRows` are the engine's cells; `chrome` the fixed rows above the layout (chromeRows: no overlay rides the flow any
+ * more). The desktop draws a card's border rows as half a cell, so the engine's offset lands a line or so EARLIER in the
+ * layout than the rows it shows — about a line per card above the window; the overscan (overscanOf) draws that many lines
+ * on each side, so no blank row is ever in view. Layout line y sits at Client row chrome + y, as before.
  */
-export function overlayInWindow(overlay: number, bodyRows: number): boolean {
-  return overlay > 0 && overlay < bodyRows
+export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overscan = 0): { from: number; count: number } {
+  const start = offset - chrome
+  const from = Math.max(0, start - overscan)
+  const end = Math.min(len, start + bodyRows + overscan)
+  return { from, count: Math.max(0, end - from) }
 }
 
-/**
- * The layout lines the engine's window shows, in layout coordinates: `from` is
- * the first line (the cards above it are one spacer; a card the window cuts is
- * drawn from its own top, its rows above `from` left blank), `count` how many —
- * never more than the content holds. `chrome` is chromeRows (the overlay
- * included) and `overlay` the settings | drawer rows inside it: when the overlay
- * is drawn at the window's top (overlayInWindow), the layout continues from the
- * line the window starts at, under the overlay; either way layout line y sits at
- * Client row chrome + y. (The row budget, WINDOW_ROWS, is the module's cut on
- * the line map: office-layout.ts trimWindow.)
- */
-export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overlay = 0): { from: number; count: number } {
-  const inWindow = overlayInWindow(overlay, bodyRows)
-  // the rows above the layout that the window scrolls past before the office starts: the fixed chrome alone when the
-  // overlay rides the window's top, the whole chrome otherwise
-  const lead = inWindow ? chrome - overlay : chrome
-  const from = Math.max(0, offset - lead)
-  const visible = Math.max(0, bodyRows - (inWindow ? overlay : 0) - Math.max(0, lead - offset))
-  return { from, count: Math.max(0, Math.min(visible, len - from)) }
+/** The overscan for an office of `len` lines on a `bodyRows` body: every line while the office is at most WINDOW_ROWS lines (one render draws it whole), else a body's worth on each side of the window. */
+export function overscanOf(len: number, bodyRows: number): number {
+  return len <= WINDOW_ROWS ? len : Math.max(0, bodyRows)
 }
 
 /** The cells the drawer's lines are wrapped to: the card's inner width (border and padding off, at this width's geometry) by FIT, so a line drawn wider than a cell still fits its height-1 Box. */
@@ -312,23 +295,21 @@ export function drawerStatus(d: OfficeDrawer, L: Record<string, string>, max: nu
  * THE DRAWER'S ONE HEIGHT (live check 7, Q2): the most lines a drawer takes at these limits — the name, the sub, the status
  * line, the blank line, the model line, the task's heading and its `limits.task` lines, the result's heading and its
  * `limits.result` lines, the ✂ note — what every drawer is padded to, so browsing the agents (a result or none, a long task
- * or a short one) or an agent finishing never changes its height and the cards under it never hop.
+ * or a short one) or an agent finishing never changes its height: the floating card covers the same rows.
  */
 export function drawerMax(limits: DrawerLimits): number {
   return 8 + limits.task + limits.result
 }
 
 /**
- * THE DRAWER'S PAD: the lines a drawer is padded to on a pane of `bodyRows` — drawerMax (THE DRAWER'S ONE HEIGHT), but on a
- * pane too short for that whole card to ride the window's top (THE OVERLAY IN VIEW: the card, its gap and a row of the office
- * — 20 body rows or fewer from DRAWER_NARROW_BELOW columns) only as many as still leave the window that row (live check 7
- * review: padded to the most, a short drawer opened while scrolled was drawn in the chrome above the window — the cards
- * jumped and no drawer was in view). drawerLines pads, never cuts: a drawer with more lines of its own keeps them. Rows
- * unknown (0): drawerMax. Phase B's floating overlay lifts the limit.
+ * THE DRAWER'S PAD: the lines the floating drawer is padded to on a pane of `bodyRows` — drawerMax (THE DRAWER'S ONE HEIGHT,
+ * live check 7 Q2), or on a body too short for that whole card the most lines it holds whole (the overlay is absolute and
+ * clipped by the viewport: a card taller than the body would hide its own bottom). drawerLines pads, never cuts. Rows
+ * unknown (0): drawerMax.
  */
 export function drawerPad(limits: DrawerLimits, bodyRows: number): number {
   const most = drawerMax(limits)
-  return bodyRows > 0 ? Math.min(most, bodyRows - 1 - DRAWER_FRAME_ROWS - OVERLAY_GAP) : most
+  return bodyRows > 0 ? Math.min(most, Math.max(0, bodyRows - DRAWER_FRAME_ROWS)) : most
 }
 
 /** The drawer's lines at `inner` cells (its card is `DRAWER_FRAME_ROWS + lines.length` rows tall), from the drawer and the labels: the name, the sub, the status line, a blank line, then the content — the task and the result wrapped to `limits` lines (drawerLimits: one fewer each under DRAWER_NARROW_BELOW) — then blank lines to `pad` (THE DRAWER'S ONE HEIGHT, drawerMax; drawerPad on a short pane). */
@@ -367,22 +348,22 @@ export function emptyRows(p: OfficeProps): number {
   return 1 + e.msg.length + e.sub.length + (p.empty.kind === 'office' ? 1 : 0)
 }
 
-/** The rows above the layout: the chrome's fixed rows (fixedRows: four, or six with the search on its own line), the footer line when there is one, then the settings popover or the drawer. */
+/** The rows above the layout: the chrome's fixed rows (fixedRows: four, or six with the search on its own line) and the footer line when there is one. The settings popover and the drawer float over the office (phase B) and take none. */
 export function chromeRows(p: OfficeProps): number {
-  return fixedRows(p) + (p.footer ? 1 : 0) + overlayRows(p)
+  return fixedRows(p) + (p.footer ? 1 : 0)
 }
 
-/** The settings popover's or the drawer's rows, their gap included (0 when neither is open): the part of the chrome that may ride the window's top (overlayInWindow). */
-export function overlayRows(p: OfficeProps): number {
-  if (p.helpOpen) return helpRows(p.columns, !!p.oversized) + OVERLAY_GAP
+/** The floating overlay's own rows: the settings popover's (helpRows) while it is open, else the drawer's card (its frame and its padded lines: drawerPad), else 0. What the module gives the absolute Box as its height; never part of the Client's height. */
+export function overlayHeight(p: OfficeProps): number {
+  if (p.helpOpen) return helpRows(p.columns, !!p.oversized)
   if (p.drawer) {
     const limits = drawerLimits(p.columns)
-    return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), limits, drawerPad(limits, p.rows)).length + OVERLAY_GAP
+    return DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), limits, drawerPad(limits, p.rows)).length
   }
   return 0
 }
 
-/** The Client's full content height: what the hooks pass as `height` (`layoutRows` = `rowCount(p)`, office-layout.ts: no row is built for it). */
+/** The Client's full content height: what the hooks pass as `height` — the chrome and the layout's lines, the floating overlay (settings, drawer) not counted (`layoutRows` = `rowCount(p)`, office-layout.ts: no row is built for it). */
 export function officeHeight(p: OfficeProps, layoutRows: number): number {
   return chromeRows(p) + (p.empty ? emptyRows(p) : layoutRows)
 }

@@ -98,8 +98,10 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
     expect(windowOf(6, 380, 30, 400, 30)).toEqual({ from: 344, count: 56 })
     // no overscan: the body's lines alone
     expect(windowOf(6, 106, 30, 400)).toEqual({ from: 100, count: 30 })
-    // an offset past the content: nothing (`from` stays where the offset puts it — 494 - 30 — never clamped to the content)
-    expect(windowOf(6, 500, 30, 400, 30)).toEqual({ from: 464, count: 0 })
+    // an offset past the content: nothing, and `from` never past the content (the module's spacer is `from` rows)
+    expect(windowOf(6, 500, 30, 400, 30)).toEqual({ from: 400, count: 0 })
+    // an empty office
+    expect(windowOf(6, 500, 30, 0, 30)).toEqual({ from: 0, count: 0 })
   })
   test('windowOf without overscan: the lines the engine shows, in layout coordinates, never shifted by a clamp (a six-row chrome here)', () => {
     // offset inside the chrome: the first (rows - (chrome - offset)) layout lines
@@ -108,9 +110,9 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
     // offset past the chrome: a full window from offset - chrome
     expect(windowOf(6, 6, 30, 100)).toEqual({ from: 0, count: 30 })
     expect(windowOf(6, 10, 30, 100)).toEqual({ from: 4, count: 30 })
-    // near the end: the count shrinks, `from` stays (no clamp shifting the lines under the pointer)
+    // near the end: the count shrinks, `from` stays (no clamp shifting the lines under the pointer); past the content `from` stops at it
     expect(windowOf(6, 90, 30, 100)).toEqual({ from: 84, count: 16 })
-    expect(windowOf(6, 200, 30, 100)).toEqual({ from: 194, count: 0 })
+    expect(windowOf(6, 200, 30, 100)).toEqual({ from: 100, count: 0 })
     // short content, tall window
     expect(windowOf(6, 0, 30, 5)).toEqual({ from: 0, count: 5 })
     expect(windowOf(6, 0, 0, 5)).toEqual({ from: 0, count: 0 })

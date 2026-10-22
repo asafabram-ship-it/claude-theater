@@ -223,7 +223,8 @@ export type DrawerLine = { kind: 'name' | 'dim' | 'status' | 'blank' | 'head' | 
  */
 export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overscan = 0): { from: number; count: number } {
   const start = offset - chrome
-  const from = Math.max(0, start - overscan)
+  // (never past the content: a window the engine asks for beyond it draws nothing, and the module's spacer is `from` rows)
+  const from = Math.min(Math.max(0, len), Math.max(0, start - overscan))
   const end = Math.min(len, start + bodyRows + overscan)
   return { from, count: Math.max(0, end - from) }
 }

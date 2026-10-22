@@ -1,14 +1,14 @@
 // office-layout.ts: the pure view model of the desktop office. No engine, no
 // `$`: the geometry of the reading column, the office-wide table mode and its
 // hysteresis, the cards' rows (every cell's text and the flags that weight
-// it), the line map (the y of every drawn line), the hit rectangles and the
-// text helpers are asserted on the data.
+// it), the line map (the y of every drawn line) and the text helpers are
+// asserted on the data.
 
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
 import { REFUSED_RE, cleanAgentText } from './office-chrome'
-import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LESS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, MORE_MARK, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, hitAt, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, pinZone, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { ACT_MAX, CARD_LINES, CENTRE_AT, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LESS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, MORE_MARK, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -55,8 +55,8 @@ function probeRooms(): OfficeRoom[] {
   ]
 }
 
-function decor(over: Partial<{ hoverRoom: string | null; focus: string | null }> = {}): OfficeDecor {
-  return { hoverRoom: over.hoverRoom ?? null, focus: over.focus ?? null }
+function decor(over: Partial<OfficeDecor> = {}): OfficeDecor {
+  return { focus: over.focus ?? null }
 }
 
 /** The geometry of a reading column `W` cells wide: the pane `W + PANE_GUTTER` (live check 6: a cell left free at each edge). The probe's widths are the column's. */
@@ -430,10 +430,8 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
     // a pinned title is never longer than the unpinned one
     expect(widths[1], `${columns}`).toBeLessThanOrEqual(widths[0]!)
   }
-  // the pin zone (drawn or not): the border, the padding, the title's own padding, the glyph and its gap — a cell more from WIDE_FROM
-  expect(pinZone(atColumn(51))).toBe(7)
-  expect(pinZone(atColumn(80))).toBe(8)
-  // (the counts are read-only since live check 7 — Q6: the more line under the title is the room's one toggle — so they have no zone)
+  // (no pin zone: the pin is a native Button on every title since phase B, and the model maps no pointer — see the officeModel
+  // tests: every room's title is cut with the pin's cells reserved)
 })
 
 test('iconLabel: a labelled control reads icon-then-word as the probe writes it — the icon TRAILS a Hebrew word in the string (`הצג שסיימו ☐`, `צליל 🔔`, `הגדרות ⚙️`), two icons reversed, the icons alone keeping that arrangement; any other word takes the icon first', () => {
@@ -743,7 +741,7 @@ test('cardLines / rowCount: a card is CARD_LINES around its rows, MORE_LINES mor
   expect(rowCount(props({ rooms: [] }))).toBe(0)
 })
 
-test('officeModel: the line map of a card — border, pad, title, [the more line DIRECTLY UNDER THE TITLE: live check 7, Q3], a BLANK line (no rule: round 9), a row per agent, pad, border, gap — each line one row tall by construction; the rows carry the probe\'s strings (the activity split into its emoji and its word), no plain space and no time; the hits: a row and the more line the column\'s width, the pin zone at the reading edge of the title, nothing on the counts (read-only: Q6); the more line\'s arrow follows its state', () => {
+test('officeModel: the line map of a card — border, pad, title, [the more line DIRECTLY UNDER THE TITLE: live check 7, Q3], a BLANK line (no rule: round 9), a row per agent, pad, border, gap — each line one row tall by construction; the rows carry the probe\'s strings (the activity split into its emoji and its word), no plain space and no time; the more line\'s arrow follows its state', () => {
   const r = room({ title: 'תיאטרון הסוכנים', run: 3, stale: 1, done: 2, moreLabel: 'עוד 2 שסיימו', agents: [
     ag('lead', 0, { name: 'הינשוף', act: '🤔 חושב', task: 'תכנון המעבר לרישום הסטטי' }),
     ag('a1', 1, { name: 'הרופא', model: 'Sonnet 4.5', act: '✏️ עורך' }),
@@ -760,7 +758,7 @@ test('officeModel: the line map of a card — border, pad, title, [the more line
   expect(m.mode).toEqual({ rank: 0, word: true, model: 'family', nameMax: NAME_MAX })   // the probe's width draws the word and the family
   expect(m.floors).toBeNull()
   const room0 = m.rooms[0]!
-  expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 12, titleAt: 2, moreAt: 3, blankAt: 4, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pin: 'none', more: nb('עוד 2 שסיימו ◂') })
+  expect(room0).toMatchObject({ id: 'sess-a', top: 0, height: 12, titleAt: 2, moreAt: 3, blankAt: 4, title: 'תיאטרון הסוכנים', counts: '🟢3 ⏳1 ✅2', pinned: false, more: nb('עוד 2 שסיימו ◂') })
   expect(room0.rows.map(x => x.y)).toEqual([5, 6, 7, 8])
   // the arrow follows the state: ▾ once the room shows every finished (its line then hides them); read arrow first (iconLabel)
   expect(officeModel(props({ rooms: [{ ...r, showDone: true, moreLabel: 'הסתר שסיימו' }], columns: 51 + PANE_GUTTER })).rooms[0]!.more).toBe(nb('הסתר שסיימו ▾'))
@@ -779,66 +777,32 @@ test('officeModel: the line map of a card — border, pad, title, [the more line
   expect(room0.rows.every(x => !x.focus)).toBe(true)
   for (const x of room0.rows) for (const v of [x.status, x.who, x.model, x.actEmoji, x.actWord, x.task]) { expect(v).not.toMatch(/⏱|′|min|\d+ דק/); expect(v).not.toMatch(LONE_SURROGATE); expect(v).not.toContain(' ') }
   expect(officeModel(props({ rooms: [r], columns: 60 + PANE_GUTTER })).rooms[0]!.rows.map(x => x.model)).toEqual(['Opus 5.5', 'Sonnet 4.5', 'Opus 5.5', 'Opus 5.5'])
-  // the hits (RTL): the pin zone at the right edge of the title line (nothing on the counts at the left edge), the more line and
-  // a row the whole width
-  const pz = pinZone(atColumn(51))
-  expect(m.hits).toEqual([
-    { kind: 'pin', id: 'sess-a', x: 51 - pz, y: 2, w: pz, h: 1 },
-    { kind: 'moreDone', id: 'sess-a', x: 1, y: 3, w: 49, h: 1 },
-    { kind: 'agent', id: 'lead', x: 1, y: 5, w: 49, h: 1 },
-    { kind: 'agent', id: 'a1', x: 1, y: 6, w: 49, h: 1 },
-    { kind: 'agent', id: 'w', x: 1, y: 7, w: 49, h: 1 },
-    { kind: 'agent', id: 'm', x: 1, y: 8, w: 49, h: 1 },
-  ])
-  expect(hitAt(m, 50, 2)?.kind).toBe('pin')
-  expect(hitAt(m, 3, 2)).toBeUndefined()         // the counts: read-only
-  expect(hitAt(m, 25, 2)).toBeUndefined()        // the title itself is no control
-  expect(hitAt(m, 25, 3)?.kind).toBe('moreDone') // the more line, under the title
-  expect(hitAt(m, 25, 4)).toBeUndefined()        // the blank line
-  expect(hitAt(m, 0, 5)).toBeUndefined()         // the card's border cells: nothing (live check 7, R9: the hit is the card's inside)
-  expect(hitAt(m, 50, 8)).toBeUndefined()
-  expect(hitAt(m, 1, 5)?.id).toBe('lead')
-  expect(hitAt(m, 49, 8)?.id).toBe('m')
-  expect(hitAt(m, 25, 9)).toBeUndefined()        // the padding line
-  expect(hitAt(m, 25, 11)).toBeUndefined()       // the gap
-  expect(hitAt(m, 25, 12)).toBeUndefined()       // past the office
-  // LTR: the pin zone at the left edge; the more line and the rows the same
+  // LTR: the status marks the same
   const ltr = officeModel(props({ rooms: [r], columns: 51 + PANE_GUTTER, rtl: false }))
-  expect(ltr.hits[0]).toEqual({ kind: 'pin', id: 'sess-a', x: 0, y: 2, w: pz, h: 1 })
-  expect(ltr.hits[1]).toEqual({ kind: 'moreDone', id: 'sess-a', x: 1, y: 3, w: 49, h: 1 })
   expect(ltr.rooms[0]!.rows.map(x => x.status)).toEqual(['●', '●', '●', '⭐'])
-  // THE FROZEN COLUMN: from CENTRE_AT the hits are the column's cells (x from the column's left edge, w its width), never the pane's
+  // THE FROZEN COLUMN: from CENTRE_AT the column is CENTRE_AT cells wide, centred by its margin
   const wide = officeModel(props({ rooms: [r], columns: 200 }))
   expect(wide.geo.margin).toBe(50)
-  expect(wide.hits.find(h => h.kind === 'agent')).toMatchObject({ x: 1, w: 98 })
-  expect(wide.hits.find(h => h.kind === 'pin')).toMatchObject({ x: 100 - pinZone(geometry(200)), w: pinZone(geometry(200)) })
-  expect(hitAt(wide, 98, 5)?.id).toBe('lead')
-  expect(hitAt(wide, 99, 5)).toBeUndefined()
   // no more label: no more line
   const plain = officeModel(props({ rooms: [room()] }))
-  expect(plain.hits.map(h => h.kind)).toEqual(['pin', 'agent', 'agent'])
   expect(kinds(plain.lines)).toEqual(['border', 'pad', 'title', 'blank', 'row', 'row', 'pad', 'border', 'gap'])
   expect(plain.rooms[0]).toMatchObject({ more: '', moreAt: -1, height: 9 })
   // two rooms: the second card starts after the first's gap; its lines name it
   const two = officeModel(props({ rooms: [room({ id: 'a' }), room({ id: 'b', agents: [ag('b1', 1)], pinned: true })] }))
   expect(two.rooms.map(x => [x.id, x.top, x.height])).toEqual([['a', 0, 9], ['b', 9, 8]])
   expect(two.lines.slice(9).every(l => l.room === 'b')).toBe(true)
-  expect(two.rooms[1]!.pin).toBe('bright')
-  expect(two.hits.find(h => h.kind === 'pin' && h.id === 'b')?.y).toBe(11)
+  expect(two.rooms[1]!.pinned).toBe(true)
   // the output is deterministic
   expect(JSON.stringify(officeModel(p))).toBe(JSON.stringify(m))
 })
 
-test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pinned one bright, hovered or not), the focus a marker on the inner side of the status mark pointing in from the reading edge (the mark stays at the edge: no blank cell on the other rows); no pulse (live check 6: the ⭐ is the whole finish); nothing of it moves a line or a hit; the selection is no decor (the open drawer says which agent is selected)', () => {
+test('officeModel: the decor — the focus a marker on the inner side of the status mark pointing in from the reading edge (the mark stays at the edge: no blank cell on the other rows); no hover (the desktop draws none inside a Client: paint probe 22.10), no pulse (live check 6: the ⭐ is the whole finish); nothing of it moves a line; the selection is no decor (the open drawer says which agent is selected)', () => {
   const rooms = [room({ id: 'a' }), room({ id: 'b', agents: [ag('b1', 1)], pinned: true })]
   const p = props({ rooms, selected: 'a1' })
   const base = officeModel(p)
-  expect(base.rooms.map(x => x.pin)).toEqual(['none', 'bright'])
+  expect(base.rooms.map(x => x.pinned)).toEqual([false, true])
   expect(JSON.stringify(officeModel({ ...p, selected: null }))).toBe(JSON.stringify(base))
   expect(Object.keys(base.rooms[0]!.rows[0]!).sort()).toEqual(['actEmoji', 'actWord', 'bold', 'color', 'dim', 'failed', 'focus', 'id', 'model', 'status', 'task', 'who', 'y'])
-  const hovered = officeModel(p, decor({ hoverRoom: 'a' }))
-  expect(hovered.rooms[0]!.pin).toBe('dim')
-  expect(officeModel(p, decor({ hoverRoom: 'b' })).rooms[1]!.pin).toBe('bright')
   const focused = officeModel(p, decor({ focus: 'lead' }))
   // RTL: the marker LEADS the string (a Text with no Hebrew is laid left to right, so the mark is the rightmost glyph: at the
   // reading edge, where every other row's mark is); LTR: the marker trails. No row carries a blank for a focus it has not got.
@@ -848,13 +812,37 @@ test('officeModel: the decor — a hovered unpinned head draws a dim 📌 (a pin
   expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[0]!.status).toBe(`●${FOCUS_MARK.ltr}`)
   expect(officeModel({ ...p, rtl: false }, decor({ focus: 'lead' })).rooms[0]!.rows[1]!.status).toBe('●')
   expect(FOCUS_MARK).toEqual({ rtl: '‹', ltr: '›' })
-  for (const m of [hovered, focused]) {
-    expect(m.lines).toEqual(base.lines)
-    expect(m.hits).toEqual(base.hits)
-    expect(m.rooms.map(x => [x.top, x.height, x.title, x.counts])).toEqual(base.rooms.map(x => [x.top, x.height, x.title, x.counts]))
-    expect(m.mode).toEqual(base.mode)
+  expect(focused.lines).toEqual(base.lines)
+  expect(focused.rooms.map(x => [x.top, x.height, x.title, x.counts, x.pinned])).toEqual(base.rooms.map(x => [x.top, x.height, x.title, x.counts, x.pinned]))
+  expect(focused.mode).toEqual(base.mode)
+  expect(NO_DECOR).toEqual({ focus: null })
+})
+
+test('the pin is on every title: a room is pinned or not, the title cut leaves the pin its cells either way, and the decor is the focus alone', () => {
+  // B is unpinned, carries every status and a long title. Two widths tell reserving the pin's cells from not reserving them:
+  // at a 44-cell column the counts keep their ✅ beside no pin but lose it with the pin's four cells reserved; at a 47-cell
+  // one the counts are whole either way and the title is cut a word shorter
+  const long = 'בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל'
+  for (const columns of [44 + PANE_GUTTER, 47 + PANE_GUTTER]) {
+    const p = props({ columns, rooms: [room({ id: 'A', pinned: true, agents: [ag('a1', 1)] }), room({ id: 'B', pinned: false, title: long, run: 3, stale: 1, done: 2, agents: [ag('b1', 1)] })] })
+    const m = officeModel(p)
+    expect(m.rooms[0]!.pinned).toBe(true)
+    expect(m.rooms[1]!.pinned).toBe(false)
+    expect('pin' in m.rooms[0]!).toBe(false)
+    expect('hits' in m).toBe(false)
+    // the title of the unpinned room is cut as the pinned one's: the pin's cells are reserved on every card (decision 26)
+    const geo = geometry(p.columns)
+    const counts = countsFor(p.rooms[1]!, geo, true)
+    expect(m.rooms[1]!.title, `${columns}`).toBe(nb(cutTitle(p.rooms[1]!.title, geo, counts, true)))
+    expect(m.rooms[1]!.counts, `${columns}`).toBe(nb(counts))
+    // (the fixture tells the two apart: the counts or the title of a pin-less cut would differ)
+    const bare = countsFor(p.rooms[1]!, geo, false)
+    expect([counts, cutTitle(long, geo, counts, true)], `${columns}`).not.toEqual([bare, cutTitle(long, geo, bare, false)])
+    // the decor: the focus marks a row; nothing else is laid from the local state
+    const f = officeModel(p, { focus: 'b1' })
+    expect(f.rooms[1]!.rows[0]!.focus).toBe(true)
+    expect(f.lines).toEqual(m.lines)
   }
-  expect(NO_DECOR).toEqual({ hoverRoom: null, focus: null })
 })
 
 test('officeModel: the weights (round 8) — working = a bold name; waiting = a regular name; finished = dim; a ❌ row keeps a regular name (flagged `failed`); the badges never go', () => {
@@ -955,7 +943,6 @@ test('bounds: 200 agents in one room and in 200 rooms, at 45 and 200 columns —
       const ms = performance.now() - t0
       expect(ms).toBeLessThan(200)
       expect(JSON.stringify(m).length).toBeLessThan(200_000)
-      expect(m.hits.filter(h => h.kind === 'agent')).toHaveLength(200)
       expect(m.lines.filter(l => l.kind === 'row')).toHaveLength(200)
     }
   }
@@ -975,11 +962,10 @@ test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base 
   expect(cache.builds).toBe(3)
   expect(cache.measures).toBe(1)
   // the decor: nothing built, and the model is the decorated one
-  const hovered = officeModel(p, decor({ hoverRoom: 'a', focus: 'b1' }), cache)
+  const focused = officeModel(p, decor({ focus: 'b1' }), cache)
   expect(cache.builds).toBe(3)
-  expect(hovered.rooms[0]!.pin).toBe('dim')
-  expect(hovered.rooms[1]!.rows[0]!.status).toBe(`${FOCUS_MARK.rtl}●`)
-  expect(JSON.stringify(hovered)).toBe(JSON.stringify(officeModel(p, decor({ hoverRoom: 'a', focus: 'b1' }))))
+  expect(focused.rooms[1]!.rows[0]!.status).toBe(`${FOCUS_MARK.rtl}●`)
+  expect(JSON.stringify(focused)).toBe(JSON.stringify(officeModel(p, decor({ focus: 'b1' }))))
   // one room changed (an agent's activity): that room alone; the office measured once more
   const q = { ...p, rooms: rooms.map(r => r.id === 'b' ? { ...r, agents: r.agents.map(a => a.id === 'b2' ? { ...a, act: '✏️ עורך' } : a) } : r) }
   const m2 = officeModel(q, NO_DECOR, cache)

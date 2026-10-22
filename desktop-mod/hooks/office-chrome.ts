@@ -135,18 +135,21 @@ export function labelsFit(labels: readonly string[], width: number, gap = 1): bo
 }
 /**
  * The window's budget. The Client's whole tree must stay under 100,000 characters serialized or the
- * instance unmounts; a drawn agent row (a Text per column, six at most, no Box) serializes to under
- * ROW_CHARS characters whatever the width — the dearest row, pulsing and focused with the widest texts
- * the props allow in the six columns of the frozen column (the task bounded in code units too,
- * office-layout.ts TASK_UNITS: a cell cut alone lets a ZWJ family emoji task cost 816), measured 716
- * on the fake surface with a Hebrew task (2026-10-20; 488 for the four Texts of the fix wave of
- * 2026-10-19), so ROW_CHARS keeps a margin over it — and
- * the rows drawn in one window are capped at WINDOW_ROWS: a pane taller than that leaves its lowest rows
- * blank rather than losing the pane. (The chrome, the drawer and the card frames of a window cost about
- * 10,000 more: office-client.test.ts's limits sweep guards the whole tree, the pulsing rows included.)
+ * instance unmounts; a drawn agent row serializes to under ROW_CHARS characters whatever the width —
+ * since phase B (decision 26) a row's cells are plain Buttons with a Text child each (the status mark a
+ * Text), six columns at most and no Box: the dearest row, focused with the widest texts the props allow
+ * in the six columns of the frozen column (the task bounded in code units too, office-layout.ts
+ * TASK_UNITS: a cell cut alone lets a ZWJ family emoji task cost 816), measured 950 characters at 200
+ * columns with the task column on the fake surface (2026-10-22; 716 for the six Texts of phase A on
+ * 2026-10-20, 488 for the four Texts of the fix wave of 2026-10-19), so ROW_CHARS keeps a margin over
+ * it — the premise of WINDOW_ROWS: the rows drawn in one window are capped at it, and a pane taller
+ * than that leaves its lowest rows blank rather than losing the pane. (The chrome, the drawer and the
+ * card frames of a window cost about 10,000 more; the overscan is capped to the same WINDOW_ROWS lines,
+ * overscanOf, so the cards drawn stay bounded too: office-client.test.ts's limits sweep guards the
+ * whole tree, the focused rows included.)
  */
 export const WINDOW_CHARS = 80_000
-export const ROW_CHARS = 800
+export const ROW_CHARS = 1_100
 export const WINDOW_ROWS = Math.floor(WINDOW_CHARS / ROW_CHARS)
 /** The longest search text, in code points: what the module keeps and posts and the hooks store (a pasted page must not swell a post, the Input's value or the Client's props past their bounds). */
 export const SEARCH_MAX = 200
@@ -229,9 +232,17 @@ export function windowOf(chrome: number, offset: number, bodyRows: number, len: 
   return { from, count: Math.max(0, end - from) }
 }
 
-/** The overscan for an office of `len` lines on a `bodyRows` body: every line while the office is at most WINDOW_ROWS lines (one render draws it whole), else a body's worth on each side of the window. */
+/**
+ * The overscan for an office of `len` lines on a `bodyRows` body: every line while the office is at most WINDOW_ROWS lines
+ * (one render draws it whole), else up to a body's worth on each side of the window, capped so the window never passes
+ * WINDOW_ROWS lines — the Client's tree must stay under the engine's 100,000 characters, and a window of three bodies drew
+ * three bodies of card frames (measured 2026-10-22: 200 one-agent rooms on a 150-row body, 160,000). The drift the overscan
+ * covers is about a line per card above the window (paint probe 22.10: a frame's border rows are half a cell), so sixteen
+ * lines on a 39-row body cover sixteen cards; a body taller than WINDOW_ROWS gets no overscan, and the row budget
+ * (office-layout.ts trimWindow) still caps the rows drawn.
+ */
 export function overscanOf(len: number, bodyRows: number): number {
-  return len <= WINDOW_ROWS ? len : Math.max(0, bodyRows)
+  return len <= WINDOW_ROWS ? len : Math.max(0, Math.min(bodyRows, Math.floor((WINDOW_ROWS - bodyRows) / 2)))
 }
 
 /** The cells the drawer's lines are wrapped to: the card's inner width (border and padding off, at this width's geometry) by FIT, so a line drawn wider than a cell still fits its height-1 Box. */

@@ -86,10 +86,17 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
       expect(overlayHeight(d), `${columns} × ${rows}`).toBe(overlayHeight({ ...d, rows: 60 }))
     }
   })
-  test('windowOf with overscan: every line of a short office, a body on each side of a long one, never past the content', () => {
+  test('windowOf with overscan: every line of a short office, up to a body on each side of a long one — capped so the window never passes WINDOW_ROWS lines — never past the content', () => {
     expect(overscanOf(40, 30)).toBe(40)
     expect(overscanOf(WINDOW_ROWS, 30)).toBe(WINDOW_ROWS)
-    expect(overscanOf(WINDOW_ROWS + 1, 30)).toBe(30)
+    // a long office: the lesser of the body and what WINDOW_ROWS leaves on each side of it — 21 on a 30-row body, 16 on a
+    // 39-row one (sixteen cards' drift), the body itself on a 10-row one; a body of WINDOW_ROWS or taller gets none
+    expect(overscanOf(WINDOW_ROWS + 1, 30)).toBe(21)
+    expect(overscanOf(WINDOW_ROWS + 1, 39)).toBe(16)
+    expect(overscanOf(WINDOW_ROWS + 1, 10)).toBe(10)
+    expect(overscanOf(WINDOW_ROWS + 1, WINDOW_ROWS)).toBe(0)
+    expect(overscanOf(WINDOW_ROWS + 1, 150)).toBe(0)
+    for (const body of [1, 10, 21, 30, 39, 50, 72, 100, 150]) expect(body + 2 * overscanOf(1000, body), `${body}`).toBeLessThanOrEqual(Math.max(body, WINDOW_ROWS))
     // at the top of a 40-line office under a 6-row chrome on a 30-row body: the whole office
     expect(windowOf(6, 0, 30, 40, overscanOf(40, 30))).toEqual({ from: 0, count: 40 })
     // a 400-line office scrolled to 106: the window's top is layout line 100; a body before and after it
@@ -118,7 +125,8 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
     expect(windowOf(6, 0, 0, 5)).toEqual({ from: 0, count: 0 })
     // no byte budget here: the row budget (WINDOW_ROWS) is the module's cut on the line map
     expect(windowOf(6, 6, 200, 500)).toEqual({ from: 0, count: 200 })
-    expect(WINDOW_ROWS).toBe(100)
-    expect(ROW_CHARS).toBe(800)
+    // (phase B: a row's cells are Buttons with a Text child each — 950 characters measured for the dearest row, ROW_CHARS over it)
+    expect(WINDOW_ROWS).toBe(72)
+    expect(ROW_CHARS).toBe(1100)
   })
 })

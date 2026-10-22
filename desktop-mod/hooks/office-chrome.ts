@@ -365,7 +365,7 @@ export function chromeRows(p: OfficeProps): number {
   return fixedRows(p) + (p.footer ? 1 : 0)
 }
 
-/** The floating overlay's own rows: the settings popover's (helpRows) while it is open, else the drawer's card (its frame and its padded lines: drawerPad), else 0. What the module gives the absolute Box as its height; never part of the Client's height. */
+/** The floating overlay's own rows: the settings popover's (helpRows) while it is open, else the drawer's card (its frame and its padded lines: drawerPad), else 0. What the module gives the absolute Box as its height; the Client's height reaches its bottom only on an office shorter than it (officeHeight). */
 export function overlayHeight(p: OfficeProps): number {
   if (p.helpOpen) return helpRows(p.columns, !!p.oversized)
   if (p.drawer) {
@@ -375,7 +375,13 @@ export function overlayHeight(p: OfficeProps): number {
   return 0
 }
 
-/** The Client's full content height: what the hooks pass as `height` — the chrome and the layout's lines, the floating overlay (settings, drawer) not counted (`layoutRows` = `rowCount(p)`, office-layout.ts: no row is built for it). */
+/**
+ * The Client's full content height: what the hooks pass as `height` — the chrome and the layout's lines (`layoutRows` =
+ * `rowCount(p)`, office-layout.ts: no row is built for the floating overlay), or the empty office's block. THE OVERLAY'S ROOM
+ * (phase B review): the floating card sits at max(offset, chrome) and is overlayHeight rows tall; on an office shorter than
+ * that the Client is sized to the overlay's bottom, so the desktop never clips it at the Client's edge — the rows under it do
+ * not move, the pane only gains scroll room.
+ */
 export function officeHeight(p: OfficeProps, layoutRows: number): number {
-  return chromeRows(p) + (p.empty ? emptyRows(p) : layoutRows)
+  return chromeRows(p) + Math.max(p.empty ? emptyRows(p) : layoutRows, overlayHeight(p))
 }

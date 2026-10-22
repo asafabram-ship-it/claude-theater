@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { I18N } from './i18n'
-import { DRAWER_FRAME_ROWS, ROW_CHARS, WINDOW_ROWS, chromeRows, drawerInner, drawerLimits, drawerLines, drawerMax, drawerPad, fixedRows, helpRows, officeHeight, overlayHeight, overscanOf, windowOf } from './office-chrome'
+import { DRAWER_FRAME_ROWS, ROW_CHARS, WINDOW_ROWS, chromeRows, drawerInner, drawerLimits, drawerLines, drawerMax, drawerPad, emptyRows, fixedRows, helpRows, officeHeight, overlayHeight, overscanOf, windowOf } from './office-chrome'
 import { rowCount } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeProps, OfficeRoom } from './office-props'
 
@@ -40,15 +40,34 @@ const withDrawer = (p: OfficeProps, over: Partial<OfficeDrawer> = {}): OfficePro
 const withHelp = (p: OfficeProps): OfficeProps => ({ ...p, helpOpen: true })
 
 describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => {
-  test('chromeRows is the fixed rows and the footer, with or without an overlay; officeHeight does not grow when a drawer or the settings open', () => {
+  test('chromeRows is the fixed rows and the footer, with or without an overlay; officeHeight does not grow when a drawer or the settings open over content taller than them — and reaches the overlay\'s bottom on a short office and on the empty office (THE OVERLAY\'S ROOM)', () => {
     const p = propsAt(50)
     expect(chromeRows(p)).toBe(fixedRows(p) + (p.footer ? 1 : 0))
     const d = withDrawer(p)
     expect(chromeRows(d)).toBe(chromeRows(p))
-    expect(officeHeight(d, rowCount(d))).toBe(officeHeight(p, rowCount(p)))
     const h = withHelp(p)
     expect(chromeRows(h)).toBe(chromeRows(p))
-    expect(officeHeight(h, rowCount(h))).toBe(officeHeight(p, rowCount(p)))
+    // content taller than the overlay (a room of 30 agents: 37 layout rows): the Client's height is the content, overlay or not
+    const tall = { ...p, rooms: [room('A', Array.from({ length: 30 }, (_, i) => ag(`g${i}`)))] }
+    expect(rowCount(tall)).toBeGreaterThanOrEqual(25)
+    expect(overlayHeight(withDrawer(tall))).toBeLessThan(rowCount(tall))
+    expect(overlayHeight(withHelp(tall))).toBeLessThan(rowCount(tall))
+    expect(officeHeight(tall, rowCount(tall))).toBe(chromeRows(tall) + rowCount(tall))
+    expect(officeHeight(withDrawer(tall), rowCount(tall))).toBe(officeHeight(tall, rowCount(tall)))
+    expect(officeHeight(withHelp(tall), rowCount(tall))).toBe(officeHeight(tall, rowCount(tall)))
+    // a short office (one room of two agents: 9 layout rows) under a 19-row drawer or the 14-row settings: the Client reaches the
+    // overlay's bottom — chrome + overlayHeight — so the desktop never clips the floating card; the rows under it do not move
+    expect(rowCount(p)).toBe(9)
+    expect(overlayHeight(d)).toBeGreaterThan(rowCount(p))
+    expect(overlayHeight(h)).toBeGreaterThan(rowCount(p))
+    expect(officeHeight(p, rowCount(p))).toBe(chromeRows(p) + 9)
+    expect(officeHeight(d, rowCount(d))).toBe(chromeRows(d) + overlayHeight(d))
+    expect(officeHeight(h, rowCount(h))).toBe(chromeRows(h) + overlayHeight(h))
+    // the empty office: its block, or the settings' bottom when the popover is open and lies lower
+    const empty = { ...p, rooms: [], counts: { run: 0, idle: 0, done: 0 }, empty: { kind: 'office' as const, msg: 'המשרד ריק', sub: '' } }
+    expect(officeHeight(empty, 0)).toBe(chromeRows(empty) + emptyRows(empty))
+    expect(emptyRows(empty)).toBeLessThan(overlayHeight(withHelp(empty)))
+    expect(officeHeight(withHelp(empty), 0)).toBe(chromeRows(empty) + overlayHeight(withHelp(empty)))
   })
   test('overlayHeight: the settings popover rows, the drawer card rows padded to its one height, 0 with neither', () => {
     const p = propsAt(50)

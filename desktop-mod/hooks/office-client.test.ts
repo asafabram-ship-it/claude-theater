@@ -351,11 +351,16 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   expect(drawerStatus(drawer({ type: 'general-purpose', elapsedMin: 12 }), LABELS, 100)).toBe('עובד · זמן 12 דק׳ · general-purpose')
   expect(drawerStatus(drawer({ type: 'general-purpose', elapsedMin: 12 }), LABELS, 13)).toBe('עובד · זמן 1…')
   expect(drawerLines(drawer(), LABELS, inner)[3]).toEqual({ kind: 'blank', text: '' })
-  // the full height = chrome + the cards' lines; the empty office = chrome + its block
+  // the full height = chrome + the cards' lines; the empty office = chrome + its block — or the floating overlay's bottom when
+  // that lies lower (THE OVERLAY'S ROOM: a 9-row office under a 19-row drawer; the office's rows do not move)
   expect(officeHeight(p, rowCount(p))).toBe(CHROME_ROWS_MIN + 9)
   expect(officeHeight(thirteen, rowCount(thirteen))).toBe(CHROME_ROWS_SEARCH + 7 + 13)
+  const withD = { ...p, selected: 'lead', drawer: drawer() }
+  expect(officeHeight(withD, rowCount(withD))).toBe(CHROME_ROWS_MIN + overlayHeight(withD))
+  expect(overlayHeight(withD)).toBe(DRAWER_FRAME_ROWS + 15)
   const empty = { ...p, rooms: [], empty: { kind: 'office' as const, msg: LABELS.emptyOffice ?? '', sub: LABELS.emptySub ?? '' } }
   expect(officeHeight(empty, 0)).toBeGreaterThan(CHROME_ROWS_MIN + 2)
+  expect(officeHeight({ ...empty, helpOpen: true }, 0)).toBe(CHROME_ROWS_MIN + Math.max(officeHeight(empty, 0) - CHROME_ROWS_MIN, helpRows(p.columns)))
   // THE NO-BREAK SPACE passes the fault guard: no surface refuses it, and the text gate keeps it
   expect(`a${NBSP}b`).not.toMatch(REFUSED_RE)
   expect(cleanAgentText(`a${NBSP}b`)).toBe(`a${NBSP}b`)
@@ -745,12 +750,20 @@ test('clicks (phase B): every control is a plain Button — a row cell opens its
   tree = Office(open, f.surface)
   f.press(tree, `agent:${a}:who`)
   expect(f.posts.at(-1)).toEqual({ t: 'close' })
-  // the pin: posted, and THE PIN'S PLACE holds the drawn order until a leave
+  // the pin: posted, and THE PIN'S PLACE holds the drawn order until a leave; the press makes the Enter the office's again (R14)
   const r2 = p.rooms[1]!.id
   tree = Office(p, f.surface)
+  f.surface.state!.inst.typing = true
   f.press(tree, `pin:${r2}`)
   expect(f.posts.at(-1)).toEqual({ t: 'pin', room: r2 })
+  expect(f.surface.state!.inst.typing).toBe(false)
   expect(f.surface.state!.inst.frozen).toEqual(p.rooms.map(r => r.id))
+  // a second pin press (the first's answer not drawn yet, or the other room's pin): the first order held, not frozen afresh
+  const held = f.surface.state!.inst.frozen
+  f.press(tree, `pin:${p.rooms[0]!.id}`)
+  expect(f.posts.at(-1)).toEqual({ t: 'pin', room: p.rooms[0]!.id })
+  expect(f.surface.state!.inst.frozen).toBe(held)
+  expect(held).toEqual(p.rooms.map(r => r.id))
   const pinned = { ...p, rooms: [{ ...p.rooms[1]!, pinned: true }, p.rooms[0]!] }
   tree = Office(pinned, f.surface)
   expect(cards(tree).map(c => c.props.key)).toEqual(p.rooms.map(r => `room:${r.id}`))   // the order as drawn before the pin
@@ -763,9 +776,11 @@ test('clicks (phase B): every control is a plain Button — a row cell opens its
   expect(f.setStates()).toBe(sets + 1)                                                   // (a leave with nothing held: no setState)
   tree = Office(pinned, f.surface)
   expect(cards(tree).map(c => c.props.key)).toEqual([`room:${r2}`, `room:${p.rooms[0]!.id}`])
-  // the more line
+  // the more line (its press makes the Enter the office's again too)
+  f.surface.state!.inst.typing = true
   f.press(tree, `more:${r2}`)
   expect(f.posts.at(-1)).toEqual({ t: 'roomDone', room: r2 })
+  expect(f.surface.state!.inst.typing).toBe(false)
   // a pointer down is nothing: no post, no state
   const n = f.posts.length
   f.pointer({ type: 'down', x: 5, y: 5, button: 'left' })
@@ -779,6 +794,36 @@ test('clicks (phase B): every control is a plain Button — a row cell opens its
   f.surface.state!.inst.typing = true
   f.press(tree, `agent:${a}:who`)
   expect(f.surface.state!.inst.typing).toBe(false)
+})
+
+test('every chrome press makes the Enter the office\'s again (R14): the toolbar\'s three, the settings\' demo, language and close, the drawer\'s close, the demo line\'s exit, the empty office\'s demo — each clears inst.typing and posts its message', () => {
+  const p = propsAt(50)
+  const f = fake(50, 30)
+  const a = p.rooms[0]!.agents[0]!.id
+  const trees: Array<[unknown, string, OfficeMessage]> = [
+    [Office(p, f.surface), 'showDone', { t: 'showDone' }],
+    [Office(p, f.surface), 'mute', { t: 'mute' }],
+    [Office(p, f.surface), 'help', { t: 'help' }],
+    [Office({ ...p, helpOpen: true }, f.surface), 'demo', { t: 'demo', on: true }],
+    [Office({ ...p, helpOpen: true }, f.surface), 'lang', { t: 'lang' }],
+    [Office({ ...p, helpOpen: true }, f.surface), 'closeHelp', { t: 'close' }],
+    [Office({ ...p, drawer: drawerFor(p, a), selected: a }, f.surface), 'close', { t: 'close' }],
+    [Office({ ...p, demo: true }, f.surface), 'exitDemo', { t: 'demo', on: false }],
+    [Office({ ...p, rooms: [], empty: { kind: 'office', msg: 'm', sub: '' } }, f.surface), 'watchDemo', { t: 'demo', on: true }],
+  ]
+  for (const [tree, key, m] of trees) {
+    f.surface.state!.inst.typing = true
+    f.press(tree, key)
+    expect(f.surface.state!.inst.typing, key).toBe(false)
+    expect(f.posts.at(-1), key).toEqual(m)
+  }
+  // ... so an Enter right after any of them opens the focus (none here: no row walked or pressed — no open posted)
+  const n = f.posts.length
+  f.key({ key: 'return' })
+  expect(f.posts).toHaveLength(n)
+  f.press(Office(p, f.surface), `agent:${a}:who`)
+  f.key({ key: 'return' })
+  expect(f.posts.at(-1)).toEqual({ t: 'open', id: a })
 })
 
 test('the pin Button is on every title: PIN_OFF (monochrome) for an unpinned room, PIN for a pinned one, both the same width in the line, before the title at the reading edge', () => {
@@ -1747,7 +1792,7 @@ function crowd(): OfficeAgent[] {
 }
 
 // (a few dozen renders of 200 agents, each serialized and walked: a loaded machine stretches the suite tenfold)
-test('limits: 200 agents with the drawer open — in 3 rooms and in 200 rooms — at widths 24..250 and in the tall panes (200 × 80, 200 × 150) stay under 20,000 nodes, 32 deep, 100,000 characters, with no bidi marks; the rows drawn never pass WINDOW_ROWS; a drawn row — focused too — costs under ROW_CHARS; nothing laid on a background', { timeoutMs: 60_000 }, () => {
+test('limits: 200 agents with the drawer open — in 3 rooms and in 200 rooms — at widths 24..250 and in the tall panes (200 × 80, 200 × 150) stay under 20,000 nodes, 32 deep, 100,000 characters, with no bidi marks; the rows drawn never pass WINDOW_ROWS; a drawn row — focused too — costs under ROW_CHARS; nothing of the column laid on a background (the floating drawer\'s inverseText the tree\'s one)', { timeoutMs: 60_000 }, () => {
   const agents = crowd()
   const three = [room('A', agents.slice(0, 80), { moreDone: 3, moreLabel: 'עוד 3 שסיימו' }), room('B', agents.slice(80, 140)), room('C', agents.slice(140))]
   const twoHundred = agents.map((a, i) => room(`R${i}`, [a], { title: `שיחה ${i} על משהו ארוך למדי ${'x'.repeat(30)}` }))

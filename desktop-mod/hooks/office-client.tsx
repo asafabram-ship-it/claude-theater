@@ -106,10 +106,13 @@
 // reading column's margin and width, on `backgroundColor: 'inverseText'` (the
 // theme's: it hides the rows under it on the light and the dark pane alike,
 // where a raw colour tinted the light one), its fixed height per width — so it
-// takes no row of the flow (chromeRows no longer counts it, officeHeight
-// shrank by it) and nothing under it moves when it opens; painted after the
-// column, as the root's last child. The keyboard walk (j / k) keeps to the
-// agent rows drawn, and `o` opens the focus only while its row is among them.
+// takes no row of the flow (chromeRows no longer counts it; officeHeight is the
+// content, or the overlay's bottom on an office shorter than it — THE
+// OVERLAY'S ROOM, office-chrome.ts: the Client is never shorter than the card,
+// so the desktop never clips it) and nothing under it moves when it opens;
+// painted after the column, as the root's last child. The keyboard walk (j / k)
+// keeps to the agent rows drawn (the window with its overscan, a short office
+// whole), and `o` opens the focus only while its row is among them.
 //
 // The clicks (phase B, decision 26 — live check 7's "the buttons are not
 // smooth" was the y drift above): every click is a native plain Button — the
@@ -276,6 +279,13 @@ function pressMore(surface: Surface, room: string): void {
   cur.inst.typing = false
   send(surface, cur.inst, { t: 'roomDone', room })
 }
+/** A chrome Button's press — the toolbar's three, the settings' demo and language, the two closes, the demo line's exit, the empty office's demo: the keyboard's Enter is the office's again (R14), then the post. */
+function pressChrome(surface: Surface, m: OfficeMessage): void {
+  const cur = surface.state
+  if (!cur) return
+  cur.inst.typing = false
+  send(surface, cur.inst, m)
+}
 
 // ---------------------------------------------------------------------------
 // the instance
@@ -366,9 +376,9 @@ function listen(surface: Surface): void {
       const k = ev.key
       if (k === 'j' || k === 'down' || k === 'k' || k === 'up') {
         inst.typing = false   // (a walk key never reaches onKey while the field has the keys: the Enter is the office's again)
-        // the walk keeps to the agent rows drawn (the window): a focus on a row scrolled away would show no marker,
-        // and `o` would open a drawer for a row the person cannot see; past the window's last row the person scrolls
-        // the pane, and a focus left above or below the window restarts from the window's first (or last) row
+        // the walk keeps to the agent rows DRAWN — the window with its overscan, a short office whole — so the focus
+        // always has a marker: a focus walked off the screen is a scroll away, and past the last row drawn the person
+        // scrolls the pane; a focus left outside the rows drawn restarts from their first (or last) row
         const { from, count } = inst.win
         const order = inst.order.filter(id => {
           const y = inst.rowAt.get(id)
@@ -388,7 +398,7 @@ function listen(surface: Surface): void {
       } else if (k === 'o' || (k === 'return' && !inst.typing)) {
         // (spec §6.4: o and Enter open the focus — but an Enter right after typing in the search field is the field's, its
         // onSubmit: it never reopens the drawer of a row clicked before the search, live check 7 R14)
-        // only a focus whose row is drawn (in the window): one scrolled away would open a drawer for a row the person cannot see
+        // only a focus whose row is drawn (the window with its overscan): `o` opens any drawn row, on screen or a scroll away
         const y = cur.focus ? inst.rowAt.get(cur.focus) : undefined
         if (cur.focus && y !== undefined && y >= inst.win.from && y < inst.win.from + inst.win.count) send(surface, inst, { t: 'open', id: cur.focus })
       } else {
@@ -528,7 +538,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const d = demoLine(props)
       kids.push(Box({ key: 'demoLine', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1, children: [
         Text({ color: DEMO_FG, children: [nb(d.note)] }),
-        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => send(surface, inst, { t: 'demo', on: false }) }),
+        Button({ key: 'exitDemo', plain: true, label: d.exit, onPress: () => pressChrome(surface, { t: 'demo', on: false }) }),
       ] }))
     }
 
@@ -544,9 +554,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const widest = ['☑', '🔕', '⚙️'].map((icon, i) => iconLabel(icon, words[i]!, rtl))
     const tb = labelsFit(widest, geo.W, TOOLBAR_GAP) ? worded : icons
     const buttons = [
-      Button({ key: 'showDone', ...hk('f'), plain: true, label: tb[0]!, onPress: () => send(surface, inst, { t: 'showDone' }) }),
-      Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => send(surface, inst, { t: 'mute' }) }),
-      Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => send(surface, inst, { t: 'help' }) }),
+      Button({ key: 'showDone', ...hk('f'), plain: true, label: tb[0]!, onPress: () => pressChrome(surface, { t: 'showDone' }) }),
+      Button({ key: 'mute', ...hk('m'), plain: true, label: tb[1]!, onPress: () => pressChrome(surface, { t: 'mute' }) }),
+      Button({ key: 'help', ...hk('h'), plain: true, label: tb[2]!, onPress: () => pressChrome(surface, { t: 'help' }) }),
     ]
     // --- search (only while the office holds more than SEARCH_FROM agents, or a search is active — in the props or typed): the
     //     typed text is the module's; the post waits SEARCH_DEBOUNCE_MS, except the first keystroke of a search, posted at once
@@ -623,10 +633,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       ] })
       overlay = floatBox('help', helpH, [
         // (its close as the drawer's — live check 7, R9: the native close role, the ✕ then the word, x; a close, never a flip)
-        line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
+        line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => pressChrome(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
-          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => send(surface, inst, { t: 'demo', on: !props.demo }) }),
-          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[1]!, onPress: () => send(surface, inst, { t: 'lang' }) }),
+          Button({ key: 'demo', ...hk('d'), plain: true, label: hb[0]!, onPress: () => pressChrome(surface, { t: 'demo', on: !props.demo }) }),
+          Button({ key: 'lang', ...hk('l'), plain: true, label: hb[1]!, onPress: () => pressChrome(surface, { t: 'lang' }) }),
         ]),
         Box({ flexDirection: row, columnGap: PAIRS_GAP, width: '100%', children: pairs.map(pair) }),
         // THE TOO-LONG CONVERSATIONS NOTE (live check 6): one dim line under the shortcuts, cut to the popover's inner width by
@@ -641,7 +651,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         // the name line: the persona (bold) at the reading edge, the close Button (read ✕ THEN the word: iconLabel) at the other
         if (l.kind === 'name') return line([
           Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, height: 1, overflow: 'hidden', justifyContent: edge, children: [Text({ bold: true, children: [l.text] })] }),
-          Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => send(surface, inst, { t: 'close' }) }),
+          Button({ key: 'close', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => pressChrome(surface, { t: 'close' }) }),
         ], { justifyContent: 'space-between', width: '100%' })
         // ONE status line: the mark in the status's colour, then the dim text (`עובד · זמן 12 דק׳ · Explore`); then the blank line
         if (l.kind === 'status') return line([Text({ color: l.color, children: [l.mark ?? ''] }), Text({ dimColor: true, children: [l.text] })], { key: `d${i}` })
@@ -666,7 +676,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Text({ children: ['🏢'] }),
         ...e.msg.map(t => Text({ bold: true, children: [t] })),
         ...e.sub.map(t => Text({ dimColor: true, children: [t] })),
-        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => send(surface, inst, { t: 'demo', on: true }) })] : []),
+        ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => pressChrome(surface, { t: 'demo', on: true }) })] : []),
       ] }))
     } else {
       // --- the cards: a spacer, then every card the window (with its overscan) touches, its rows windowed by line. A window past

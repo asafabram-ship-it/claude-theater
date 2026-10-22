@@ -11,7 +11,7 @@ const PANE = 'paint-probe'
 const TITLE = '🔬 בדיקת ציור'
 const LOG = 'C:/Users/asafa/.claude/paint-probe.log'
 /** The Client's rows: the module draws exactly this many (probe-client.tsx HEIGHT), so the pane scrolls natively. */
-const HEIGHT = 125
+const HEIGHT = 58
 
 type Pong = { n: number; via: 'answer' | 'render' }
 let pending: Pong | null = null

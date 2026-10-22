@@ -377,9 +377,12 @@ function titleRoom(geo: Geo, counts: string, pinned: boolean): number {
 
 /**
  * The room's counts, shrunk before the title is (round 8): the non-zero statuses (`🟢3 ⏳1 ✅2`), then without the ✅, then
- * the 🟢 alone — the first form that leaves the title TITLE_MIN fit cells (by FIT), else the shortest.
+ * the 🟢 alone — the first form that leaves the title TITLE_MIN fit cells (by FIT), else the shortest. `pinned` reserves the
+ * pin's cells beside the title (the model passes true: the pin Button is on every card since decision 26); every caller
+ * states it — no default, so a test comparing with the drawn counts never takes the pin-less form by accident (phase B final
+ * review).
  */
-export function countsFor(room: Pick<OfficeRoom, 'run' | 'stale' | 'done'>, geo: Geo, pinned = false): string {
+export function countsFor(room: Pick<OfficeRoom, 'run' | 'stale' | 'done'>, geo: Geo, pinned: boolean): string {
   const forms = [countsText(room), countsText({ run: room.run, stale: room.stale, done: 0 }), countsText({ run: room.run, stale: 0, done: 0 })]
   for (const c of forms) if (fitCells(titleRoom(geo, c, pinned)) >= TITLE_MIN) return c
   return forms[2]!
@@ -406,9 +409,10 @@ export function latinDominant(s: string): boolean {
  * draws wider per cell: measured at 14 px, a bold Latin title takes 4-12% more pixels a cell than the header's text in
  * Segoe UI and 10-18% in Arial (capitals the most), so LINE_FIT's 0.83 is 0.70-0.80 for it there: FIT's 0.75 makes a clip at
  * the edge the exception, as the title broken over two clipped lines in Asaf's screenshot of 20.10 showed it was not); never
- * under 8 cells. (A Hebrew title keeps LINE_FIT: round 9 drew it whole on the desktop.)
+ * under 8 cells. (A Hebrew title keeps LINE_FIT: round 9 drew it whole on the desktop.) `pinned` has no default: every
+ * caller states it, as countsFor's.
  */
-export function cutTitle(title: string, geo: Geo, counts: string, pinned = false): string {
+export function cutTitle(title: string, geo: Geo, counts: string, pinned: boolean): string {
   const room = titleRoom(geo, counts, pinned)
   return cutWords(title, Math.max(8, latinDominant(title) ? fitCells(room) : fitLine(room)))
 }
@@ -571,13 +575,18 @@ export type RoomView = {
   counts: string
   /** The room is pinned (prefs.pins): the colour 📌 on its title; else PIN_OFF. The pin Button is drawn on every card. */
   pinned: boolean
-  /** The title line's y. */
+  /**
+   * The title line's y. (titleAt, blankAt and moreAt are read by no production code since the hit-test by y went — phase B,
+   * decision 26 — and are KEPT on purpose: the tests pin the more line's and the blank line's place by them, and they are the
+   * line map's shape beside `top` and `height`; not dead.)
+   */
   titleAt: number
-  /** The blank line's y, over the first row (under the more line when the card has one). */
+  /** The blank line's y, over the first row (under the more line when the card has one). Kept for the tests (see titleAt). */
   blankAt: number
   rows: RowView[]
   /** The `עוד N שסיימו ◂` / `הסתר שסיימו ▾` line under the title (`▸ N more finished` in English: iconLabel), '' when the room draws none. */
   more: string
+  /** The more line's y. Kept for the tests (see titleAt). */
   moreAt: number
 }
 

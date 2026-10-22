@@ -84,22 +84,25 @@
 // `props.rows` the pane's body height. THE WINDOW WITH OVERSCAN: on the desktop
 // a card frame's border rows are half a cell (paint probe 22.10: six frames
 // above a row put the engine's y, the scroll offset and an absolute Box's top
-// about six rows off the drawn lines), so a window computed from the offset
-// starts about a card too early or too late; the module therefore draws every
-// line while the office has at most WINDOW_ROWS lines, and otherwise up to a
-// body of lines on each side of the window the offset names, capped so the
-// window never passes WINDOW_ROWS lines (office-chrome.ts overscanOf, windowOf:
-// the drift is about a line per card above the window, so sixteen lines on a
-// 39-row body cover sixteen cards; the serialized tree stays under the
-// engine's bound) — the drift can never leave a blank row in view — and the
-// row budget (office-layout.ts trimWindow, WINDOW_ROWS) still caps the agent
-// rows. The module draws the fixed chrome, then ONE spacer Box for the
-// lines above the first card drawn, then only the cards the window touches:
-// every card drawn whole (its frame, title, more line, blank line), its agent
-// rows only where they lie in the window, a spacer Box in each table standing
-// in for the rows above and below — the lines above the window lie above the
-// viewport, which the native scroll hides. THE FLOATING OVERLAY: the settings |
-// drawer is ONE absolute Box from the root — `position: 'absolute'` at
+// about six rows off the drawn lines), so the engine's offset lands EARLIER in
+// the layout than the rows it shows — about a line per card above the window
+// (office-chrome.ts windowOf says the same: the drift is one-signed and grows
+// with the cards above); the module therefore draws every line while the
+// office has at most WINDOW_ROWS lines, and otherwise up to a body of lines on
+// each side of the window the offset names, capped so the window never passes
+// WINDOW_ROWS lines (overscanOf: sixteen lines on a 39-row body cover sixteen
+// cards; the serialized tree stays under the engine's bound) — the drift can
+// never leave a blank row in view — and the row budget (office-layout.ts
+// trimWindow, WINDOW_ROWS) still caps the agent rows. The overscan on BOTH
+// sides is interim: live check 8 measures the drift's sign and slope with
+// twenty cards or more, and decides a one-sided overscan or a window start
+// corrected for the drift. The module draws the fixed chrome, then ONE spacer
+// Box for the lines above the first card drawn, then only the cards the window
+// touches: every card drawn whole (its frame, title, more line, blank line),
+// its agent rows only where they lie in the window, a spacer Box in each table
+// standing in for the rows above and below — the lines above the window lie
+// above the viewport, which the native scroll hides. THE FLOATING OVERLAY: the
+// settings | drawer is ONE absolute Box from the root — `position: 'absolute'` at
 // `top: max(offset, chrome)` (the engine lays an absolute Box against the root
 // in its own cells, as the offset is: it sits at the visible window's top
 // however far the pane is scrolled, under the fixed chrome at the top), at the
@@ -112,7 +115,9 @@
 // so the desktop never clips it) and nothing under it moves when it opens;
 // painted after the column, as the root's last child. The keyboard walk (j / k)
 // keeps to the agent rows drawn (the window with its overscan, a short office
-// whole), and `o` opens the focus only while its row is among them.
+// whole) and, from no focus, starts IN VIEW — j on the first drawn row at or
+// below the viewport's top, k on the last drawn row above its bottom (THE FIRST
+// STEP) — and `o` opens the focus only while its row is among the rows drawn.
 //
 // The clicks (phase B, decision 26 — live check 7's "the buttons are not
 // smooth" was the y drift above): every click is a native plain Button — the
@@ -220,8 +225,11 @@ export type OfficeInst = {
   propsSearch: string
   posted: string | null
   debounce: (() => void) | null
-  /** The Client rows of the content last drawn under an offset of its own (chrome and layout lines) — kept, the taller, while the offset handed is stale: what tells a stale offset (THE STALE OFFSET, R13). */
+  /** The Client rows of the content last drawn under an offset of its own (chrome and the taller of the layout lines and the overlay: the hooks' officeHeight sizes the Client alike) — kept, the taller, while the offset handed is stale: what tells a stale offset (THE STALE OFFSET, R13). */
   height: number
+  /** THE VIEWPORT the last render drew for: the offset the window and the overlay rode (the props', clamped while stale) and the body's rows — where the walk's first step starts (THE FIRST STEP). */
+  offset: number
+  body: number
   /** Text was typed into the search field since the last press or walk key: an Enter onKey sees then is the field's (R14). */
   typing: boolean
   /** THE OUTBOX: this instance's id (the hooks number its actions apart from another instance's), the last number given, the actions not yet cleared, the clock that clears them. */
@@ -329,7 +337,7 @@ function newInst(p: OfficeProps): OfficeInst {
   const inst: OfficeInst = {
     props: p, chrome: 0, model: { rooms: [], lines: [], geo: geometry(p.columns), mode: { rank: 0, word: true, model: 'family', nameMax: 0 }, token: { rank: 0, key: '' }, floors: null, statusMin: 0 }, lastMode: null, frozen: null,
     rowAt: new Map(), order: [], win: { from: 0, count: 0 }, cache: roomCache(), drawerKey: '', drawer: [],
-    query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null, typing: false, height: 0,
+    query: cleanSearch(p.search), propsSearch: p.search, posted: null, debounce: null, typing: false, height: 0, offset: 0, body: 0,
     id: Math.random().toString(36).slice(2, 10) || 'office', seq: 0, outbox: [], flush: null,
   }
   setModel(inst, p, NO_DECOR)
@@ -377,17 +385,29 @@ function listen(surface: Surface): void {
       if (k === 'j' || k === 'down' || k === 'k' || k === 'up') {
         inst.typing = false   // (a walk key never reaches onKey while the field has the keys: the Enter is the office's again)
         // the walk keeps to the agent rows DRAWN — the window with its overscan, a short office whole — so the focus
-        // always has a marker: a focus walked off the screen is a scroll away, and past the last row drawn the person
-        // scrolls the pane; a focus left outside the rows drawn restarts from their first (or last) row
+        // always has a marker: a step from a focus among them stays over them (a focus walked off the screen is a scroll
+        // away, and past the last row drawn the person scrolls the pane)
         const { from, count } = inst.win
-        const order = inst.order.filter(id => {
-          const y = inst.rowAt.get(id)
-          return y !== undefined && y >= from && y < from + count
-        })
+        const yOf = (id: string) => inst.rowAt.get(id) ?? -1
+        const order = inst.order.filter(id => yOf(id) >= from && yOf(id) < from + count)
         if (order.length === 0) return
         const d = k === 'j' || k === 'down' ? 1 : -1
         const i = cur.focus ? order.indexOf(cur.focus) : -1
-        const n = i < 0 ? (d > 0 ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, i + d))
+        let n: number
+        if (i >= 0) n = Math.max(0, Math.min(order.length - 1, i + d))
+        else {
+          // THE FIRST STEP (phase B final review): no focus, or one left outside the rows drawn — the walk starts IN VIEW,
+          // never at the window's end a body of lines away (the overscan draws rows above and below the viewport): j takes
+          // the first drawn row at or below the viewport's top (layout line offset - chrome, the offset the render drew for),
+          // k the last drawn row above its bottom (offset - chrome + body); none there (a viewport of frame and title lines
+          // alone, or the row budget's blank rows), the window's first or last
+          const top = inst.offset - inst.chrome
+          const bottom = top + inst.body
+          let at = -1
+          if (d > 0) at = order.findIndex(id => yOf(id) >= top)
+          else for (let j = order.length - 1; j >= 0; j--) if (yOf(order[j]!) < bottom) { at = j; break }
+          n = at >= 0 ? at : d > 0 ? 0 : order.length - 1
+        }
         const id = order[n]!
         if (id === cur.focus) return
         // local only: one post per frame, so a `focus` post could displace a meaningful one (a click's `open`)
@@ -602,6 +622,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     //     (decision 26) — it takes no row of the flow, so the cards under it never move; `overlay` is the Box at a `top` ---
     const floatBox = (key: string, height: number, children: RenderElement[], extra: Record<string, unknown>) => (top: number): RenderElement =>
       Box({ key, position: 'absolute', top, left: geo.margin, width: geo.W, height, backgroundColor: 'inverseText', borderStyle: 'round', borderColor: CARD_BORDER, paddingX: geo.px, paddingY: 1, flexDirection: 'column', overflow: 'hidden', ...extra, children })
+    /** The overlay's rows — the settings popover's (helpRows) or the drawer card's (its frame and its padded lines), 0 with neither: the floating Box's height, and what the hooks' officeHeight sizes the Client by on an office shorter than it (THE OVERLAY'S ROOM, office-chrome.ts). */
+    const overlayH = props.helpOpen ? helpH : props.drawer ? DRAWER_FRAME_ROWS + inst.drawer.length : 0
     let overlay: ((top: number) => RenderElement) | null = null
     if (props.helpOpen) {
       // the rare controls as labelled Buttons under the title (HELP_BUTTON_ROWS): the demo (✕ and the exit word while it runs) and
@@ -631,7 +653,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, ...padEdge, children: rows.map(([k]) => Text({ children: [nb(cut(lbl(k) || k, labelMax))] })) }),
         Box({ flexDirection: 'column', alignItems: edge, flexShrink: 0, children: rows.map(([, keys]) => Text({ dimColor: true, children: [nb(keys)] })) }),
       ] })
-      overlay = floatBox('help', helpH, [
+      overlay = floatBox('help', overlayH, [
         // (its close as the drawer's — live check 7, R9: the native close role, the ✕ then the word, x; a close, never a flip)
         line([Text({ bold: true, children: [cut(lbl('settingsTitle'), Math.max(1, inner - 10))] }), Button({ key: 'closeHelp', hotkey: 'x', plain: true, role: 'dismiss', label: iconLabel('✕', lbl('close'), rtl), onPress: () => pressChrome(surface, { t: 'close' }) })], { justifyContent: 'space-between', width: '100%' }),
         line([
@@ -662,11 +684,13 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         if (l.kind === 'head' || l.kind === 'dim' || l.kind === 'note') return line([Text({ dimColor: true, children: [l.text] })], { key: `d${i}` })
         return line([Text({ children: [l.text] })], { key: `d${i}` })
       })
-      overlay = floatBox('drawer', DRAWER_FRAME_ROWS + inst.drawer.length, items, { alignItems: edge })
+      overlay = floatBox('drawer', overlayH, items, { alignItems: edge })
     }
 
-    /** The offset the overlay rides: the props' — clamped to the content once the cards are laid (THE STALE OFFSET, below). */
+    /** The offset the overlay rides: the props' — clamped to the Client's content (the layout, or the overlay when taller) once the cards are laid (THE STALE OFFSET, below). */
     let offset = props.offset
+    /** The pane's body rows (30 while the props carry none: the first render's). */
+    const body = props.rows > 0 ? props.rows : 30
     if (props.empty) {
       // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no cards, so no row to press; the overlay (if
       //     any) still floats, at the offset handed ---
@@ -682,14 +706,18 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       // --- the cards: a spacer, then every card the window (with its overscan) touches, its rows windowed by line. A window past
       //     the content (an offset the engine never hands a Client of this height: windowOf clamps its `from` to the content) draws
       //     its spacer alone ---
-      const body = props.rows > 0 ? props.rows : 30
       // THE STALE OFFSET (live check 7, R13): a press that shortened the office (a "hide finished") hands the module the offset
       // the engine had before it — past the new end until the engine asks again; clamped to the content, the window drawn (and
       // the top the overlay rides) is the one the engine shows once it clamps its own (no blank rows meanwhile). Stale = one the
       // taller content the module drew before allowed; an offset no content of it ever allowed is no engine's, and is drawn as
       // handed. The taller height is kept WHILE the offset stays stale — the redraws that follow with it (the press's own focus
-      // setState, the next {props} answer) clamp alike — and dropped once the engine hands an offset of the content
-      const height = inst.chrome + model.lines.length
+      // setState, the next {props} answer) clamp alike — and dropped once the engine hands an offset of the content. THE
+      // OVERLAY'S ROOM (phase B final review): the content is measured as the hooks size the Client — the chrome and the taller
+      // of the layout and the overlay (office-chrome.ts officeHeight) — so on a short office under the open settings or the
+      // drawer the engine's own end, chrome + overlayH - rows, is no stale offset: drawn as handed, the whole short office under
+      // the overlay at the viewport's top (a height of the layout alone clamped it, and put the popover's title and close above
+      // the viewport); the overlay closed, that offset IS stale and is clamped like any other
+      const height = inst.chrome + Math.max(model.lines.length, overlayH)
       const stale = props.offset > height - body && props.offset <= Math.max(height, inst.height) - body
       offset = stale ? Math.max(0, height - body) : props.offset
       inst.height = stale ? inst.height : height
@@ -778,6 +806,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       ] })
       drawn.forEach(room => kids.push(card(room)))
     }
+    inst.offset = offset
+    inst.body = body
     // THE READING COLUMN: geo.W cells — the pane less a cell at each edge (PANE_GUTTER: no card border ever touches the pane's
     // edge, live check 6), frozen at CENTRE_AT — centred by a left margin (an explicit margin, not alignItems: the floating
     // overlay is laid against the root at the same margin). The root: the column, then THE FLOATING OVERLAY at max(offset, chrome)

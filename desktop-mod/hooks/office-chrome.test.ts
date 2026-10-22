@@ -104,6 +104,12 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
       expect(overlayHeight(d), `${columns} × ${rows}`).toBe(DRAWER_FRAME_ROWS + drawerLines(d.drawer!, d.labels, drawerInner(columns), drawerLimits(columns)).length)
       expect(overlayHeight(d), `${columns} × ${rows}`).toBe(overlayHeight({ ...d, rows: 60 }))
     }
+    // drawerPad's floor: a body of DRAWER_FRAME_ROWS rows or fewer holds no line of the card whole — 0, never negative — and one
+    // row more holds one line
+    const limits45 = drawerLimits(45)
+    expect(drawerPad(limits45, 3)).toBe(0)
+    expect(drawerPad(limits45, 4)).toBe(0)
+    expect(drawerPad(limits45, 5)).toBe(1)
   })
   test('windowOf with overscan: every line of a short office, up to a body on each side of a long one — capped so the window never passes WINDOW_ROWS lines — never past the content', () => {
     expect(overscanOf(40, 30)).toBe(40)

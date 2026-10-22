@@ -263,6 +263,11 @@ test('DESKTOP (2.4): keys walk the rows drawn (the marker moves) — a short off
   expect(['lead', 'a1', 'a2', 'a3'].map(id => rowY(p0, id))).toEqual([4, 5, 6, 7])
   expect(fixedRows(p0) + rowY(p0, 'z9')).toBeGreaterThanOrEqual(14)   // z9 lies past the viewport ...
   expect(await drawnWho(ui)).toEqual(['lead', 'a1', 'a2', 'a3', ...Z].map(id => whoOf(p0, id)))   // ... and is drawn
+  // k from no focus starts IN VIEW (phase B final review): the last row above the viewport's bottom — a3 (Client row 13 of the
+  // 14), not z9, the last row drawn, which lies past the viewport
+  expect(fixedRows(p0) + rowY(p0, 'a3')).toBeLessThan(14)
+  await ui.key({ in: OFFICE_KEY, key: 'k' })
+  expect(await focused(ui, p0)).toEqual([whoOf(p0, 'a3')])
   // a press gives the Client the focus (on the lead); `j` walks it row by row
   await pressRow(ui, 'lead')
   const pSel = await officeProps(ui)                        // the press's `open` opened the lead's drawer (floating: no chrome row)
@@ -357,7 +362,22 @@ test('DESKTOP (2.4): THE WINDOW WITH OVERSCAN — a long office (past WINDOW_ROW
   for (const col of values) expect(elements(col).every(c => c.type === 'Button' && elements(c).length === 1 && elements(c)[0]!.type === 'Text')).toBe(true)
   // a press on a30's row (in the window): its drawer opens, the focus on it; closed again
   await pressRow(ui, 'a30')
-  expect((await officeProps(ui)).selected).toBe('a30')          // the press's `open` reached the hooks: a30's drawer
+  const pd = await officeProps(ui)
+  expect(pd.selected).toBe('a30')                                 // the press's `open` reached the hooks: a30's drawer
+  // THE FLOATING OVERLAY over a WINDOWED office (phase B final review): the drawer at the engine's offset (40 — the window's
+  // top, past the chrome), the column's margin and width, overlayHeight tall, on inverseText; the column under it as it was —
+  // the same kinds, the block's spacers (20 above, 50 below) and the rows drawn (a20..a49) unchanged: the overlay takes no row
+  const ov = await overlayOf(ui)
+  expect(propsOf(ov)).toMatchObject({ key: 'drawer', position: 'absolute', top: 40, left: geometry(pd.columns).margin, width: geometry(pd.columns).W, height: overlayHeight(pd), backgroundColor: 'inverseText' })
+  expect(overlayHeight(pd)).toBeGreaterThan(0)
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  const cardD = (await cardsOf(ui))[0]!
+  const [, , blockD] = elements(cardD)
+  const [aboveD, tableD, belowD] = elements(blockD)
+  expect(aboveD).toMatchObject({ type: 'Box', props: { height: 20 } })
+  expect(tableD).toBe(tableOf(cardD))
+  expect(belowD).toMatchObject({ type: 'Box', props: { height: 50 } })
+  expect(rowsOf(cardD).map(r => r[1])).toEqual(rowsOf(card).map(r => r[1]))
   await ui.press({ key: 'close' })
   expect((await officeProps(ui)).drawer).toBeNull()
   expect(await focused(ui, p)).toEqual([whoOf(p, 'a30')])

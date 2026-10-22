@@ -639,8 +639,10 @@ function suite(COLUMNS: Columns): void {
     const { ui, captured } = await mountOffice($, on)
     const p0 = await officeProps(ui)
     expect([p0.lang, p0.rtl]).toEqual(['he', true])
-    // RTL: the title line laid row-reverse — its first child, the pin, at the right (reading) edge, the counts at the left
-    expect(propsOf(partsOf(await cardOf(ui, SA)).titleLine).flexDirection).toBe('row-reverse')
+    // RTL: the title line laid row-reverse — its FIRST child the pin Button (`pin:<room>`), at the right (reading) edge, the
+    // counts at the left (phase B final review: the pin's place pinned in both languages)
+    const titleOf = async () => { const t = partsOf(await cardOf(ui, SA)).titleLine; const first = elements(t)[0]; return [propsOf(t).flexDirection, first?.type, propsOf(first).key] }
+    expect(await titleOf()).toEqual(['row-reverse', 'Button', `pin:${SA}`])
     await ui.press({ key: 'help' })
     expect(await label(ui, 'lang')).toBe(W.settings[1])
     await ui.press({ key: 'lang' })
@@ -655,7 +657,7 @@ function suite(COLUMNS: Columns): void {
     expect(roomOf(p1, SA).moreLabel).toBe('1 more finished')
     expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.act).toBe('📖 Reading')
     expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'en'))
-    expect(propsOf(partsOf(await cardOf(ui, SA)).titleLine).flexDirection).toBe('row')   // LTR: the pin at the left edge
+    expect(await titleOf()).toEqual(['row', 'Button', `pin:${SA}`])   // LTR: the pin Button first, at the left edge
     // the row in the mode the English names leave the office (wider than the Hebrew ones: the word, then the model column, go
     // before the names are cut — office-layout.ts chooseMode, chosen afresh: the names moved the widest values, so the Hebrew
     // mode's token is no hysteresis here, ModeToken): the mark alone at the left edge, the who, the model (its version from
@@ -677,6 +679,7 @@ function suite(COLUMNS: Columns): void {
     expect(await label(ui, 'lang')).toBe(W.settings[1])
     expect(await label(ui, 'showDone')).toBe(W.toolbar[0])
     expect(roomOf(p2, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'he'))
+    expect(await titleOf()).toEqual(['row-reverse', 'Button', `pin:${SA}`])   // Hebrew again: the pin first at the right edge
     // THE HYSTERESIS is about the width (office-layout.ts ModeToken): the names moved the widest values again, so the Hebrew
     // mode is back at once at every width — at 36 the model column with it (the English rank held it dropped before this fix:
     // one cell to spare), the rows four Texts as before the round trip
@@ -1065,7 +1068,7 @@ function suite(COLUMNS: Columns): void {
   // the presses in a scrolled pane: THE FLOATING OVERLAY at the window's top, the card controls lower down
   // ---------------------------------------------------------------------------
 
-  t('SCROLLED: a press reaches its Button wherever the pane is scrolled — a row opens its drawer, which floats at the window\'s top (max(offset, chromeRows), on inverseText) while the cards do not move under it and nothing scrolls; the settings opened while scrolled take the same place, and a row press swaps them for its drawer; the card controls lower down answer and land under an open overlay too — A\'s more line above the window (the drawer stays open), B\'s pin at the office\'s end (the settings stay open; the colour 📌 at once, B to the top once the pointer leaves; unpinned at the top under a drawer, which stays) — B\'s ✅ counts read-only; j from no focus lands on the office\'s first row (a short office is drawn whole: a focus off the screen is a scroll away)', async ($, on) => {
+  t('SCROLLED: a press reaches its Button wherever the pane is scrolled — a row opens its drawer, which floats at the window\'s top (max(offset, chromeRows), on inverseText) while the cards do not move under it and nothing scrolls; the settings opened while scrolled take the same place, and a row press swaps them for its drawer; the card controls lower down answer and land under an open overlay too — A\'s more line above the window (the drawer stays open), B\'s pin at the office\'s end (the settings stay open; the colour 📌 at once, B to the top once the pointer leaves; unpinned at the top under a drawer, which stays) — B\'s ✅ counts read-only; a first j from no focus lands on the row at the viewport\'s top — the walk starts IN VIEW (a short office is drawn whole: a focus off the screen is a scroll away)', async ($, on) => {
     const { ui, captured } = await mountOffice($, on, tallFixture, { offset: 0, bodyRows: BODY })
     const p0 = await officeProps(ui)
     expect(p0.rooms.map(r => r.id)).toEqual([SA, SB])
@@ -1088,12 +1091,13 @@ function suite(COLUMNS: Columns): void {
     expect(lines[FROM]).toMatchObject({ kind: 'row', room: SA })
     expect(await kinds()).toEqual([...CHROME_KEYS, 'card', 'card'])
     await rowsOk(ui, p1)
-    // j from no focus: the first row drawn — the lead, above the viewport (the walk keeps to the rows drawn)
+    // j from no focus: the first row IN VIEW — the row at the viewport's top (layout line FROM), not the lead drawn above it
+    // (phase B final review: the walk keeps to the rows drawn and starts in the viewport)
+    const id = lines[FROM]!.agent!
     await ui.key({ in: OFFICE_KEY, key: 'j' })
-    expect(await focused(ui, p1)).toEqual([whoOf(p1, 'lead-a')])
+    expect(await focused(ui, p1)).toEqual([whoOf(p1, id)])
     // a press on the window's first row: its drawer at THE WINDOW'S TOP — Client row offset, the viewport's first rows — nothing
     // scrolled, the focus on the row; the cards under it never move: closed, the column is what it was under the drawer
-    const id = lines[FROM]!.agent!
     await clickAgent(ui, id)
     const p2 = await officeProps(ui)
     expect(p2.drawer?.id).toBe(id)
@@ -1149,7 +1153,7 @@ function suite(COLUMNS: Columns): void {
     const pe = await officeProps(ui)
     await rowsOk(ui, pe)
     expect((await headOf(ui, SB)).counts).toBe(nb(W.tallB))
-    expect(nb(countsFor(roomOf(pe, SB), GEO))).toBe(nb(W.tallB))
+    expect(nb(countsFor(roomOf(pe, SB), GEO, true))).toBe(nb(W.tallB))   // (the drawn counts: the pin's cells reserved, as the model does)
     expect((await headOf(ui, SB)).more).toBe('')
     expect(roomOf(pe, SB).moreLabel).toBe('')
     expect(nodesOf(partsOf(await cardOf(ui, SB)).titleLine).filter(n => n.type === 'Button').map(n => propsOf(n).key)).toEqual([`pin:${SB}`])

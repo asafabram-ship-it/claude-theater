@@ -68,7 +68,7 @@ Asaf's four complaints (slow; sometimes no response or the wrong action; the off
 - Header line: `🎭 עובדים N · ממתינים N · סיימו N` (bold) at the reading edge, the 5h meter dim at the other edge.
 - Toolbar: the three labelled Buttons (`שסיימו ☐`, `צליל 🔔`, `עזרה ?`), gap 2. Search below with a blank line above and below.
 - Each room = a card: `Box borderStyle="round" borderColor="#56607a" paddingX={1} paddingY={1} marginBottom={1} width="100%"`:
-  - title line (bold title at the reading edge, dim counts at the other edge, 📌 when pinned / dim 📌 on hover at the reading edge, the counts are the roomDone toggle);
+  - title line (bold title at the reading edge, dim counts at the other edge, 📌 when pinned / dim 📌 on hover at the reading edge, the counts are the roomDone toggle) — (superseded by "Phase B, decided" above: the pin Button on every title, `📌︎` unpinned and `📌` pinned, no hover; the counts read-only since live check 7);
   - a dim rule `─…` under it;
   - the agent table, COLUMN-MAJOR: `Box flexDirection=row-reverse (RTL) | row (LTR)` of five column Boxes (`flexDirection=column`, aligned to the reading edge, `flexShrink 0` except the activity column `flexGrow 1, flexShrink 1, overflow hidden`): status dot (● green running / ● amber stale / ○ grey done), `emoji name` (bold; dim when done), model word (dim), activity (`🤔 חושב`, done = `✅ סיים`, dim), time (`⏱️ 3′` for working agents, empty for done) + badges (⭐ ❌ ⏰). Every value one line: each value sits in a `Box height={1} paddingX={1} width="100%"` so no wrap can change a row's height.
   - the `▸ עוד N שסיימו` / `▸ הסתר שסיימו` line (marginTop 1).
@@ -77,7 +77,7 @@ Asaf's four complaints (slow; sometimes no response or the wrong action; the off
 - Drawer and help keep their content; the drawer drawn as a card in the same style.
 
 ## Interaction (unchanged behaviour)
-Row click → drawer; pin, roomDone counts, more/hide row, toolbar, help buttons, search, keys j/k/o/x/f/m/h/d/s/l — all as in `office-controls.test.ts`. Hit-testing: the Client knows the y of every line (card top border, padding, title, rule, rows, more, bottom padding/border, gap); every line is height 1 by construction, so pointer y maps to a line; x is irrelevant for rows (whole row), the title line keeps the pin/counts zones.
+Row click → drawer; pin, roomDone counts, more/hide row, toolbar, help buttons, search, keys j/k/o/x/f/m/h/d/s/l — all as in `office-controls.test.ts`. Hit-testing: the Client knows the y of every line (card top border, padding, title, rule, rows, more, bottom padding/border, gap); every line is height 1 by construction, so pointer y maps to a line; x is irrelevant for rows (whole row), the title line keeps the pin/counts zones (superseded by "Phase B, decided" above: every click a native Button, no hit-test by y — the line map stays for windowing and the keyboard walk alone).
 
 ## Constraints
 No flicker (no change to register.tsx publish logic or the Client update path); props JSON < 100k chars; the drawn tree within the engine's limits at 200 agents and a 200×80 pane (window by whole cards or by lines, the implementer decides, tested); both engines 2.1.293 / 2.1.295; tsc clean. The cell-grid helpers no longer used by the Client are removed with their tests; keep what props/text cards still use (`cut`, `glyphs`, `textWidth`).

@@ -1008,6 +1008,45 @@ test('THE STALE OFFSET (live check 7, R13): a press that shortens the office whi
   expect(win(3)).toEqual({ from: 0, count: 3 - C + 25 + overscanOf(linesShort, 25) })   // (the body under the chrome's lines, and the overscan below)
 })
 
+test('THE STALE OFFSET sizes the office WITH its overlay (phase B final review): the hooks size the Client to the taller of the content and the overlay (officeHeight, THE OVERLAY\'S ROOM), so on a short office under the open settings the engine scrolls as far as chrome + helpRows - rows — an offset the module draws as handed (the popover\'s title and close at the viewport\'s top), never clamps as stale for remembering a taller office; the settings closed, that same offset IS stale and is clamped to the content', () => {
+  const f = fake(45, 0)
+  // a long office first: the module remembers its height (the stale clamp's memory, inst.height)
+  const tall = props({ rows: 10, rooms: [room('A', Array.from({ length: 140 }, (_, i) => ag(`g${i}`)))] })
+  Office(tall, f.surface)
+  expect(f.surface.state!.inst.height).toBe(chromeRows(tall) + officeModel(tall).lines.length)
+  // then a short one (two agents: nine layout lines, fewer than the 10-row body) with the settings open — a popover taller than
+  // the content: the Client is chrome + helpRows tall, so the engine's offset reaches chrome + helpRows - rows
+  const short = props({ rows: 10, helpOpen: true })
+  const C = chromeRows(short)
+  const len = officeModel(short).lines.length
+  const helpH = helpRows(45)
+  expect(len).toBeLessThan(10)
+  expect(helpH).toBeGreaterThan(len)
+  expect(officeHeight(short, len)).toBe(C + helpH)
+  const end = C + helpH - 10                  // the engine's own end for the grown Client ...
+  expect(end).toBeGreaterThan(C + len - 10)   // ... past the content's end: a clamp sized to the content alone took it for stale
+  const tree = Office({ ...short, offset: end }, f.surface)
+  expect(overlayOf(tree)!.props.top).toBe(end)
+  expect(f.surface.state!.inst.offset).toBe(end)
+  // the window: the whole short office — what windowOf gives for the offset handed (an office of at most WINDOW_ROWS lines is
+  // drawn whole at any offset: overscanOf), no spacer before its one card
+  const w = windowOf(C, end, 10, len, overscanOf(len, 10))
+  expect(f.surface.state!.inst.win).toEqual(trimWindow(officeModel(short), w.from, w.count, WINDOW_ROWS))
+  expect(f.surface.state!.inst.win).toEqual({ from: 0, count: len })
+  expect(byKey(tree, 'spacer')).toBeUndefined()
+  expect(cards(tree)).toHaveLength(1)
+  expect(f.surface.state!.inst.height).toBe(C + helpH)   // the height remembered is the grown Client's
+  // the settings closed with the engine's old offset (it hands it until it asks again): the content alone is shorter, so the
+  // offset is stale now — clamped to the content's end, the grown height kept while it stays stale
+  Office({ ...short, helpOpen: false, offset: end }, f.surface)
+  expect(f.surface.state!.inst.offset).toBe(Math.max(0, C + len - 10))
+  expect(f.surface.state!.inst.height).toBe(C + helpH)
+  // the engine asks again with an offset of the content: drawn as handed, the memory the content's
+  Office({ ...short, helpOpen: false, offset: 0 }, f.surface)
+  expect(f.surface.state!.inst.offset).toBe(0)
+  expect(f.surface.state!.inst.height).toBe(C + len)
+})
+
 test('window (with overscan): a long office draws the cards the window and its overscan touch whole, their rows only where they lie in it (ONE spacer above and one below the table for the rest, not one per column); the cards above are one spacer; the row budget leaves the lowest rows blank, with no Button for them', () => {
   // 120 agents at 45 columns: one card of 127 lines, its rows on lines 4..123 (a_i on line i + 4); the chrome 6 (the search field)
   const many = withAgents(props(), Array.from({ length: 120 }, (_, i) => ag(`a${i}`)))
@@ -1103,23 +1142,24 @@ test('keys after a click: j/k walk the rows with no post (the keyboard focus is 
   expect(f.posts.length).toBe(8)
 })
 
-test('keys: j / k keep to the rows drawn (the window with its overscan) — from no focus, j lands on the first row drawn and stops at the last; a focus scrolled out of the drawn rows restarts from the first (j) or last (k) of them; o opens the focus', () => {
+test('keys: j / k keep to the rows drawn (the window with its overscan) and START IN VIEW (phase B final review): from no focus — or a focus out of the rows drawn — j lands on the first drawn row at or below the viewport\'s top and k on the last drawn row above its bottom (never the window\'s ends, a body of lines away); the steps keep to the drawn rows and stop at their last; none in view, the window\'s ends; o opens the focus', () => {
   // 120 agents at 45 columns (a long office: the overscan a body, not the whole): g_i on layout line i + 4, the chrome 6. A 13-row
-  // window scrolled 25 rows is lines 19..31, drawn with 13 more on each side: 6..44 — g2..g40
+  // window scrolled 25 rows is lines 19..31 (g15..g27 in view), drawn with 13 more on each side: 6..44 — g2..g40
   const p = withAgents(props({ rows: 13, offset: 25 }), Array.from({ length: 120 }, (_, i) => ag(`g${i}`)))
   const f = fake(45, 0)
   Office(p, f.surface)
   expect(f.surface.state!.inst.win).toEqual({ from: 6, count: 39 })
   f.key({ key: 'j' })
-  expect(f.surface.state!.focus).toBe('g2')
+  expect(f.surface.state!.focus).toBe('g15')                 // the first row IN VIEW (line 19) — not g2, the first drawn, a body above the viewport
   for (let i = 0; i < 50; i++) f.key({ key: 'j' })
-  expect(f.surface.state!.focus).toBe('g40')                 // the last row drawn: the walk stops there
+  expect(f.surface.state!.focus).toBe('g40')                 // the last row drawn: the walk stops there (a scroll away)
   const tree = Office(p, f.surface)
   expect(rowsOf(cards(tree)[0]!).map(r => r[0]!).filter(s => s.includes(FOCUS_MARK.rtl))).toHaveLength(1)   // ... and its marker is drawn
   f.key({ key: 'k' })
   expect(f.surface.state!.focus).toBe('g39')
   // the person scrolls back to the top: g39 is out of the rows drawn (lines 0..25: the frame, the title, the blank line and
-  // g0..g21) — o / Enter open nothing for it (a drawer for a row the person cannot see), the walk restarts from the first row drawn
+  // g0..g21) — o / Enter open nothing for it (a drawer for a row the person cannot see), the walk restarts in view: g0 is the
+  // first row at or below the viewport's top (line 0)
   Office({ ...p, offset: 6 }, f.surface)
   expect(f.surface.state!.inst.win).toEqual({ from: 0, count: 26 })
   f.key({ key: 'o' })
@@ -1127,14 +1167,53 @@ test('keys: j / k keep to the rows drawn (the window with its overscan) — from
   expect(f.posts).toEqual([])
   f.key({ key: 'j' })
   expect(f.surface.state!.focus).toBe('g0')
-  Office(p, f.surface)                                       // and down again: g0 is out; k restarts from the last drawn
+  Office(p, f.surface)                                       // and down again: g0 is out; k restarts from the last row in view (line 31)
   f.key({ key: 'o' })
   expect(f.posts).toEqual([])
   f.key({ key: 'k' })
-  expect(f.surface.state!.focus).toBe('g40')
+  expect(f.surface.state!.focus).toBe('g27')
   expect(f.posts).toEqual([])
   f.key({ key: 'o' })
-  expect(f.posts).toEqual([{ t: 'open', id: 'g40' }])
+  expect(f.posts).toEqual([{ t: 'open', id: 'g27' }])
+  // THE FIRST STEP across cards: ten rooms of eight agents (past WINDOW_ROWS lines), a 20-row body scrolled past the first cards
+  // so the viewport's top lands inside a card — j from no focus is the first row at or below the top, k the last row above the
+  // bottom; the window's first row drawn lies above the viewport (the overscan), and is not where j starts
+  const rooms = Array.from({ length: 10 }, (_, r) => room(`R${r}`, Array.from({ length: 8 }, (_, i) => ag(`r${r}a${i}`))))
+  const q = props({ rows: 20, offset: 60, rooms })
+  const mq = officeModel(q)
+  const Cq = chromeRows(q)
+  const top = 60 - Cq
+  const rowLines = mq.lines.map((l, y) => ({ ...l, y })).filter(l => l.kind === 'row')
+  const first = rowLines.find(l => l.y >= top)!
+  const last = [...rowLines].reverse().find(l => l.y < top + 20)!
+  expect(first.room).not.toBe('R0')
+  expect(last.y).toBeGreaterThanOrEqual(first.y)
+  const g = fake(45, 0)
+  Office(q, g.surface)
+  const { from: fromq } = g.surface.state!.inst.win
+  expect(rowLines.find(l => l.y >= fromq)!.y).toBeLessThan(top)
+  g.key({ key: 'j' })
+  expect(g.surface.state!.focus).toBe(first.agent)
+  g.surface.setState({ ...g.surface.state!, focus: null })
+  g.key({ key: 'k' })
+  expect(g.surface.state!.focus).toBe(last.agent)
+  // none in view: a 3-row body at a card's top shows its border, padding and title lines alone — the window still holds the
+  // card's first rows (the overscan), so j takes the first row at or below the top (the card's first) and k, with no row above
+  // the bottom, falls back to the window's last
+  const r3 = mq.rooms[3]!
+  const q3 = { ...q, rows: 3, offset: Cq + r3.top }
+  expect(mq.lines.slice(r3.top, r3.top + 3).every(l => l.kind !== 'row')).toBe(true)
+  const h = fake(45, 0)
+  Office(q3, h.surface)
+  const { from: from3, count: count3 } = h.surface.state!.inst.win
+  const drawn3 = rowLines.filter(l => l.y >= from3 && l.y < from3 + count3)
+  expect(drawn3.length).toBeGreaterThan(1)
+  expect(drawn3[0]!.agent).toBe('r3a0')
+  h.key({ key: 'j' })
+  expect(h.surface.state!.focus).toBe('r3a0')
+  h.surface.setState({ ...h.surface.state!, focus: null })
+  h.key({ key: 'k' })
+  expect(h.surface.state!.focus).toBe(drawn3.at(-1)!.agent)
 })
 
 test('the row budget\'s cut: the cut card is drawn whole in the viewport — its more line under its title (live check 7) a live Button, its blank rows and the cards past the cut without one; the j / k walk and o keep to the rows drawn', () => {
@@ -1858,6 +1937,26 @@ test('limits: 200 agents with the drawer open — in 3 rooms and in 200 rooms �
     const json = JSON.stringify(tree)
     expect(json.length).toBeLessThan(100_000)
     expect(nodes(tree).length).toBeLessThan(20_000)
+  }
+  // THE WIDEST CHROME on the tallest pane (phase B final review): the settings open over the drawer (the popover wins), the demo
+  // line, a footer and the too-long conversations note — every row the chrome and the overlay can take at once — at 200 × 150,
+  // offset 20: the same bounds, the popover the tree's one background
+  {
+    const f = fake(200, 0)
+    const p = props({ columns: 200, rows: 150, offset: 20, rooms: three, selected: 'agent-3', drawer: d, helpOpen: true, demo: true, footer: `דולגו 3 תמלילים גדולים מדי · +12 ${'x'.repeat(200)}`, oversized: `יש 3 שיחות ארוכות מדי ולא מוצגות ${'y'.repeat(200)}`, usage: { pct: 88.8, resetsAt: new Date(2026, 9, 10, 23, 59).toISOString() } })
+    const tree = Office(p, f.surface)
+    const json = JSON.stringify(tree)
+    maxJson = Math.max(maxJson, json.length)
+    expect(json.length).toBeLessThan(100_000)
+    expect(nodes(tree).length).toBeLessThan(20_000)
+    expect(depth(tree)).toBeLessThanOrEqual(32)
+    expect(json).not.toMatch(REFUSED_RE)
+    expect(byKey(tree, 'demoLine')).toBeDefined()
+    expect(byKey(tree, 'footer')).toBeDefined()
+    expect(byKey(tree, 'oversized')).toBeDefined()
+    expect(overlayOf(tree)!.props.key).toBe('help')
+    expect(nodes(tree).filter(n => n.props.backgroundColor !== undefined)).toEqual([overlayOf(tree)])
+    expect(cards(tree).reduce((n, c) => n + rowsOf(c).length, 0)).toBe(WINDOW_ROWS)   // (150 rows and their overscan: past the budget)
   }
   // a regression guard under the bound: the widest window with the drawer open
   expect(maxJson).toBeLessThan(90_000)

@@ -367,34 +367,36 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   const r = { run: 3, stale: 1, done: 2 }
   const counts = '🟢3 ⏳1 ✅2'
   // the counts whole while the title keeps TITLE_MIN cells by FIT: 45 columns leave 41 - 2 - 11 - 2 = 26 → 19; at 40, 36 - 15 = 21 →
-  // 15: the ✅ goes (36 - 11 = 25 → 18); at 36, 32 - 11 = 21 → 15: the ⏳ too (32 - 7 = 25 → 18); pinned, four cells fewer
-  expect(countsFor(r, atColumn(51))).toBe(counts)
-  expect(countsFor(r, atColumn(45))).toBe(counts)
+  // 15: the ✅ goes (36 - 11 = 25 → 18); at 36, 32 - 11 = 21 → 15: the ⏳ too (32 - 7 = 25 → 18); pinned, four cells fewer.
+  // (`pinned` is stated by every caller — false here is the pin-less maths, the baseline the model never draws since decision
+  // 26: it passes true for every card)
+  expect(countsFor(r, atColumn(51), false)).toBe(counts)
+  expect(countsFor(r, atColumn(45), false)).toBe(counts)
   expect(countsFor(r, atColumn(45), true)).toBe(counts)
   expect(countsFor(r, atColumn(44), true)).toBe('🟢3 ⏳1')
-  expect(countsFor(r, atColumn(40))).toBe('🟢3 ⏳1')
-  expect(countsFor(r, atColumn(36))).toBe('🟢3')
-  expect(countsFor(r, atColumn(24))).toBe('🟢3')
-  expect(countsFor({ run: 0, stale: 0, done: 4 }, atColumn(51))).toBe('🟢0 ✅4')
-  expect(countsFor({ run: 2, stale: 0, done: 0 }, atColumn(24))).toBe('🟢2')
+  expect(countsFor(r, atColumn(40), false)).toBe('🟢3 ⏳1')
+  expect(countsFor(r, atColumn(36), false)).toBe('🟢3')
+  expect(countsFor(r, atColumn(24), false)).toBe('🟢3')
+  expect(countsFor({ run: 0, stale: 0, done: 4 }, atColumn(51), false)).toBe('🟢0 ✅4')
+  expect(countsFor({ run: 2, stale: 0, done: 0 }, atColumn(24), false)).toBe('🟢2')
   for (let c = 24; c <= 200; c++) {
     const g = geometry(c)
-    const cf = countsFor(r, g)
+    const cf = countsFor(r, g, false)
     expect([counts, '🟢3 ⏳1', '🟢3'], `${c}`).toContain(cf)
     // the first form that leaves the title TITLE_MIN cells, else the shortest; a wider pane never shows less
     if (cf !== '🟢3') expect(fitCells(g.inner - 2 - textWidth(cf) - TITLE_GAP), `${c}`).toBeGreaterThanOrEqual(TITLE_MIN)
-    if (c > 24) expect(textWidth(cf), `${c}`).toBeGreaterThanOrEqual(textWidth(countsFor(r, geometry(c - 1))) - (c === WIDE_FROM + PANE_GUTTER ? 8 : 0))
+    if (c > 24) expect(textWidth(cf), `${c}`).toBeGreaterThanOrEqual(textWidth(countsFor(r, geometry(c - 1), false)) - (c === WIDE_FROM + PANE_GUTTER ? 8 : 0))
   }
-  // the probe's gap of two between the title and the counts, the title flush at the reading edge (no pin drawn): 51 columns
+  // the probe's gap of two between the title and the counts, the title flush at the reading edge (the pin-less maths): 51 columns
   // leave 47 - 2 (the title's padding) - 11 (counts) - 2 (gap) = 32 → 26 cells by LINE_FIT, and the probe's third room reads
   // `בדיקת תיאטרון הסוכנים…` as it did on the desktop (round 9); pinned, the 📌 and its gap take 4 more cells (28 → 23)
   expect(TITLE_GAP).toBe(2)
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(51), counts)).toBe('בדיקת תיאטרון הסוכנים…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(51), counts, false)).toBe('בדיקת תיאטרון הסוכנים…')
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(51), counts, true)).toBe('בדיקת תיאטרון הסוכנים…')
   expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(44), counts, true)).toBe('בדיקת תיאטרון…')
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(36), counts)).toBe('בדיקת תיאטרון…')
-  expect(cutTitle('תיאטרון הסוכנים', atColumn(51), counts)).toBe('תיאטרון הסוכנים')
-  expect(cutTitle('abcdefghijklmnopqrstuvwxyz', atColumn(24), counts)).toBe('abcdefg…')   // the floor of 8
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(36), counts, false)).toBe('בדיקת תיאטרון…')
+  expect(cutTitle('תיאטרון הסוכנים', atColumn(51), counts, false)).toBe('תיאטרון הסוכנים')
+  expect(cutTitle('abcdefghijklmnopqrstuvwxyz', atColumn(24), counts, false)).toBe('abcdefg…')   // the floor of 8
   // BOLD LATIN (live check 5): a Latin-dominant title is cut by FIT, a Hebrew one by LINE_FIT — at 44 columns beside `🟢1 ✅1` the
   // line leaves 40 - 2 - 7 - 2 = 29 cells: the Hebrew title takes up to 24 (LINE_FIT), the Latin one up to 21 (FIT)
   expect(latinDominant('Plan the static-registry move')).toBe(true)
@@ -402,8 +404,8 @@ test('fitCells / FIT: the share of a width the desktop draws text into (letters 
   expect(latinDominant('בדיקת Claude Code')).toBe(true)        // ten Latin letters, five Hebrew
   expect(latinDominant('תריץ 4 סוכני משנה ב-CI')).toBe(false)
   expect(latinDominant('42 🎭 ·')).toBe(false)
-  expect(cutTitle('Plan the static-registry move and the v2 config rollout', atColumn(44), '🟢1 ✅1')).toBe('Plan the static-regi…')
-  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(44), '🟢1 ✅1')).toBe('בדיקת תיאטרון הסוכנים…')
+  expect(cutTitle('Plan the static-registry move and the v2 config rollout', atColumn(44), '🟢1 ✅1', false)).toBe('Plan the static-regi…')
+  expect(cutTitle('בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', atColumn(44), '🟢1 ✅1', false)).toBe('בדיקת תיאטרון הסוכנים…')
   for (let columns = 24; columns <= 200; columns++) {
     const g = geometry(columns)
     for (const pinned of [false, true]) {

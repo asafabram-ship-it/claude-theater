@@ -134,7 +134,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   - `export function chromeRows(p: OfficeProps): number` — `fixedRows(p) + (p.footer ? 1 : 0)`; NO overlay rows.
   - `export function overlayHeight(p: OfficeProps): number` — the settings popover's rows (`helpRows(p.columns, !!p.oversized)`) while `p.helpOpen`, else the drawer's card rows (`DRAWER_FRAME_ROWS + drawerLines(p.drawer, p.labels, drawerInner(p.columns), limits, drawerPad(limits, p.rows)).length`) while `p.drawer`, else 0. (Replaces `overlayRows`; no gap.)
   - `export function overscanOf(len: number, bodyRows: number): number` — `len <= WINDOW_ROWS ? len : Math.max(0, bodyRows)`: every line while the office has at most WINDOW_ROWS lines, else a body's worth on each side.
-  - `export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overscan = 0): { from: number; count: number }` — the layout lines to draw: `start = offset - chrome` (the layout line at the window's top; negative while the chrome is in view), `from = max(0, start - overscan)`, `end = min(len, start + bodyRows + overscan)`, `count = max(0, end - from)`.
+  - `export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overscan = 0): { from: number; count: number }` — the layout lines to draw: `start = offset - chrome` (the layout line at the window's top; negative while the chrome is in view), `from = min(len, max(0, start - overscan))` (never past the content: the module's spacer is `from` rows), `end = min(len, start + bodyRows + overscan)`, `count = max(0, end - from)`.
   - `export function drawerPad(limits: DrawerLimits, bodyRows: number): number` — `bodyRows > 0 ? Math.min(most, Math.max(0, bodyRows - DRAWER_FRAME_ROWS)) : most` where `most = drawerMax(limits)`: the floating card padded to the most lines a body holds whole.
   - `officeHeight(p, layoutRows)` keeps its formula (`chromeRows(p) + (p.empty ? emptyRows(p) : layoutRows)`) — now without overlay rows.
   - Removed: `OVERLAY_GAP`, `overlayInWindow`, `overlayRows`. Kept: `DRAWER_FRAME_ROWS`, `fixedRows`, `helpRows`, `drawerMax`, `drawerLines`, `drawerInner`, `drawerLimits`, `emptyRows`, `WINDOW_ROWS`, `COMPACT_BELOW`, `searchShown`, `demoLine`, `labelsFit`, `helpPairs`.
@@ -209,7 +209,8 @@ export const DRAWER_FRAME_ROWS = 4
  */
 export function windowOf(chrome: number, offset: number, bodyRows: number, len: number, overscan = 0): { from: number; count: number } {
   const start = offset - chrome
-  const from = Math.max(0, start - overscan)
+  // (never past the content: a window the engine asks for beyond it draws nothing, and the module's spacer is `from` rows)
+  const from = Math.min(Math.max(0, len), Math.max(0, start - overscan))
   const end = Math.min(len, start + bodyRows + overscan)
   return { from, count: Math.max(0, end - from) }
 }

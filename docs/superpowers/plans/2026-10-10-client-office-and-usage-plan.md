@@ -23,7 +23,7 @@ Spec: `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (Heb
 
 ## Global Constraints
 
-- Engine for every check: `C:/Users/asafa/AppData/Roaming/Claude/claude-code/2.1.293/83cb0bd7fed4/claude.exe` (the `claude` on PATH is too old for mods). Call it `$E` below.
+- Engine for every check: `C:/Users/asafa/AppData/Roaming/Claude/claude-code/2.1.304/aed62990b91e/claude.exe` (the `claude` on PATH is too old for mods). Call it `$E` below.
 - Checks after every task: `$E plugin validate C:/Users/asafa/agent-theater/desktop-mod` (must print `✔ Validation passed`), `$E plugin test C:/Users/asafa/agent-theater/desktop-mod` (0 fail), `C:/Users/asafa/AppData/Local/Temp/theater-tsc/node_modules/.bin/tsc -p C:/Users/asafa/AppData/Local/Temp/theater-tsc` (no output = clean).
 - Plugin name stays `agent-theater`; pane id `agent-theater`; `$.state` plugin key `agent-theater`.
 - Engine rules `claude plugin validate` enforces: `$` is never passed to a function imported from another file (helpers that take `$` live in the file that uses them); an event is hooked at most once WITHOUT a matcher per module; `$.state` atoms are `const atom({ plugin: 'agent-theater', key: '<literal>' } as const, DEFAULT)` declared in the file that reads them and declared in `types/index.d.ts`; a `Client`'s `module` prop is a string literal path relative to the hooks module; never name a local `h` (JSX compiles to `h`).

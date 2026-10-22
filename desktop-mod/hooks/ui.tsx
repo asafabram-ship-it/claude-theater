@@ -29,13 +29,24 @@
 //            props from state (office-props.ts buildOfficeProps — the rooms, the
 //            drawer, the counts, the flags, the i18n strings, the usage meter) and
 //            size it to its FULL content (office-chrome.ts officeHeight: the
-//            chrome rows + office-layout.ts rowCount, the layout's rows counted
-//            without building a cell), so the engine scrolls it natively
+//            chrome rows + the larger of office-layout.ts rowCount — the layout's
+//            rows counted without building a cell — and the overlay's own
+//            height), so the engine scrolls it natively
 //            and hands the window back as e.props.scroll (offset → props.offset,
-//            bodyRows → props.rows). The module draws the chrome and the room
-//            cards with their agent rows (office-layout.ts), the head hover and
-//            the keyboard focus marker (the finish is the props' ⭐: no tint), and POSTS
-//            what the person did (open / pin / roomDone / the toolbar / search —
+//            bodyRows → props.rows). The drawer and the settings popover take no
+//            row of the flow: they are ONE absolute overlay from the root (top
+//            max(offset, chrome rows) on inverseText, so nothing under it moves
+//            and at the pane's top it sits under the toolbar, never over the
+//            header); the Client reaches the overlay's bottom only on an office
+//            shorter than it. The module draws the chrome and the room cards
+//            with their agent rows (office-layout.ts; drawn with an overscan
+//            capped to WINDOW_ROWS lines, so the half-cell card borders leave no
+//            blank row in view) and the keyboard focus marker (the finish is the
+//            props' ⭐: no tint). EVERY click is a native Button (a row's name /
+//            model / emoji / word cells, the pin on every title, the more line,
+//            the closes, the toolbar): no hover, no hit-test by y. A press POSTS,
+//            through the module's outbox (below), what the person did
+//            (open / pin / roomDone / the toolbar / search —
 //            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
 //            applies each post as the text cards' press of the same name does
 //            (the shared transitions: one prefs / view atom, the store mirror)
@@ -882,9 +893,10 @@ export function registerUi(on: On): void {
     const all = office.agents
 
     // --- DESKTOP: the office is ONE Client. The hooks build its props from state (buildOfficeProps: pure,
-    //     plain JSON) and size it to its full content (chrome + layout rows), so the engine scrolls it
-    //     natively and hands the window back as e.props.scroll; the module draws the agent rows, the chrome and
-    //     the fx, and posts what the person did to `ui.message` (applyOfficeMessage above). Nothing is written here.
+    //     plain JSON) and size it to its full content (officeHeight: the chrome rows + the larger of the layout's
+    //     rows and the floating overlay's height), so the engine scrolls it natively and hands the window back as
+    //     e.props.scroll; the module draws the agent rows, the chrome and the fx, and posts what the person did
+    //     (every click a native Button) to `ui.message` (applyOfficeMessage above). Nothing is written here.
     //     Equal state → equal props → nothing redraws. Only where the surface's table has a Client (the
     //     capability, not the name: spec §5), and never while DESKTOP.clientFailed (a `ui.fault` of the module,
     //     register.tsx; /theater clears it): then the desktop falls through to the text cards below.

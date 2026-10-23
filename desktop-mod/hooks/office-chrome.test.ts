@@ -40,7 +40,7 @@ const withDrawer = (p: OfficeProps, over: Partial<OfficeDrawer> = {}): OfficePro
 const withHelp = (p: OfficeProps): OfficeProps => ({ ...p, helpOpen: true })
 
 describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => {
-  test('chromeRows is the fixed rows and the footer, with or without an overlay; officeHeight is the chrome, the content and THE CREDIT LINE under it (CREDIT_ROWS: a blank line and the credit, decision 27a) — it does not grow when a drawer or the settings open over content taller than them, and reaches the overlay\'s bottom on a short office and on the empty office (THE OVERLAY\'S ROOM)', () => {
+  test('chromeRows is the fixed rows and the footer, with or without an overlay; officeHeight is the chrome and the content — never THE CREDIT LINE\'s rows (CREDIT_ROWS: a blank line and the credit, decision 27a — the hooks draw them under the Client: paint probe round 6) — it does not grow when a drawer or the settings open over content taller than them, and reaches the overlay\'s bottom on a short office and on the empty office (THE OVERLAY\'S ROOM)', () => {
     const p = propsAt(50)
     expect(chromeRows(p)).toBe(fixedRows(p) + (p.footer ? 1 : 0))
     const d = withDrawer(p)
@@ -52,9 +52,10 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
     expect(rowCount(tall)).toBeGreaterThanOrEqual(25)
     expect(overlayHeight(withDrawer(tall))).toBeLessThan(rowCount(tall))
     expect(overlayHeight(withHelp(tall))).toBeLessThan(rowCount(tall))
-    // THE CREDIT LINE (decision 27a): a blank line, then the credit — two rows under the content, in the Client's height
+    // THE CREDIT LINE (decision 27a): a blank line, then the credit — two rows the hooks draw UNDER the Client (ui.tsx: the page
+    // cannot draw a Link inside a Client, paint probe round 6): the pane's content grows by them, the Client's height does not
     expect(CREDIT_ROWS).toBe(2)
-    expect(officeHeight(tall, rowCount(tall))).toBe(chromeRows(tall) + rowCount(tall) + CREDIT_ROWS)
+    expect(officeHeight(tall, rowCount(tall))).toBe(chromeRows(tall) + rowCount(tall))
     expect(officeHeight(withDrawer(tall), rowCount(tall))).toBe(officeHeight(tall, rowCount(tall)))
     expect(officeHeight(withHelp(tall), rowCount(tall))).toBe(officeHeight(tall, rowCount(tall)))
     // a short office (one room of two agents: 9 layout rows) under a 19-row drawer or the 14-row settings: the Client reaches the
@@ -62,14 +63,13 @@ describe('the chrome (phase B: the overlay floats, so it takes no rows)', () => 
     expect(rowCount(p)).toBe(9)
     expect(overlayHeight(d)).toBeGreaterThan(rowCount(p))
     expect(overlayHeight(h)).toBeGreaterThan(rowCount(p))
-    expect(officeHeight(p, rowCount(p))).toBe(chromeRows(p) + 9 + CREDIT_ROWS)
-    expect(overlayHeight(d)).toBeGreaterThan(rowCount(p) + CREDIT_ROWS)
+    expect(officeHeight(p, rowCount(p))).toBe(chromeRows(p) + 9)
     expect(officeHeight(d, rowCount(d))).toBe(chromeRows(d) + overlayHeight(d))
     expect(officeHeight(h, rowCount(h))).toBe(chromeRows(h) + overlayHeight(h))
-    // the empty office: its block and the credit under it, or the settings' bottom when the popover is open and lies lower
+    // the empty office: its block, or the settings' bottom when the popover is open and lies lower
     const empty = { ...p, rooms: [], counts: { run: 0, idle: 0, done: 0 }, empty: { kind: 'office' as const, msg: 'המשרד ריק', sub: '' } }
-    expect(officeHeight(empty, 0)).toBe(chromeRows(empty) + emptyRows(empty) + CREDIT_ROWS)
-    expect(emptyRows(empty) + CREDIT_ROWS).toBeLessThan(overlayHeight(withHelp(empty)))
+    expect(officeHeight(empty, 0)).toBe(chromeRows(empty) + emptyRows(empty))
+    expect(emptyRows(empty)).toBeLessThan(overlayHeight(withHelp(empty)))
     expect(officeHeight(withHelp(empty), 0)).toBe(chromeRows(empty) + overlayHeight(withHelp(empty)))
   })
   test('overlayHeight: the settings popover rows, the drawer card rows padded to its one height, 0 with neither', () => {

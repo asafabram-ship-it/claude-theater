@@ -25,7 +25,9 @@
 //   drawer   the selected agent (PAGE fillDrawer): chips (status, subagent_type,
 //            duration/elapsed, tool), model, activity, task, result, "shortened"
 //   DESKTOP  (e.surface === 'desktop') the whole pane is instead ONE `Client`
-//            (key OFFICE_KEY, module ./office-client.tsx): the hooks build its JSON
+//            (key OFFICE_KEY, module ./office-client.tsx) and, under it in a
+//            column Box, THE CREDIT LINE (`credit` below: the page cannot draw a
+//            Link inside a Client, paint probe round 6): the hooks build its JSON
 //            props from state (office-props.ts buildOfficeProps — the rooms, the
 //            drawer, the counts, the flags, the i18n strings, the usage meter) and
 //            size it to its FULL content (office-chrome.ts officeHeight: the
@@ -82,8 +84,12 @@
 //   credit   THE CREDIT LINE (decision 27a), the pane's last line, a blank line
 //            above it: `© Legal Mind · ` in the logo's dark gold and, inline, a
 //            Link to legalmind.co.il (office-layout.ts CREDIT) — the same words
-//            in both languages, at the reading edge; the office Client draws its
-//            own (office-client.tsx), last in its column
+//            in both languages, at the reading edge. On the desktop the hooks
+//            draw it too, UNDER the office Client in the pane's own tree — never
+//            inside the Client: the page cannot draw a Link there (paint probe
+//            round 6, 23.10: the module's own credit faulted every render, and
+//            the office fell back to these cards for everyone); the Client's
+//            height (officeHeight) leaves its CREDIT_ROWS out
 //
 // Rules:
 // - A render hook never writes state; presses/inputs write with update($, ...)
@@ -144,7 +150,7 @@ import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
 // count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
-import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, cutWords, rowCount } from './office-layout'
+import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, cutWords, nb, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaFeminine, personaName } from './personas'
@@ -912,7 +918,26 @@ export function registerUi(on: On): void {
       officeFrame = { columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0, footer: scanError ?? '' }
       const props = buildOfficeProps({ payload, real, prefs, view, roomDone, now, usage: USAGE.fiveHour, ...officeFrame })
       const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)
-      return <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
+      // THE CREDIT LINE under the Client (decision 27a; paint probe round 6, 23.10): the page cannot draw a `Link` inside a
+      // Client — the module's own credit (its Link nested in the gold Text, or beside it) faulted every render ("a tree the
+      // page cannot draw") and the office fell back to the text cards for everyone; with a Text in the Link's place it drew.
+      // So the hooks draw it in the pane's own tree: a column of the Client, then the credit — a blank line (its top margin),
+      // then ONE height-1 line: the gold Text of `© Legal Mind · ` (no-break, nb: the line never wraps, a narrow pane clips
+      // it at the edge; its trailing no-break space is the one gap before the address) and the Link to the site beside it. One
+      // Latin run, read left to right in either pane: the row keeps that order and its content is pushed to the reading edge
+      // (a reversed row would draw the address before the name). The Client keeps its own height (officeHeight, without
+      // CREDIT_ROWS) at the pane's top, so the engine's offset still names the Client's rows from its first; the credit's rows
+      // only add to the pane's content under it (the module counts them where it measures that offset: office-client.tsx
+      // THE STALE OFFSET)
+      return (
+        <Box flexDirection="column" width="100%">
+          <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
+          <Box key="credit" flexDirection="row" justifyContent={rtl ? 'flex-end' : 'flex-start'} width="100%" height={1} marginTop={1} overflow="hidden">
+            <Text color={BRAND_GOLD_DARK}>{nb(CREDIT)}</Text>
+            <Link href={CREDIT_URL} label={CREDIT_SITE} />
+          </Box>
+        </Box>
+      )
     }
 
     // desktop (the text fallback) + Hebrew: a column's short lines hug its right edge

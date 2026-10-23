@@ -22,7 +22,7 @@ import {
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
 import { CREDIT_ROWS, REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
-import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, rowCount } from './office-layout'
+import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, nb, rowCount } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'
@@ -668,7 +668,8 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45, scroll: { offset: 4, bodyRows: 25 } } })
   try {
     expect(await ui.find({ type: 'Svg' })).toBeUndefined()
-    expect(await ui.find({ type: 'Box' })).toBeUndefined()
+    // the plugin's own tree: the column Box of the Client and THE CREDIT LINE under it, its only other Box (the credit test below)
+    expect((await ui.findAll({ type: 'Box' })).map(b => b.key ?? null)).toEqual([null, 'credit'])
     const clients = await ui.findAll({ type: 'Client' })
     expect(clients).toHaveLength(1)
     const client = clients[0]!
@@ -732,15 +733,83 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(chromeRows(po)).toBe(chromeRows(pw))
     expect(open?.props.height).toBe(officeHeight(po, rowCount(po)))
     expect(open?.props.height).toBe(Math.max(closedH, chromeRows(po) + overlayHeight(po)))
-    // (this office's lines are fewer than the drawer's rows, but THE CREDIT LINE's rows under them — decision 27a — reach past
-    // the drawer's bottom: the Client keeps the content's height; an office shorter than the drawer with its credit grows to the
-    // drawer's bottom — office-chrome.test.ts, office-client.mounted.test.ts)
+    // (this office is shorter than the drawer: the Client grows to its bottom — THE CREDIT LINE is not the Client's, so it moves
+    // down under the card while the drawer is open, still the pane's last line)
     expect(rowCount(po)).toBeLessThan(overlayHeight(po))
-    expect(rowCount(po) + CREDIT_ROWS).toBeGreaterThan(overlayHeight(po))
-    expect(open?.props.height).toBe(chromeRows(po) + rowCount(po) + CREDIT_ROWS)
-    expect(open?.props.height).toBe(closedH)
+    expect(open?.props.height).toBe(chromeRows(po) + overlayHeight(po))
+    expect(open?.props.height as number).toBeGreaterThan(closedH)
+    expect((await ui.findAll({ type: 'Box' })).map(b => b.key ?? null)).toEqual([null, 'credit'])
     await ui.press({ key: 'close' })
     expect((await ui.find({ type: 'Client' }))?.props.height).toBe(closedH)
+  } finally {
+    await ui.unmount()
+  }
+})
+
+/** A node of the kit's drawn tree of the pane (a node without props carries no `props` field). */
+type PaneNode = { type: string; props?: Record<string, unknown>; children?: Array<PaneNode | string> }
+const paneKids = (n: PaneNode | undefined): PaneNode[] => (n?.children ?? []).filter((k): k is PaneNode => typeof k !== 'string')
+
+// (mounts, polls and a language switch through the kit: the budget is load headroom, as above)
+test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 — the page cannot draw a `Link` inside a Client: the module\'s credit faulted every render): the hooks draw it UNDER the office Client — the pane\'s tree a column Box whose first child is the Client (key office) and whose last is the `credit` Box: a blank line, then one height-1 row at the reading edge holding a gold Text of `© Legal Mind · ` (no-break) and a Link to https://legalmind.co.il labelled `legalmind.co.il` (left to right in either pane); the Client\'s height is officeHeight\'s, without the credit\'s rows; no Link inside the Client; the empty office keeps it', { timeoutMs: 30_000 }, async ($, on) => {
+  let agents = fixture()
+  const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45, scroll: { offset: 4, bodyRows: 25 } } })
+  try {
+    /** The pane's tree: the column, its children, the credit Box's (the Text, then the Link). */
+    const pane = async () => {
+      const root = (await ui.drawn()) as PaneNode
+      const kids = paneKids(root)
+      return { root, kids, credit: kids.at(-1), line: paneKids(kids.at(-1)) }
+    }
+    const { root, kids, credit, line } = await pane()
+    expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', width: '100%' } })
+    expect(kids.map(k => k.type)).toEqual(['Client', 'Box'])
+    expect(kids[0]?.props?.key).toBe(OFFICE_KEY)
+    expect(credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'flex-end', width: '100%', height: 1, marginTop: 1, overflow: 'hidden' })
+    // the gold Text of the name (no-break: the line never wraps), then the Link beside it — one Latin run, the row's order kept
+    // (a reversed row would draw the address first), pushed to the Hebrew pane's reading edge
+    expect(line.map(k => k.type)).toEqual(['Text', 'Link'])
+    expect(line[0]).toMatchObject({ props: { color: BRAND_GOLD_DARK }, children: [nb(CREDIT)] })
+    expect(nb(CREDIT)).not.toMatch(/ /)
+    expect(nb(CREDIT).replace(/\u00A0/g, ' ')).toBe('© Legal Mind · ')
+    expect(line[1]?.props).toMatchObject({ href: CREDIT_URL, label: CREDIT_SITE })
+    expect(CREDIT_URL).toBe('https://legalmind.co.il')
+    expect(CREDIT_SITE).toBe('legalmind.co.il')
+    const link = await ui.find({ type: 'Link' })
+    expect(link?.props).toMatchObject({ href: CREDIT_URL, label: CREDIT_SITE })
+    expect((await ui.find({ type: 'Text', text: nb(CREDIT) }))?.props.color).toBe(BRAND_GOLD_DARK)
+    // never inside the Client: the module draws no Link (its tree the page could not draw)
+    await ui.drawn({ in: OFFICE_KEY })
+    expect(await ui.find({ in: OFFICE_KEY, type: 'Link' })).toBeUndefined()
+    // the Client keeps its own height — the chrome and the cards' lines, no credit row (the pane's content grows by CREDIT_ROWS
+    // under it) — at the pane's top, so the engine's offset still names its rows
+    const client = await ui.find({ type: 'Client' })
+    const p = client?.props.props as OfficeProps
+    expect(p.offset).toBe(4)
+    expect(client?.props.height).toBe(officeHeight(p, rowCount(p)))
+    expect(client?.props.height).toBe(chromeRows(p) + rowCount(p))
+    expect(CREDIT_ROWS).toBe(2)
+    // English: the same words, at the left edge (the reading edge)
+    await ui.key({ in: OFFICE_KEY, key: 'l' })
+    expect(((await ui.find({ type: 'Client' }))?.props.props as OfficeProps).lang).toBe('en')
+    const en = await pane()
+    expect(en.kids.map(k => k.type)).toEqual(['Client', 'Box'])
+    expect(en.credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'flex-start' })
+    expect(en.line.map(k => k.type)).toEqual(['Text', 'Link'])
+    expect(en.line[0]?.children).toEqual([nb(CREDIT)])
+    expect(en.line[1]?.props).toMatchObject({ href: CREDIT_URL, label: CREDIT_SITE })
+    // the empty office: the Client (its empty block) and the credit under it
+    agents = []
+    await clock.advance(POLL_MS)
+    const pe = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
+    expect(pe.empty?.kind).toBe('office')
+    const empty = await pane()
+    expect(empty.kids.map(k => k.type)).toEqual(['Client', 'Box'])
+    expect(empty.credit?.props?.key).toBe('credit')
+    expect((await ui.find({ type: 'Client' }))?.props.height).toBe(officeHeight(pe, rowCount(pe)))
   } finally {
     await ui.unmount()
   }

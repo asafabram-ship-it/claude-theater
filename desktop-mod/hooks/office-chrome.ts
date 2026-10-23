@@ -355,9 +355,11 @@ export function emptyLines(p: OfficeProps): { msg: string[]; sub: string[] } {
 
 /**
  * THE CREDIT LINE's rows (decision 27a): a blank line, then the credit (`© Legal Mind · legalmind.co.il`, office-layout.ts
- * CREDIT) — the office's last line, under the cards (after the last card's own gap line) or under the empty office's block.
- * Counted in the Client's height (officeHeight) as the module draws them (office-client.tsx: one height-1 Box with a top margin
- * of 1), so the engine's native scroll reaches it and the window maths keep their rows.
+ * CREDIT) — the pane's last line on the desktop, drawn by the HOOKS under the office Client (ui.tsx: one height-1 Box with a
+ * top margin of 1, after the Client in the pane's column), never by the module: the page cannot draw a Link inside a Client
+ * (paint probe round 6, 23.10 — the module's credit faulted every render). So the pane's content grows by them and the
+ * Client's own height (officeHeight) does not include them; the engine's native scroll runs over both, and the module counts
+ * them under its rows where it measures the engine's offset (office-client.tsx THE STALE OFFSET).
  */
 export const CREDIT_ROWS = 2
 
@@ -385,12 +387,12 @@ export function overlayHeight(p: OfficeProps): number {
 
 /**
  * The Client's full content height: what the hooks pass as `height` — the chrome and the layout's lines (`layoutRows` =
- * `rowCount(p)`, office-layout.ts: no row is built for the floating overlay), or the empty office's block, and THE CREDIT
- * LINE under them (CREDIT_ROWS, decision 27a). THE OVERLAY'S ROOM (phase B review): the floating card sits at max(offset,
- * chrome) and is overlayHeight rows tall; on an office shorter than that the Client is sized to the overlay's bottom, so the
- * desktop never clips it at the Client's edge — the rows under it do not move (the credit among them, under the card while it
- * is open), the pane only gains scroll room.
+ * `rowCount(p)`, office-layout.ts: no row is built for the floating overlay), or the empty office's block. THE OVERLAY'S ROOM
+ * (phase B review): the floating card sits at max(offset, chrome) and is overlayHeight rows tall; on an office shorter than
+ * that the Client is sized to the overlay's bottom, so the desktop never clips it at the Client's edge — the rows under it do
+ * not move, the pane only gains scroll room. THE CREDIT LINE is not in it (CREDIT_ROWS above: the hooks draw it under the
+ * Client, paint probe round 6), so on such an office the credit sits under the overlay's bottom while the card is open.
  */
 export function officeHeight(p: OfficeProps, layoutRows: number): number {
-  return chromeRows(p) + Math.max((p.empty ? emptyRows(p) : layoutRows) + CREDIT_ROWS, overlayHeight(p))
+  return chromeRows(p) + Math.max(p.empty ? emptyRows(p) : layoutRows, overlayHeight(p))
 }

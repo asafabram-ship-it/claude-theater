@@ -24,7 +24,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
-import { CHROME_ROWS_SEARCH, CREDIT_ROWS, WINDOW_ROWS, chromeRows, emptyRows, fixedRows, helpRows, officeHeight, overlayHeight, overscanOf, windowOf } from './office-chrome'
+import { CHROME_ROWS_SEARCH, WINDOW_ROWS, chromeRows, emptyRows, fixedRows, helpRows, officeHeight, overlayHeight, overscanOf, windowOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { BRAND_GOLD_DARK, CARD_BORDER, CREDIT, CREDIT_SITE, CREDIT_URL, FOCUS_MARK, geometry, nb, officeModel, rowCount } from './office-layout'
 import { OFFICE_KEY } from './office-props'
@@ -139,7 +139,9 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   const client = await ui.find({ type: 'Client' })
   expect(client?.key).toBe(OFFICE_KEY)
   expect(client?.props.module).toBe('hooks/office-client.tsx')   // the source's literal is ./office-client.tsx; the engine carries the plugin's path
-  expect(await ui.find({ type: 'Box' })).toBeUndefined()          // nothing but the Client in the plugin's own tree
+  // the plugin's own tree: the Client, then THE CREDIT LINE under it (ui.tsx: the page cannot draw a Link inside a Client, paint
+  // probe round 6) — the column Box and the credit's line its only Boxes
+  expect((await ui.findAll({ type: 'Box' })).map(b => b.key ?? null)).toEqual([null, 'credit'])
   expect(await ui.find({ type: 'Svg' })).toBeUndefined()
   const p0 = await officeProps(ui)
   expect(p0.v).toBe(1)
@@ -152,12 +154,14 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   expect(await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'still' }), 'still: in the settings popover, not the toolbar').toBeUndefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }), 'search: only above SEARCH_FROM shown agents (spec 2026-10-10 §2 item 22)').toBeUndefined()
   expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^Opus$/ }), 'the model word').toBeDefined()   // the model's family word (the version from 60 columns)
-  // THE CREDIT LINE (decision 27a): the surface draws the Link inside the gold Text (no refusal, no fault), last in the column
-  const link = await ui.find({ in: OFFICE_KEY, type: 'Link' })
+  // THE CREDIT LINE (decision 27a): the desktop draws its Link in the PANE's tree, under the Client (no refusal, no fault: the
+  // Client drew above) — never inside the Client, whose tree the page cannot draw with a Link in it (paint probe round 6)
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Link' }), 'no Link inside the Client').toBeUndefined()
+  const link = await ui.find({ type: 'Link' })
   expect(link?.props.href, 'the credit\'s link').toBe(CREDIT_URL)
-  expect(link?.children, 'the credit\'s link').toEqual([CREDIT_SITE])
-  expect((await ui.find({ in: OFFICE_KEY, type: 'Text', text: nb(CREDIT) }))?.props.color).toBe(BRAND_GOLD_DARK)   // (its words no-break)
-  expect((await kindsOf(ui)).at(-1)).toBe('credit')
+  expect(link?.props.label, 'the credit\'s link').toBe(CREDIT_SITE)
+  expect((await ui.find({ type: 'Text', text: nb(CREDIT) }))?.props.color).toBe(BRAND_GOLD_DARK)   // (its words no-break)
+  expect((await kindsOf(ui)).at(-1)).toBe('round')   // the module's column ends with its last card
   // one card, its rows the two agents: the status mark, `${emoji} ${name}`, the model word, the activity whole
   const cards = await cardsOf(ui)
   expect(cards).toHaveLength(1)
@@ -220,7 +224,7 @@ test('DESKTOP (2.4): the engine scrolls natively — the Client is full height (
   expect(p0.columns).toBe(45)
   expect(client?.props.width).toBe(45)
   expect(client?.props.height).toBe(officeHeight(p0, rowCount(p0)))
-  expect(client?.props.height).toBe(chromeRows(p0) + rowCount(p0) + CREDIT_ROWS)   // (no overlay open; THE CREDIT LINE under the cards)
+  expect(client?.props.height).toBe(chromeRows(p0) + rowCount(p0))   // (no overlay open; THE CREDIT LINE is the hooks', under the Client)
   expect(client?.props.height as number).toBeGreaterThan(20)        // taller than the body: the engine shows a scrollbar
   await ui.redraw({ ...PANE.props, scroll: { offset: 3, bodyRows: 20 } })
   const after = await ui.find({ type: 'Client' })
@@ -243,13 +247,13 @@ test('DESKTOP (2.4): the engine scrolls natively — the Client is full height (
   const pe = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
   expect([pe.empty?.kind, pe.helpOpen]).toEqual(['nomatch', true])
   expect(overlayHeight(pe)).toBe(helpRows(45))
-  expect(emptyRows(pe) + CREDIT_ROWS).toBeLessThan(overlayHeight(pe))
+  expect(emptyRows(pe)).toBeLessThan(overlayHeight(pe))
   expect((await ui.find({ type: 'Client' }))?.props.height).toBe(officeHeight(pe, rowCount(pe)))
   expect((await ui.find({ type: 'Client' }))?.props.height).toBe(chromeRows(pe) + overlayHeight(pe))
   // closed, the no-match block alone
   await ui.press({ key: 'closeHelp' })
   const pc = (await ui.find({ type: 'Client' }))?.props.props as OfficeProps
-  expect((await ui.find({ type: 'Client' }))?.props.height).toBe(chromeRows(pc) + emptyRows(pc) + CREDIT_ROWS)
+  expect((await ui.find({ type: 'Client' }))?.props.height).toBe(chromeRows(pc) + emptyRows(pc))
   await ui.unmount()
 })
 
@@ -351,9 +355,8 @@ test('DESKTOP (2.4): THE WINDOW WITH OVERSCAN — a long office (past WINDOW_ROW
   const over = overscanOf(len, 10)
   expect(over).toBe(10)
   expect(windowOf(chrome, 40, 10, len, over)).toEqual({ from: 24, count: 30 })
-  // the one card starts at line 0: no spacer before it; its rows in the window (lines 24..53 → a20..a49), the rest spacered; drawn
-  // whole, it ends at the layout's end, so THE CREDIT LINE follows it (decision 27a)
-  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
+  // the one card starts at line 0: no spacer before it; its rows in the window (lines 24..53 → a20..a49), the rest spacered
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   const card = (await cardsOf(ui))[0]!
   expect(rowsOf(card).map(r => r[1])).toEqual(Array.from({ length: 30 }, (_, i) => whoOf(p, `a${i + 20}`)))
   expect(rowY(p, 'a20')).toBe(24)
@@ -377,7 +380,7 @@ test('DESKTOP (2.4): THE WINDOW WITH OVERSCAN — a long office (past WINDOW_ROW
   const ov = await overlayOf(ui)
   expect(propsOf(ov)).toMatchObject({ key: 'drawer', position: 'absolute', top: 40, left: geometry(pd.columns).margin, width: geometry(pd.columns).W, height: overlayHeight(pd), backgroundColor: 'inverseText' })
   expect(overlayHeight(pd)).toBeGreaterThan(0)
-  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   const cardD = (await cardsOf(ui))[0]!
   const [, , blockD] = elements(cardD)
   const [aboveD, tableD, belowD] = elements(blockD)
@@ -415,7 +418,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   expect(p0.offset).toBe(40)
   expect(rowCount(p0)).toBe(67)
   expect(rowCount(p0)).toBeLessThanOrEqual(WINDOW_ROWS)
-  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   const before = rowsOf((await cardsOf(ui))[0]!)
   expect(before.map(r => r[1])).toEqual(Array.from({ length: 60 }, (_, i) => whoOf(p0, `a${i}`)))
   expect(await overlayOf(ui)).toBeUndefined()
@@ -428,7 +431,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   expect(chromeRows(p1)).toBe(CHROME_ROWS_SEARCH)                    // the drawer floats: no chrome row
   // the module's tree: the column as before (the chrome, the card whole — no spacer, no fragment), then THE DRAWER at Client row
   // 40 — the engine's offset, so it opens in the viewport's first rows
-  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   const drawer = await overlayOf(ui)
   expect(drawer).toMatchObject({ type: 'Box', props: { key: 'drawer', position: 'absolute', top: p1.offset, left: geo.margin, width: geo.W, height: overlayHeight(p1), backgroundColor: 'inverseText', borderStyle: 'round', borderColor: CARD_BORDER } })
   expect(propsOf(drawer).marginBottom).toBeUndefined()
@@ -451,7 +454,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   expect(overlayHeight(p2)).toBe(helpRows(30))
   expect(textOf(help!)).toContain(nb('k / j'))
   expect(textOf(help!)).toMatch(/הגדרות/)
-  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   await ui.key({ in: OFFICE_KEY, key: 'h' })
   // the drawer open again (a30's), the pane scrolled back into the chrome: the overlay under the fixed chrome, never over it
   await pressRow(ui, 'a30')
@@ -464,7 +467,7 @@ test('DESKTOP: a drawer or the settings opened while the pane is scrolled opens 
   const p4 = await officeProps(ui)
   expect(p4.drawer).toBeNull()
   expect(await overlayOf(ui)).toBeUndefined()
-  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
+  expect(await kindsOf(ui)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
   expect(rowsOf((await cardsOf(ui))[0]!).map(r => r.slice(1))).toEqual(before.map(r => r.slice(1)))
   expect(await focused(ui, p4)).toEqual([whoOf(p4, 'a30')])
   await ui.unmount()

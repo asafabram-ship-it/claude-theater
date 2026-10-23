@@ -112,7 +112,9 @@ export const CARD_BORDER = BRAND_GOLD
  * THE CREDIT LINE (decision 27a, 23.10): the office's last line — after the cards, after the empty office's block, in the demo
  * too — `© Legal Mind · legalmind.co.il`, the address a link to CREDIT_URL; the same words in both languages (no "all rights
  * reserved": the repo is MIT), so no i18n key; drawn in BRAND_GOLD_DARK at the reading edge. CREDIT is the Text's own string,
- * CREDIT_SITE the Link's text inside it. No Hebrew in it: one Latin run in either pane, never reordered.
+ * CREDIT_SITE the Link's text (inside that Text on the text cards, beside it on the desktop). No Hebrew in it: one Latin run in
+ * either pane, never reordered. Drawn by the HOOKS alone (ui.tsx) — the text cards' last line, and on the desktop the line
+ * under the office Client — never by the module: the page cannot draw a Link inside a Client (paint probe round 6, 23.10).
  */
 export const CREDIT = '© Legal Mind · '
 export const CREDIT_SITE = 'legalmind.co.il'

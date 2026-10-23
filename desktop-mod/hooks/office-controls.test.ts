@@ -1084,13 +1084,12 @@ function suite(COLUMNS: Columns): void {
     expect((await headOf(ui, SA)).counts).toBe(nb(W.tallA))   // (31 working; the ✅ dropped at 36)
     const CHROME_KEYS = W.searchRows === CHROME_ROWS_SEARCH ? ['header', 'toolbar', 'searchLine'] : ['header', 'toolbar']
     const kinds = async () => (await kidsOf(ui)).map(k => (isCard(k) ? 'card' : propsOf(k).key))
-    // scrolled 15 lines into A's rows (the engine's offset: the chrome and 15 layout lines): every card still drawn whole, no spacer;
-    // THE CREDIT LINE after the last card (decision 27a)
+    // scrolled 15 lines into A's rows (the engine's offset: the chrome and 15 layout lines): every card still drawn whole, no spacer
     const FROM = 15
     await scrollTo(ui, FIXED + FROM, BODY)
     const p1 = await officeProps(ui)
     expect(lines[FROM]).toMatchObject({ kind: 'row', room: SA })
-    expect(await kinds()).toEqual([...CHROME_KEYS, 'card', 'card', 'credit'])
+    expect(await kinds()).toEqual([...CHROME_KEYS, 'card', 'card'])
     await rowsOk(ui, p1)
     // j from no focus: the first row IN VIEW — the row at the viewport's top (layout line FROM), not the lead drawn above it
     // (phase B final review: the walk keeps to the rows drawn and starts in the viewport)
@@ -1106,7 +1105,7 @@ function suite(COLUMNS: Columns): void {
     expect(await focused(ui, p2)).toEqual([whoOf(p2, id)])
     expect(await overlay(ui)).toMatchObject(overlayAt(p2, 'drawer'))
     expect(propsOf(await overlay(ui)).top).toBe(FIXED + FROM)
-    expect(await kinds()).toEqual([...CHROME_KEYS, 'card', 'card', 'credit'])
+    expect(await kinds()).toEqual([...CHROME_KEYS, 'card', 'card'])
     await rowsOk(ui, p2)
     const under = shape(await columnOf(ui))
     await press(ui, 'close')
@@ -1148,9 +1147,9 @@ function suite(COLUMNS: Columns): void {
     expect(ids(await officeProps(ui), SA)).toEqual(ids(p0, SA))
     expect((await officeProps(ui)).drawer?.id).toBe(other.agent)
     await ui.key({ in: OFFICE_KEY, key: 'x' })
-    // the window at the office's end (the furthest the engine scrolls: the Client's height — THE CREDIT LINE's rows under the
-    // cards included, decision 27a — less the window): B whole — its ✅ counts read-only (no Button on its title but the pin; one
-    // finished: no more line either)
+    // the window at the office's end (the furthest the engine scrolls: the pane's content — the Client's height and THE CREDIT
+    // LINE's rows the hooks draw under it, decision 27a, paint probe round 6 — less the window): B whole — its ✅ counts read-only
+    // (no Button on its title but the pin; one finished: no more line either)
     await scrollTo(ui, FIXED + lines.length + CREDIT_ROWS - BODY, BODY)
     const pe = await officeProps(ui)
     await rowsOk(ui, pe)

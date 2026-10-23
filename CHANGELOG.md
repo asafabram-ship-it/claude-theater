@@ -14,11 +14,65 @@ SemVer policy for this tool:
 
 | Claude Theater | Claude Code |
 | -------------- | ----------- |
+| 0.5.x          | 2.1.304+    |
 | 0.4.x          | 2.1.x       |
 | 0.3.x          | 2.1.x       |
 | 0.1.x          | 2.1.x       |
 
+The 2.1.304+ floor is the desktop mod's: it is built on Claude Code's early-access
+function-hooks API, which may change between releases.
+
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-23
+
+The project and the desktop mod are released together: the mod's own version is
+**0.5.0** too.
+
+### Added — Claude desktop app mod (`desktop-mod/`)
+
+A Claude Code plugin (a "mod") that draws the live office inside the **Claude
+desktop app's Code tab**, with no server and no separate install of the Python app.
+Requires Claude Code 2.1.304 or newer.
+
+- **The office pane (🎭 Theater).** A pane beside the chat that opens itself when the
+  first subagent of a session starts (or with the `/theater` command) and shows the
+  working count in its title.
+- **Cards.** One framed card per open conversation, titled by its subject, with one
+  row per subagent: persona (a cast of 48), model, what it is doing
+  right now, and ✅ when finished; ⭐ marks a fresh finish, ❌ a failure, ⏰ a
+  long-running agent.
+- **The drawer.** Click any row to open its drawer with the full task and result
+  (and a status line with its state, elapsed time and role); click it again to close.
+- **Pin.** A 📌 on every conversation title pins that conversation to the top.
+- **Show finished.** A toggle for the whole office and a per-conversation
+  `▸ N more finished` / hide line, so history stays under your control.
+- **Search.** A search field appears once the office holds more than 12 agents.
+- **Hebrew and English.** One click (or `l`) switches the language; Hebrew flips the
+  layout to RTL.
+- **The 5-hour meter.** The usage window's percent and reset time in the office
+  header and the status line, with a toast at 80% and at 95% once per window.
+- **The demo.** ⚙️ → Demo (or `d`) fills the office with synthetic agents, clearly
+  labelled, so you can look around without a real subagent.
+- **Keyboard.** `j`/`k` walk the rows, `o`/`Enter` open, `x` close, `f` show
+  finished, `m` mute, `h` settings, `l` language, `d` demo.
+- **Finish chime and toast.** A short toast naming the conversation and a chime when
+  an agent finishes (mutable).
+- **Text cards on the other surfaces.** In a terminal, VS Code or mobile session the
+  same pane draws as text cards, and the desktop falls back to them (retrying the
+  office a couple of times first) if the office cannot be drawn.
+- **Privacy.** Reads only your local Claude Code transcripts, writes nothing outside
+  its own settings, and makes no network calls.
+- **Install through this repository.** `.claude-plugin/marketplace.json` makes the
+  repository a plugin marketplace:
+  `/plugin marketplace add asafabram-ship-it/claude-theater`, then
+  `/plugin install agent-theater@claude-theater` (in the desktop app: **+** next to
+  the prompt box → Plugins → Add marketplace).
+
+### Changed
+
+- README: a "Claude desktop app mod" section (what it is, install, requirements,
+  privacy, keys) and a `docs/screenshots/` folder for its screenshot.
 
 ## [0.4.0] - 2026-07-19
 
@@ -225,7 +279,8 @@ SemVer policy for this tool:
   release): the office in an interactive WebviewPanel, with background auto-start
   and a status-bar toggle.
 
-[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...v0.3.0

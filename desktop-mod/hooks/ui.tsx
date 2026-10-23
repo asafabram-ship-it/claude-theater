@@ -90,13 +90,13 @@
 //            name itself is the link (the owner's wish, 23.10; the address is
 //            not spelled, so the name is not said twice). The Link takes the
 //            surface's own link colour (it has no colour prop), so no Text
-//            beside it. The same words in both languages, at the reading edge.
+//            beside it. The same words in both languages, CENTRED on the row (Asaf, 23.10).
 //            On the desktop the hooks draw it too, UNDER the office Client in the
 //            pane's own tree — never inside the Client: the page cannot draw a Link
 //            there (paint probe round 6, 23.10: the module's own credit faulted
 //            every render, and the office fell back to these cards for everyone);
 //            the Client's height (officeHeight) leaves its CREDIT_ROWS out. There
-//            the row also carries the small Legal Mind LOGO at its reading edge,
+//            the row also carries the small Legal Mind LOGO beside the name,
 //            before the words (decision 28b): a Markdown inline image of the PNG
 //            register.tsx read once (model.ts BRAND) — the desktop draws no Image
 //            element in the pane (paint probe rounds 7-8) but draws that (round
@@ -937,7 +937,7 @@ export function registerUi(on: On): void {
       // then ONE height-1 line: ONE Link to the site whose label is the whole credit, `© Legal Mind` (no-break, nb: the line
       // never wraps, a narrow pane clips it at the edge) — the brand name itself clickable (the owner's wish, 23.10), the
       // address not spelled out. A Link has no colour prop: it takes the surface's own link colour, so no coloured Text beside
-      // it. One Latin run, read left to right in either pane: the row's content is pushed to the reading edge. The Client
+      // it. One Latin run, read left to right in either pane: the row's content is centred (Asaf, 23.10: 'centre the logo part'). The Client
       // keeps its own height (officeHeight, without CREDIT_ROWS) at the pane's top, so the engine's offset still names the Client's rows from its first; the credit's rows
       // only add to the pane's content under it (the module counts them where it measures that offset: office-client.tsx
       // THE STALE OFFSET).
@@ -957,7 +957,7 @@ export function registerUi(on: On): void {
       return (
         <Box flexDirection="column" width="100%">
           <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
-          <Box key="credit" flexDirection="row" justifyContent={rtl ? 'flex-end' : 'flex-start'} alignItems="center" width="100%" height={1} marginTop={1} overflow="hidden">
+          <Box key="credit" flexDirection="row" justifyContent="center" alignItems="center" width="100%" height={1} marginTop={1} overflow="hidden">
             {rtl ? null : logo}
             <Link href={CREDIT_URL} label={nb(CREDIT)} />
             {rtl ? logo : null}

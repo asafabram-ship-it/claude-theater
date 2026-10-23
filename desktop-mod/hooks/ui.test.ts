@@ -768,7 +768,7 @@ test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 â
     expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', width: '100%' } })
     expect(kids.map(k => k.type)).toEqual(['Client', 'Box'])
     expect(kids[0]?.props?.key).toBe(OFFICE_KEY)
-    expect(credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', width: '100%', height: 1, marginTop: 1, overflow: 'hidden' })
+    expect(credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', width: '100%', height: 1, marginTop: 1, overflow: 'hidden' })
     // the whole credit is ONE Link â€” its label the name, `Â© Legal Mind`, no-break (the line never wraps), the brand name itself
     // clickable (the owner's wish, 23.10) and the address not spelled; no Text beside it (a Link has no colour prop: it takes the
     // surface's own link colour) â€” pushed to the Hebrew pane's reading edge; no logo read (the kit's bytes empty): no Markdown,
@@ -801,7 +801,7 @@ test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 â
     expect(((await ui.find({ type: 'Client' }))?.props.props as OfficeProps).lang).toBe('en')
     const en = await pane()
     expect(en.kids.map(k => k.type)).toEqual(['Client', 'Box'])
-    expect(en.credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'flex-start' })
+    expect(en.credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'center' })
     expect(en.line.map(k => k.type)).toEqual(['Link'])
     expect(en.line[0]?.props).toMatchObject({ href: CREDIT_URL, label: nb(CREDIT) })
     // the empty office: the Client (its empty block) and the credit under it

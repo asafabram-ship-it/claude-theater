@@ -11,7 +11,7 @@
 // approved probe docs/research/2026-10-19-cards-probe/register.tsx, round 9;
 // phase B: its "Paint probe" and "Phase B, decided" sections — decision 26 of
 // the client-office spec): the header line (bold counts at the reading edge, in
-// the logo's dark gold — decision 27b — the dim 5h meter at the other), the
+// the logo's dark teal — decision 28a — the dim 5h meter at the other), the
 // toolbar (`הצג שסיימו ☐` · `צליל 🔔` · `הגדרות ⚙️`, gap 2) — the search field
 // beside it on the same line from
 // ONE_LINE_FROM columns, under it on a line of its own below that, and only
@@ -77,10 +77,11 @@
 // demo's cast is never taken for the office (the chrome a row taller:
 // office-chrome.ts DEMO_ROWS).
 //
-// THE GOLD ACCENTS (decision 27b, 23.10 — before the public release): the
-// frames of the cards, the drawer and the settings in the Legal Mind logo's
-// gold (office-layout.ts CARD_BORDER = BRAND_GOLD), the header's counts in its
-// dark gold (BRAND_GOLD_DARK, still bold) — nothing else gains a colour: no
+// THE BRAND ACCENTS (decision 28a, 23.10 — the Legal Mind logo's teal, in
+// place of decision 27b's gold, which was the brand documents' palette): the
+// frames of the cards, the drawer and the settings in the logo's light teal
+// (office-layout.ts CARD_BORDER = BRAND_ACCENT), the header's counts in its
+// dark teal (BRAND_ACCENT_DARK, still bold) — nothing else gains a colour: no
 // background, no navy, the status marks as they were, no Button (a Button
 // takes none on the desktop: decision 26).
 //
@@ -187,7 +188,7 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { COMPACT_BELOW, CREDIT_ROWS, DRAWER_FRAME_ROWS, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overscanOf, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { BRAND_GOLD_DARK, CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import { BRAND_ACCENT_DARK, CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeBatch, OfficeItem, OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
@@ -564,10 +565,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       else if (fits(iconsHdr, tiny)) { counts = iconsHdr; meterHeader = tiny }
     }
     // (while the demo runs the header's blank line moves under the demo line: the demo line is the first under the header)
-    // (THE GOLD ACCENTS, decision 27b: the counts bold in the logo's dark gold — a Text keeps its colour on the desktop, where a
+    // (THE BRAND ACCENTS, decision 28a: the counts bold in the logo's dark teal — a Text keeps its colour on the desktop, where a
     // Button would lose it; the meter stays dim and uncoloured)
     kids.push(Box({ key: 'header', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: props.demo ? 0 : 1, children: [
-      Text({ bold: true, color: BRAND_GOLD_DARK, children: [counts] }),
+      Text({ bold: true, color: BRAND_ACCENT_DARK, children: [counts] }),
       ...(meterHeader ? [Text({ dimColor: true, children: [meterHeader] })] : []),
     ] }))
 

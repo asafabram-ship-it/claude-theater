@@ -215,6 +215,26 @@ export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | nul
 export const DESKTOP = { clientFailed: false }
 
 /**
+ * THE LOGO (decision 28b, 23.10): the small Legal Mind logo the desktop draws in its credit row (ui.tsx, at the row's
+ * reading edge beside `© Legal Mind · legalmind.co.il`), the PNG's bytes as base64 — '' while there is none, and then
+ * the credit is drawn without it. The plugin's own file, LOGO_ASSET under `$.plugin.root` (48×23 px, 2,346 bytes:
+ * 3,128 base64 characters), read ONCE by register.tsx's session.start ($.fs.read as bytes, in a try of its own: a
+ * missing or unreadable file, an answer that is not base64, or one past LOGO_MAX_CHARS leaves it '') — never per
+ * render. Why a Markdown and not an Image: the desktop draws NO `Image` element in the pane at all (paint probe rounds
+ * 7-8: neither a file source nor PNG bytes), but it does draw a Markdown INLINE IMAGE of a `data:image/png;base64,`
+ * URI in the pane's tree (round 9), as wide as its box (round 9: the whole pane wide — too big; round 10: small in 8-
+ * and 14-cell Boxes), so ui.tsx draws it as a Markdown (office-layout.ts logoMarkdown) in a LOGO_CELLS-wide Box. Only
+ * on the desktop: the terminal, VS Code and mobile draw no Markdown image, and their credit stays text. Module memory,
+ * as USAGE: a reload empties it and the session.start that fresh load fires again refills it. The only file of its own
+ * the mod reads (no network).
+ */
+export const BRAND = { logo: '' }
+/** The logo's file, under `$.plugin.root` (decision 28b): desktop-mod/assets/lm-logo-48.png. */
+export const LOGO_ASSET = 'assets/lm-logo-48.png'
+/** The most base64 characters the logo may be (a PNG of about 3 KB): a bigger file is not drawn — the pane's tree carries it whole on every render. */
+export const LOGO_MAX_CHARS = 4096
+
+/**
  * THE CLIENT'S RETRIES (live check 8, 23.10): a fault of the office Client is most often the surface's first
  * draw timing out while the plugin's worker is busy with the first transcript scan ("did not answer a render
  * within 2000ms of a loaded frame" at the pane's auto-open on the first subagent spawn; the same module drew

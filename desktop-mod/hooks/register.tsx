@@ -8,12 +8,14 @@
 //
 // ENGINE RULE (claude plugin validate): `$` is never passed to a function
 // imported from another file. Helpers that take `$` are declared HERE
-// (openPane, poll, loadPrefs, scanIo, ensurePolling); imported modules get
+// (openPane, poll, loadPrefs, loadLogo, scanIo, ensurePolling); imported modules get
 // closures (scanIo) or register their own hooks (registerUi).
 //
 // Lifecycle:
 //   session.start   load prefs from $.store, remember the session id, register
 //                   /theater, start the poll timer ($.clock.every POLL_MS),
+//                   read the logo's bytes once (decision 28b: loadLogo, the
+//                   desktop's credit row; the mod's only read of its own files),
 //                   take the five-hour meter's first reading
 //                   ($.session.usage; session.measure below).
 //                   Each step is its own try: a failing $.command.register
@@ -115,7 +117,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { I18N } from './i18n'
 import { liveAgentReturned, liveAged, liveSpawned, liveToolReturned, liveToolStarted, mergeLive, type LiveMap } from './live'
-import { CLIENT_RETRIES, CLIENT_RETRY_MS, COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, PANE_ID, POLL_MS, STORE_PREFS_KEY, STORE_USAGE_TOAST_KEY, USAGE, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
+import { BRAND, CLIENT_RETRIES, CLIENT_RETRY_MS, COMMAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, LOGO_ASSET, LOGO_MAX_CHARS, PANE_ID, POLL_MS, STORE_PREFS_KEY, STORE_USAGE_TOAST_KEY, USAGE, type Agent, type Payload, type Prefs, type TheaterStatus } from './model'
 import { cleanAgentText } from './office-chrome'
 import { demoPayload, scanAll, type ScanIo } from './scanner'
 import { FINISH_TOAST_MS, RECENT_DONE, STORE_ROOM_DONE_KEY, finishToast, officeView, paneTitle, parseRoomDone, registerUi, rememberRoomDone, renderKey, roomTitle, starsOf, textSurfaceActive, workingCount } from './ui'
@@ -658,6 +660,33 @@ async function takeUsage($: EngineInterface, u: FiveHour | null, first: boolean,
   }
 }
 
+/** A PNG's bytes as $.fs.read answers them as bytes: standard padded base64, nothing else (the Markdown carries it as a data URI). */
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/
+
+/**
+ * THE LOGO (decision 28b): reads the small logo's bytes (LOGO_ASSET under `$.plugin.root`) into BRAND.logo, for the desktop's
+ * credit row (ui.tsx draws it as a Markdown inline image). Called ONCE per load, by session.start — never per render. A missing
+ * or unreadable file, an answer that is not base64, or one past LOGO_MAX_CHARS leaves BRAND.logo '' (the credit drawn without
+ * it). A logo that changed redraws the pane once (a hot reload with the pane up may have drawn it before this read landed); an
+ * unchanged one redraws nothing. The mod's only read of its own files: a local file it ships, no network. Never rejects.
+ */
+async function loadLogo($: EngineInterface): Promise<void> {
+  let logo = ''
+  try {
+    const { base64 } = await $.fs.read(`${$.plugin.root}/${LOGO_ASSET}`, { as: 'bytes' })
+    if (typeof base64 === 'string' && base64.length <= LOGO_MAX_CHARS && BASE64_RE.test(base64)) logo = base64
+  } catch {
+    // no logo: the credit alone
+  }
+  if (logo === BRAND.logo) return
+  BRAND.logo = logo
+  try {
+    $.ui.invalidate('ui.render')
+  } catch {
+    // nothing draws the pane now: its next draw reads BRAND
+  }
+}
+
 /** Prefs from $.store, defaults filled in; a bad value falls back to the default. */
 async function loadPrefs($: EngineInterface): Promise<Prefs> {
   try {
@@ -676,7 +705,7 @@ async function loadPrefs($: EngineInterface): Promise<Prefs> {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    // Five independent steps, each in its own try: none may block the session,
+    // Six independent steps, each in its own try: none may block the session,
     // and none may stop the ones after it (a /theater that cannot be registered
     // must still leave a scanning office behind).
     let prefs: Prefs = DEFAULT_PREFS
@@ -702,6 +731,9 @@ export const register: Register = on => {
       // the pane still auto-opens on the first subagent
     }
     ensurePolling($, true)
+    // THE LOGO (decision 28b): its bytes, once per load, for the desktop's credit row — its own try inside (a missing file: no
+    // logo, the credit still drawn); after the poll is started, so the read never holds the office back
+    await loadLogo($)
     // THE FIVE-HOUR METER's first reading (session.measure keeps it after; the poll is already started, so a
     // slow reading never holds the office back): the line at once, the toast if this window never had one;
     // no five_hour window — or no reading at all — clears the line. session.start fires again on a fresh load

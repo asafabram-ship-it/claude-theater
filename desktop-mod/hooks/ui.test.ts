@@ -8,7 +8,7 @@
 // (and drawn on mobile/vscode, which lack Input / Client).
 
 import type { Agent } from './model'
-import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
+import { EMPTY_PAYLOAD, JUST_FINISHED_MS, LOGO_ASSET, LOGO_MAX_CHARS, LONG_RUNNING_MS, MAX_AGE_MIN, PERSONA_EMOJI, POLL_MS, RUNNING_STALE_SEC } from './model'
 import { expect, test } from 'claude-code/testing'
 
 import { SETTLE_MS, SETTLE_SLACK_MS, cleanOffice } from './register'
@@ -22,7 +22,7 @@ import {
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
 import { CREDIT_ROWS, REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
-import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, nb, rowCount } from './office-layout'
+import { BRAND_ACCENT_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, LOGO_ALT, LOGO_CELLS, logoMarkdown, nb, rowCount } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'
@@ -751,7 +751,7 @@ type PaneNode = { type: string; props?: Record<string, unknown>; children?: Arra
 const paneKids = (n: PaneNode | undefined): PaneNode[] => (n?.children ?? []).filter((k): k is PaneNode => typeof k !== 'string')
 
 // (mounts, polls and a language switch through the kit: the budget is load headroom, as above)
-test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 — the page cannot draw a `Link` inside a Client: the module\'s credit faulted every render): the hooks draw it UNDER the office Client — the pane\'s tree a column Box whose first child is the Client (key office) and whose last is the `credit` Box: a blank line, then one height-1 row at the reading edge holding a gold Text of `© Legal Mind · ` (no-break) and a Link to https://legalmind.co.il labelled `legalmind.co.il` (left to right in either pane); the Client\'s height is officeHeight\'s, without the credit\'s rows; no Link inside the Client; the empty office keeps it', { timeoutMs: 30_000 }, async ($, on) => {
+test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 — the page cannot draw a `Link` inside a Client: the module\'s credit faulted every render): the hooks draw it UNDER the office Client — the pane\'s tree a column Box whose first child is the Client (key office) and whose last is the `credit` Box: a blank line, then one height-1 row at the reading edge, its items centred, holding a dark-teal Text of `© Legal Mind · ` (no-break; decision 28a) and a Link to https://legalmind.co.il labelled `legalmind.co.il` (left to right in either pane); without the logo\'s bytes no Markdown (decision 28b: the credit alone); the Client\'s height is officeHeight\'s, without the credit\'s rows; no Link inside the Client; the empty office keeps it', { timeoutMs: 30_000 }, async ($, on) => {
   let agents = fixture()
   const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
@@ -768,11 +768,13 @@ test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 �
     expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', width: '100%' } })
     expect(kids.map(k => k.type)).toEqual(['Client', 'Box'])
     expect(kids[0]?.props?.key).toBe(OFFICE_KEY)
-    expect(credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'flex-end', width: '100%', height: 1, marginTop: 1, overflow: 'hidden' })
-    // the gold Text of the name (no-break: the line never wraps), then the Link beside it — one Latin run, the row's order kept
-    // (a reversed row would draw the address first), pushed to the Hebrew pane's reading edge
+    expect(credit?.props).toMatchObject({ key: 'credit', flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', width: '100%', height: 1, marginTop: 1, overflow: 'hidden' })
+    // the dark-teal Text of the name (no-break: the line never wraps), then the Link beside it — one Latin run, the row's order
+    // kept (a reversed row would draw the address first), pushed to the Hebrew pane's reading edge; no logo read (the kit's
+    // bytes empty): no Markdown, the credit alone (decision 28b)
     expect(line.map(k => k.type)).toEqual(['Text', 'Link'])
-    expect(line[0]).toMatchObject({ props: { color: BRAND_GOLD_DARK }, children: [nb(CREDIT)] })
+    expect(await ui.find({ type: 'Markdown' })).toBeUndefined()
+    expect(line[0]).toMatchObject({ props: { color: BRAND_ACCENT_DARK }, children: [nb(CREDIT)] })
     expect(nb(CREDIT)).not.toMatch(/ /)
     expect(nb(CREDIT).replace(/\u00A0/g, ' ')).toBe('© Legal Mind · ')
     expect(line[1]?.props).toMatchObject({ href: CREDIT_URL, label: CREDIT_SITE })
@@ -780,7 +782,8 @@ test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 �
     expect(CREDIT_SITE).toBe('legalmind.co.il')
     const link = await ui.find({ type: 'Link' })
     expect(link?.props).toMatchObject({ href: CREDIT_URL, label: CREDIT_SITE })
-    expect((await ui.find({ type: 'Text', text: nb(CREDIT) }))?.props.color).toBe(BRAND_GOLD_DARK)
+    expect((await ui.find({ type: 'Text', text: nb(CREDIT) }))?.props.color).toBe(BRAND_ACCENT_DARK)
+    expect(BRAND_ACCENT_DARK).toBe('#1F7A82')   // (the logo's dark teal: decision 28a — the gold #C09A55 of 27b before it)
     // never inside the Client: the module draws no Link (its tree the page could not draw)
     await ui.drawn({ in: OFFICE_KEY })
     expect(await ui.find({ in: OFFICE_KEY, type: 'Link' })).toBeUndefined()
@@ -813,6 +816,70 @@ test('THE CREDIT LINE on the desktop (decision 27a; paint probe round 6, 23.10 �
   } finally {
     await ui.unmount()
   }
+})
+
+/** A whole PNG (1×1), base64: the logo's bytes as the kit answers them (the real file, assets/lm-logo-48.png, is never read in a test). */
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+// (mounts, polls, a language switch and three session starts through the kit: the budget is load headroom, as above)
+test('THE LOGO in the desktop\'s credit row (decision 28b; paint probe rounds 7-9 — the pane draws no `Image`, but a Markdown inline image of a data URI): session.start reads the logo\'s bytes once, and the credit row carries it at its READING EDGE, before the words — a `logo` Box LOGO_CELLS wide and one row tall (clipped, never shrunk) holding a Markdown `![Legal Mind](data:image/png;base64,…)`, after the Link in Hebrew (the right of the never-reversed row) with a cell of margin on its left, before the Text in English with it on its right; the credit keeps its one row (CREDIT_ROWS); bytes that are not base64, or past LOGO_MAX_CHARS, draw no logo', { timeoutMs: 30_000 }, async ($, on) => {
+  const { captured, clock } = beneath(on, fixture, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  captured.bytes[LOGO_ASSET] = PNG_1PX
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  expect(captured.bytesReads).toHaveLength(1)
+  expect(captured.bytesReads[0]?.endsWith(`/${LOGO_ASSET}`)).toBe(true)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45, scroll: { offset: 4, bodyRows: 25 } } })
+  try {
+    /** The credit Box's children (the logo Box, the Text, the Link, in the row's order). */
+    const line = async () => paneKids(paneKids((await ui.drawn()) as PaneNode).at(-1))
+    // Hebrew: the Text, the Link, then the logo — the right end of a row pushed to the right edge
+    const he = await line()
+    expect(he.map(k => k.type)).toEqual(['Text', 'Link', 'Box'])
+    expect(he[0]).toMatchObject({ props: { color: BRAND_ACCENT_DARK }, children: [nb(CREDIT)] })
+    expect(he[1]?.props).toMatchObject({ href: CREDIT_URL, label: CREDIT_SITE })
+    expect(he[2]?.props).toMatchObject({ key: 'logo', width: LOGO_CELLS, height: 1, flexShrink: 0, overflow: 'hidden', marginLeft: 1 })
+    expect(he[2]?.props?.marginRight).toBeUndefined()
+    expect(LOGO_CELLS).toBe(4)
+    const md = paneKids(he[2])
+    expect(md.map(k => k.type)).toEqual(['Markdown'])
+    const text = md[0]?.props?.text as string
+    expect(text.startsWith('![Legal Mind](data:image/png;base64,')).toBe(true)
+    expect(text).toBe(logoMarkdown(PNG_1PX))
+    expect(text).toBe(`![${LOGO_ALT}](data:image/png;base64,${PNG_1PX})`)
+    expect(md[0]?.props?.onLinkPress).toBeUndefined()   // (nothing in it to press)
+    expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe(logoMarkdown(PNG_1PX))
+    // the plugin's own Boxes: the column, the credit, the logo's — never inside the Client (the module draws no Markdown)
+    expect((await ui.findAll({ type: 'Box' })).map(b => b.key ?? null)).toEqual([null, 'credit', 'logo'])
+    await ui.drawn({ in: OFFICE_KEY })
+    expect(await ui.find({ in: OFFICE_KEY, type: 'Markdown' })).toBeUndefined()
+    // the credit keeps its one row: the Client's height is officeHeight's, the credit row height 1 (CREDIT_ROWS: the blank and it)
+    const client = await ui.find({ type: 'Client' })
+    const p = client?.props.props as OfficeProps
+    expect(client?.props.height).toBe(officeHeight(p, rowCount(p)))
+    expect(CREDIT_ROWS).toBe(2)
+    // English: the logo first (the left, its reading edge), its margin on the words' side
+    await ui.key({ in: OFFICE_KEY, key: 'l' })
+    expect(((await ui.find({ type: 'Client' }))?.props.props as OfficeProps).lang).toBe('en')
+    const en = await line()
+    expect(en.map(k => k.type)).toEqual(['Box', 'Text', 'Link'])
+    expect(en[0]?.props).toMatchObject({ key: 'logo', width: LOGO_CELLS, height: 1, marginRight: 1 })
+    expect(en[0]?.props?.marginLeft).toBeUndefined()
+    expect(paneKids(en[0])[0]?.props?.text).toBe(logoMarkdown(PNG_1PX))
+    expect(en[1]?.children).toEqual([nb(CREDIT)])
+  } finally {
+    await ui.unmount()
+  }
+  // bytes that are not base64, and bytes past LOGO_MAX_CHARS: no logo (a fresh load reads again: the credit alone)
+  for (const bad of ['not base64!', 'A'.repeat(LOGO_MAX_CHARS + 4)]) {
+    captured.bytes[LOGO_ASSET] = bad
+    await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+    const again = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 45 } })
+    expect(await again.find({ type: 'Markdown' }), bad.slice(0, 12)).toBeUndefined()
+    expect(paneKids(paneKids((await again.drawn()) as PaneNode).at(-1)).map(k => k.type)).toEqual(['Text', 'Link'])
+    await again.unmount()
+  }
+  expect(captured.bytesReads).toHaveLength(3)   // (once per session.start, never per render)
 })
 
 // (polls and redraws through the kit: past the 5 s default under a full suite on a loaded machine with no code change — 5.07 s on
@@ -1323,9 +1390,10 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
 })
 
 // (mounts at three widths through the kit: the budget is load headroom, as above)
-test('THE CREDIT LINE (decision 27a) on the text cards: their last line — under the footer, after the cards or the empty office — `© Legal Mind · ` in the logo\'s dark gold with a Link to the site (`legalmind.co.il`), the same words in both languages, on every text surface', { timeoutMs: 30_000 }, async ($, on) => {
+test('THE CREDIT LINE (decision 27a) on the text cards: their last line — under the footer, after the cards or the empty office — `© Legal Mind · ` in the logo\'s dark teal (decision 28a) with a Link to the site (`legalmind.co.il`), the same words in both languages, on every text surface — and no logo there even with its bytes read (decision 28b: no Markdown image draws on them)', { timeoutMs: 30_000 }, async ($, on) => {
   let agents = fixture()
-  const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  const { captured, clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  captured.bytes[LOGO_ASSET] = PNG_1PX
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
   for (const surface of ['terminal', 'vscode', 'mobile'] as const) {
@@ -1333,7 +1401,8 @@ test('THE CREDIT LINE (decision 27a) on the text cards: their last line — unde
     const credit = await ui.find({ key: 'credit' })
     expect(credit, surface).toBeDefined()
     const text = await ui.find({ type: 'Text', text: /^© Legal Mind · / })
-    expect(text?.props.color, surface).toBe(BRAND_GOLD_DARK)
+    expect(text?.props.color, surface).toBe(BRAND_ACCENT_DARK)
+    expect(await ui.find({ type: 'Markdown' }), surface).toBeUndefined()
     const link = await ui.find({ type: 'Link' })
     expect(link?.props.href, surface).toBe(CREDIT_URL)
     expect(link?.children, surface).toEqual([CREDIT_SITE])

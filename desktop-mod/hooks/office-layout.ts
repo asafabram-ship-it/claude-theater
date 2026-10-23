@@ -98,27 +98,46 @@ export const PIN = '📌'
 /** The unpinned pin on every card's title (decision 26): the same glyph in its TEXT presentation (VS15), which the desktop draws monochrome beside the colour 📌 of a pinned room — `dimColor` does not dim a colour emoji, and no hover reveals anything inside a Client. */
 export const PIN_OFF = '📌\uFE0E'
 /**
- * THE GOLD ACCENTS (decision 27b, 23.10 — the Legal Mind logo's colours, before the public release): the frames of the cards,
- * the drawer and the settings in the logo's gold (BRAND_GOLD, CARD_BORDER); the office's header counts and THE CREDIT LINE in
- * its dark gold (BRAND_GOLD_DARK). No background anywhere (the desktop does not tell the module whether its theme is light or
- * dark: live check 6) and no navy #1F3A5F (it vanishes on the dark theme); the status marks keep their green / amber / grey
- * (DOT_FG); a Button takes no colour on the desktop (decision 26), so no Button is gilded.
+ * THE BRAND ACCENTS (decision 28a, 23.10 — after Asaf saw 0.5.0 on the desktop and brought the logo; decision 27b before it):
+ * the frames of the cards, the drawer and the settings in the Legal Mind LOGO's light teal (BRAND_ACCENT, CARD_BORDER); the
+ * office's header counts and THE CREDIT LINE in its dark teal (BRAND_ACCENT_DARK). The logo is teal — sampled from the file
+ * (desktop-mod/assets/lm-logo.png): dark #206060-#207070, light #30A0B0 — so decision 27b's gold (#D4B97A / #C09A55) was the
+ * palette of the brand's DOCUMENTS, not of its logo: the teal replaces it wherever the gold was. No background anywhere (the
+ * desktop does not tell the module whether its theme is light or dark: live check 6) and no navy #1F3A5F (it vanishes on the
+ * dark theme); the status marks keep their green / amber / grey (DOT_FG); a Button takes no colour on the desktop (decision
+ * 26), so no Button is tinted.
  */
-export const BRAND_GOLD = '#D4B97A'
-export const BRAND_GOLD_DARK = '#C09A55'
-/** The card's frame colour — the drawer's and the settings' too: the logo's gold (decision 27b; the probe's slate #56607a before it). */
-export const CARD_BORDER = BRAND_GOLD
+export const BRAND_ACCENT = '#31A3AD'
+export const BRAND_ACCENT_DARK = '#1F7A82'
+/** The card's frame colour — the drawer's and the settings' too: the logo's light teal (decision 28a; decision 27b's gold #D4B97A, and the probe's slate #56607a before it). */
+export const CARD_BORDER = BRAND_ACCENT
 /**
  * THE CREDIT LINE (decision 27a, 23.10): the office's last line — after the cards, after the empty office's block, in the demo
  * too — `© Legal Mind · legalmind.co.il`, the address a link to CREDIT_URL; the same words in both languages (no "all rights
- * reserved": the repo is MIT), so no i18n key; drawn in BRAND_GOLD_DARK at the reading edge. CREDIT is the Text's own string,
+ * reserved": the repo is MIT), so no i18n key; drawn in BRAND_ACCENT_DARK at the reading edge. CREDIT is the Text's own string,
  * CREDIT_SITE the Link's text (inside that Text on the text cards, beside it on the desktop). No Hebrew in it: one Latin run in
  * either pane, never reordered. Drawn by the HOOKS alone (ui.tsx) — the text cards' last line, and on the desktop the line
- * under the office Client — never by the module: the page cannot draw a Link inside a Client (paint probe round 6, 23.10).
+ * under the office Client, the logo beside it (decision 28b, below) — never by the module: the page cannot draw a Link inside
+ * a Client (paint probe round 6, 23.10).
  */
 export const CREDIT = '© Legal Mind · '
 export const CREDIT_SITE = 'legalmind.co.il'
 export const CREDIT_URL = 'https://legalmind.co.il'
+/**
+ * THE LOGO in the credit row (decision 28b, 23.10; model.ts BRAND): on the desktop only, the small Legal Mind logo at the
+ * row's reading edge, before the words — a Markdown INLINE IMAGE of the PNG's base64 (`logoMarkdown`; the desktop draws no
+ * `Image` element in the pane, paint probe rounds 7-8, but draws this, round 9) in a Box LOGO_CELLS wide and one row tall:
+ * the desktop draws the image as wide as its box (round 9: the whole pane wide in a full-width Box), so the Box sets its size
+ * — the 48×23 px PNG (about twice as wide as tall) four cells wide, a cell about half a row, stands about one row tall: the
+ * credit keeps its one row (CREDIT_ROWS unchanged; the Box clips what a taller drawing would push down — to be seen live).
+ */
+export const LOGO_CELLS = 4
+/** The logo's alt text (what a surface that draws no image would show): the name, as the credit spells it. */
+export const LOGO_ALT = 'Legal Mind'
+/** The Markdown that draws the logo: an inline image of `base64` (a PNG) as a data URI — never a link, nothing to press. */
+export function logoMarkdown(base64: string): string {
+  return `![${LOGO_ALT}](data:image/png;base64,${base64})`
+}
 /** The status column's colours by status (the probe's dots): green running, amber stale, grey done. */
 export const DOT_FG: Readonly<Record<OfficeAgent['status'], string>> = { running: '#3fb950', stale: '#d29922', done: '#8b949e' }
 /**

@@ -17,8 +17,9 @@ import { expect, test } from 'claude-code/testing'
 import type { JsonValue } from 'claude-code'
 
 import type { Agent } from './model'
-import { CLIENT_RETRIES, CLIENT_RETRY_MS, PERSONA_EMOJI, POLL_MS } from './model'
+import { CLIENT_RETRIES, CLIENT_RETRY_MS, LOGO_ASSET, PERSONA_EMOJI, POLL_MS } from './model'
 import { SEARCH_MAX } from './office-chrome'
+import { logoMarkdown } from './office-layout'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
 import { T0, beneath } from './test-kit'
@@ -420,4 +421,35 @@ test('THE DEMO\'S EXITS (live check 5): the demo line\'s exit Button posts the d
   expect((await propsOf(ui)).rooms.map(r => r.id)).toEqual([SA, SB])
   expect(captured.toasts).toEqual([])
   await ui.unmount()
+})
+
+// (polls, a mount and a hot reload's session.start through the kit: the budget is load headroom, as the other mounted tests')
+test('THE LOGO (decision 28b): session.start reads the plugin\'s own logo ONCE — `$.fs.read(<root>/assets/lm-logo-48.png, { as: \'bytes\' })`, its only read of a file of its own — never per poll or per render; the desktop\'s credit row draws what it read; a fresh load (a reload\'s session.start) reads it again, and an empty answer (a missing file) draws the credit alone', { timeoutMs: 30_000 }, async ($, on) => {
+  const { captured, clock } = beneath(on, () => fixture(), PREFS())
+  const LOGO = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  captured.bytes[LOGO_ASSET] = LOGO
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  expect(captured.bytesReads).toHaveLength(1)
+  // (the plugin's own folder, absolute: `$.plugin.root`, which the test's engine does not expose — so its shape and its end)
+  expect(captured.bytesReads[0]).toMatch(/^([A-Za-z]:)?\//)
+  expect(captured.bytesReads[0]?.endsWith(`/${LOGO_ASSET}`)).toBe(true)
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.resize({ in: OFFICE_KEY, columns: 90, rows: 40 })
+  expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe(logoMarkdown(LOGO))
+  // polls, a press's redraw, a language switch: no read more
+  await clock.advance(POLL_MS * 3)
+  await ui.press({ key: 'showDone' })
+  await ui.key({ in: OFFICE_KEY, key: 'l' })
+  expect((await ui.find({ type: 'Markdown' }))?.props.text).toBe(logoMarkdown(LOGO))
+  expect(captured.bytesReads).toHaveLength(1)
+  await ui.unmount()
+  // a fresh load (a hot reload fires session.start again): read again; the file gone (an empty answer) — the credit alone
+  captured.bytes = {}
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  expect(captured.bytesReads).toHaveLength(2)
+  const after = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await after.find({ type: 'Markdown' })).toBeUndefined()
+  expect((await after.find({ type: 'Link' }))?.props.href).toBe('https://legalmind.co.il')
+  await after.unmount()
 })

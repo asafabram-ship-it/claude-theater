@@ -14,7 +14,7 @@ import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, CREDIT_ROWS, DEMO_G
 import * as OfficeClient from './office-client'
 import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
-import { BRAND_GOLD_DARK, CARD_BORDER, CENTRE_AT, CREDIT, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, PIN, PIN_OFF, TASK_UNITS, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth, trimWindow } from './office-layout'
+import { BRAND_ACCENT_DARK, CARD_BORDER, CENTRE_AT, CREDIT, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, PIN, PIN_OFF, TASK_UNITS, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth, trimWindow } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
 
@@ -736,19 +736,20 @@ test('THE CREDIT LINE is NOT the module\'s (decision 27a; paint probe round 6, 2
   expect(officeHeight(p, rowCount(p))).toBe(chromeRows(p) + rowCount(p))
 })
 
-test('THE GOLD ACCENTS (decision 27b): the header\'s counts bold in the logo\'s dark gold (BRAND_GOLD_DARK), the meter dim and uncoloured; every frame — the cards, the drawer, the settings — the logo\'s gold (CARD_BORDER); nothing else of the office coloured but the status marks — no navy, no background in the column', () => {
+test('THE BRAND ACCENTS (decision 28a; the gold of 27b before it): the header\'s counts bold in the logo\'s dark teal (BRAND_ACCENT_DARK), the meter dim and uncoloured; every frame — the cards, the drawer, the settings — the logo\'s light teal (CARD_BORDER); nothing else of the office coloured but the status marks — no navy, no gold, no background in the column', () => {
   const u = { pct: 42.4, resetsAt: '2026-10-10T14:30:00Z' }
   const p = props({ columns: pane(WIDE_FROM), usage: u })
   const tree = Office(p, fake(pane(WIDE_FROM)).surface)
   const header = byKey(tree, 'header')!
-  expect((header.children[0] as Node).props).toMatchObject({ bold: true, color: BRAND_GOLD_DARK })
+  expect((header.children[0] as Node).props).toMatchObject({ bold: true, color: BRAND_ACCENT_DARK })
   for (const t of (header.children as Node[]).slice(1)) expect(t.props.color).toBeUndefined()
   const all = nodes(columnOf(tree))
-  expect([...new Set(all.map(n => n.props.color).filter(c => c !== undefined))].sort()).toEqual([BRAND_GOLD_DARK, DOT_FG.running].sort())
+  expect([...new Set(all.map(n => n.props.color).filter(c => c !== undefined))].sort()).toEqual([BRAND_ACCENT_DARK, DOT_FG.running].sort())
   expect([...new Set(all.map(n => n.props.borderColor).filter(c => c !== undefined))]).toEqual([CARD_BORDER])
   expect(all.some(n => n.props.backgroundColor !== undefined)).toBe(false)
   expect(JSON.stringify(columnOf(tree)).toLowerCase()).not.toContain('#1f3a5f')
-  // the overlays: the drawer and the settings framed in the same gold
+  for (const gold of ['#d4b97a', '#c09a55']) expect(JSON.stringify(columnOf(tree)).toLowerCase()).not.toContain(gold)   // (decision 27b's gold, gone)
+  // the overlays: the drawer and the settings framed in the same teal
   expect(overlayOf(Office({ ...p, selected: 'lead', drawer: drawerFor(p, 'lead') }, fake(pane(WIDE_FROM)).surface))!.props.borderColor).toBe(CARD_BORDER)
   expect(overlayOf(Office({ ...p, helpOpen: true }, fake(pane(WIDE_FROM)).surface))!.props.borderColor).toBe(CARD_BORDER)
 })

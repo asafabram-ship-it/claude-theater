@@ -11,7 +11,10 @@
 // never rewritten either: state holds the demo cast, as on a live engine). It
 // counts what the plugin writes, reads back and calls, in `captured`, and
 // holds the next write of a key on request (`captured.hold`: a slow store, so
-// a test can make two office posts' hooks overlap).
+// a test can make two office posts' hooks overlap). A `bytes` read (the
+// plugin's one: session.start's logo, decision 28b) is answered from
+// `captured.bytes` — set it before session.start — and is NO logo otherwise,
+// never the file on disk: the tests stay hermetic.
 
 import type { On } from 'claude-code'
 import { mock } from 'claude-code/testing'
@@ -40,6 +43,15 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
     storeWrites: {} as Record<string, number>,
     /** $.fs.write calls seen beneath the plugin: none is expected (the diagnostics log is gone). */
     fsWrites: 0,
+    /**
+     * THE LOGO (decision 28b): what a `bytes` read answers ($.fs.read(path, { as: 'bytes' }): the plugin's one, session.start's
+     * logo) — `<the end of a path>` → its base64, matched on the path's end ("/" separators: `assets/lm-logo-48.png` matches the
+     * plugin root's file). Set it BEFORE session.start. A path no entry ends with answers EMPTY bytes (`{ base64: '' }`): the
+     * plugin draws no logo — never the file on disk (a hook that throws is skipped, and the engine beneath would read it).
+     */
+    bytes: {} as Record<string, string>,
+    /** The paths the plugin read as bytes, in order ("/" separators). */
+    bytesReads: [] as string[],
     /** $.state reads of `prefs` seen beneath the plugin: the pane's render reads it once per draw (the poll only on a retitle, a finish or a pins prune — the last through `update`), so it counts the redraws. */
     prefsReads: 0,
     /** The `payload` the plugin last read back from $.state (a state.get tap): what the pane draws, ⭐ stars included. */
@@ -147,6 +159,12 @@ export function beneath(on: On, current: () => Agent[], store: Record<string, un
     throw new Error(`ENOENT: ${e.path}`)
   })
   on('fs.read', ($, e) => {
+    if (e.as === 'bytes') {
+      const path = norm(e.path)
+      captured.bytesReads.push(path)
+      const hit = Object.entries(captured.bytes).find(([end]) => path === end || path.endsWith('/' + end))
+      return { value: { base64: hit ? hit[1] : '' } }
+    }
     const f = files?.get(norm(e.path))
     if (!f) throw new Error(`ENOENT: ${e.path}`)
     return { value: f.text }

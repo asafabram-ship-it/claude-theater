@@ -8,7 +8,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
 import { REFUSED_RE, cleanAgentText } from './office-chrome'
-import { ACT_MAX, BRAND_GOLD, BRAND_GOLD_DARK, CARD_BORDER, CARD_LINES, CENTRE_AT, CREDIT, CREDIT_SITE, CREDIT_URL, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LESS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, MORE_MARK, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
+import { ACT_MAX, BRAND_ACCENT, BRAND_ACCENT_DARK, CARD_BORDER, CARD_LINES, CENTRE_AT, CREDIT, CREDIT_SITE, CREDIT_URL, DOT_FG, EMOJI_CELLS, FIT, FOCUS_MARK, HYSTERESIS, LESS_MARK, LINE_FIT, MODEL_FULL_FROM, MORE_LINES, MORE_MARK, NAME_FLOOR, NAME_MAX, NAME_MIN, GLUE, NBBAR, NBHY, NBSLASH, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, TASK_MAX, TASK_UNITS, TITLE_GAP, TITLE_MIN, WIDE_FROM, capUnits, cardLines, chooseMode, countsFor, countsText, cut, cutTask, cutTitle, cutWords, firstGlyph, fitCells, fitLine, floorsOf, geometry, glyphs, iconLabel, latinDominant, markOf, modeAt, modelText, nb, needOf, officeModel, officeWidest, restWord, roomCache, rowCount, textWidth, trimWindow, widestKey, widestName } from './office-layout'
 import type { Line, OfficeDecor, OfficeModel, TableMode } from './office-layout'
 import type { OfficeAgent, OfficeProps, OfficeRoom } from './office-props'
 
@@ -1008,10 +1008,10 @@ test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base 
   expect(cache.builds).toBe(built + 2)
 })
 
-test('THE GOLD ACCENTS and THE CREDIT LINE (decision 27): the frames in the logo\'s gold, the header and the credit in its dark gold — no navy, no background; the credit the same words in both languages (`© Legal Mind · ` then the address, a link to the site), nothing in it a surface refuses, no Hebrew in it', () => {
-  expect(BRAND_GOLD).toBe('#D4B97A')
-  expect(BRAND_GOLD_DARK).toBe('#C09A55')
-  expect(CARD_BORDER).toBe(BRAND_GOLD)
+test('THE BRAND ACCENTS (decision 28a) and THE CREDIT LINE (decision 27a): the frames in the logo\'s light teal, the header and the credit in its dark teal (the logo sampled dark #206060-#207070, light #30A0B0 — decision 27b\'s gold was the documents\' palette) — no navy, no background; the credit the same words in both languages (`© Legal Mind · ` then the address, a link to the site), nothing in it a surface refuses, no Hebrew in it', () => {
+  expect(BRAND_ACCENT).toBe('#31A3AD')
+  expect(BRAND_ACCENT_DARK).toBe('#1F7A82')
+  expect(CARD_BORDER).toBe(BRAND_ACCENT)
   expect(CREDIT).toBe('© Legal Mind · ')
   expect(CREDIT_SITE).toBe('legalmind.co.il')
   expect(CREDIT_URL).toBe(`https://${CREDIT_SITE}`)

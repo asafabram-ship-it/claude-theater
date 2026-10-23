@@ -100,7 +100,8 @@ change between releases — if a Claude Code update breaks the mod, please open 
 issue here. Developed and tested on 2.1.304–2.1.308.
 
 **Privacy.** It only reads your local Claude Code transcripts (`~/.claude/projects`,
-plus the open-conversations registry in `~/.claude/sessions`). It writes nothing
+plus the open-conversations registry in `~/.claude/sessions`); the only file of its
+own it reads is its small logo, which ships in the mod's folder. It writes nothing
 outside its own settings (language, sound, pins), makes **no network calls** and
 sends no telemetry. For transcripts too big to read directly it runs local
 read-only helpers (`head`/`tail`/`ps`, or PowerShell and `tasklist` on Windows).

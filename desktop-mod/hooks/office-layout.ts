@@ -101,7 +101,7 @@ export const PIN_OFF = '📌\uFE0E'
 /**
  * THE BRAND ACCENTS (decision 28a, 23.10 — after Asaf saw 0.5.0 on the desktop and brought the logo; decision 27b before it):
  * the frames of the cards, the drawer and the settings in the Legal Mind LOGO's light teal (BRAND_ACCENT, CARD_BORDER); the
- * office's header counts and THE CREDIT LINE in its dark teal (BRAND_ACCENT_DARK). The logo is teal — sampled from its
+ * office's header counts in its dark teal (BRAND_ACCENT_DARK; the credit line is a Link, in the surface's own link colour). The logo is teal — sampled from its
  * full-size PNG (no longer shipped: the mod carries assets/lm-logo-48.png alone): dark #206060-#207070, light #30A0B0 — so
  * decision 27b's gold (#D4B97A / #C09A55) was the palette of the brand's DOCUMENTS, not of its logo: the teal replaces it
  * wherever the gold was. No background anywhere (the desktop does not tell the module whether its theme is light or dark: live
@@ -115,14 +115,15 @@ export const BRAND_ACCENT_DARK = '#1F7A82'
 export const CARD_BORDER = BRAND_ACCENT
 /**
  * THE CREDIT LINE (decision 27a, 23.10): the office's last line — after the cards, after the empty office's block, in the demo
- * too — `© Legal Mind · legalmind.co.il`, the address a link to CREDIT_URL; the same words in both languages (no "all rights
- * reserved": the repo is MIT), so no i18n key; drawn in BRAND_ACCENT_DARK at the reading edge. CREDIT is the Text's own string,
- * CREDIT_SITE the Link's text (inside that Text on the text cards, beside it on the desktop). No Hebrew in it: one Latin run in
- * either pane, never reordered. Drawn by the HOOKS alone (ui.tsx) — the text cards' last line, and on the desktop the line
+ * too — `© Legal Mind`, the WHOLE credit ONE Link to CREDIT_URL (the brand name itself clickable, the owner's wish; the address
+ * is not spelled, so the name is not said twice); the same words in both languages (no "all rights reserved": the repo is
+ * MIT), so no i18n key; at the reading edge, in the surface's own link colour (a Link has no colour prop). CREDIT is the
+ * Link's label (ui.tsx draws it through nb: no break); CREDIT_SITE the host CREDIT_URL names, kept apart from the label. No
+ * Hebrew in it: one Latin run in either pane, never reordered. Drawn by the HOOKS alone (ui.tsx) — the text cards' last line, and on the desktop the line
  * under the office Client, the logo beside it (decision 28b, below) — never by the module: the page cannot draw a Link inside
  * a Client (paint probe round 6, 23.10).
  */
-export const CREDIT = '© Legal Mind · '
+export const CREDIT = '© Legal Mind'
 export const CREDIT_SITE = 'legalmind.co.il'
 export const CREDIT_URL = 'https://legalmind.co.il'
 /**

@@ -216,7 +216,7 @@ export const DESKTOP = { clientFailed: false }
 
 /**
  * THE LOGO (decision 28b, 23.10): the small Legal Mind logo the desktop draws in its credit row (ui.tsx, at the row's
- * reading edge beside `© Legal Mind · legalmind.co.il`), the PNG's bytes as base64 — '' while there is none, and then
+ * reading edge beside the `© Legal Mind` link), the PNG's bytes as base64 — '' while there is none, and then
  * the credit is drawn without it. The plugin's own file, LOGO_ASSET under `$.plugin.root` (48×23 px, 2,346 bytes:
  * 3,128 base64 characters), read ONCE by register.tsx's session.start ($.fs.read as bytes, in a try of its own: a
  * missing or unreadable file, an answer that is not base64, or one past LOGO_MAX_CHARS leaves it '') — never per

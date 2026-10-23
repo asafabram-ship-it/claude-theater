@@ -85,11 +85,14 @@
 //            office: scanError alone — the too-long conversations are the
 //            settings popover's note, office-props.ts `oversized`)
 //   credit   THE CREDIT LINE (decision 27a), the pane's last line, a blank line
-//            above it: `© Legal Mind · ` in the logo's dark teal (decision 28a)
-//            and, inline, a Link to legalmind.co.il (office-layout.ts CREDIT) —
-//            the same words in both languages, at the reading edge. On the
-//            desktop the hooks draw it too, UNDER the office Client in the pane's
-//            own tree — never inside the Client: the page cannot draw a Link
+//            above it: `© Legal Mind`, the WHOLE credit ONE Link to
+//            legalmind.co.il (office-layout.ts CREDIT, CREDIT_URL) — the brand
+//            name itself is the link (the owner's wish, 23.10; the address is
+//            not spelled, so the name is not said twice). The Link takes the
+//            surface's own link colour (it has no colour prop), so no Text
+//            beside it. The same words in both languages, at the reading edge.
+//            On the desktop the hooks draw it too, UNDER the office Client in the
+//            pane's own tree — never inside the Client: the page cannot draw a Link
 //            there (paint probe round 6, 23.10: the module's own credit faulted
 //            every render, and the office fell back to these cards for everyone);
 //            the Client's height (officeHeight) leaves its CREDIT_ROWS out. There
@@ -158,7 +161,7 @@ import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
 // count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
-import { BRAND_ACCENT, BRAND_ACCENT_DARK, COUNT_ICON, CREDIT, CREDIT_SITE, CREDIT_URL, DOT_FG, FAIL_FG, LOGO_CELLS, MARK, cutWords, logoMarkdown, nb, rowCount } from './office-layout'
+import { BRAND_ACCENT, COUNT_ICON, CREDIT, CREDIT_URL, DOT_FG, FAIL_FG, LOGO_CELLS, MARK, cutWords, logoMarkdown, nb, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaFeminine, personaName } from './personas'
@@ -931,11 +934,11 @@ export function registerUi(on: On): void {
       // Client — the module's own credit (its Link nested in the coloured Text, or beside it) faulted every render ("a tree the
       // page cannot draw") and the office fell back to the text cards for everyone; with a Text in the Link's place it drew.
       // So the hooks draw it in the pane's own tree: a column of the Client, then the credit — a blank line (its top margin),
-      // then ONE height-1 line: the dark-teal Text of `© Legal Mind · ` (no-break, nb: the line never wraps, a narrow pane clips
-      // it at the edge; its trailing no-break space is the one gap before the address) and the Link to the site beside it. One
-      // Latin run, read left to right in either pane: the row keeps that order and its content is pushed to the reading edge
-      // (a reversed row would draw the address before the name). The Client keeps its own height (officeHeight, without
-      // CREDIT_ROWS) at the pane's top, so the engine's offset still names the Client's rows from its first; the credit's rows
+      // then ONE height-1 line: ONE Link to the site whose label is the whole credit, `© Legal Mind` (no-break, nb: the line
+      // never wraps, a narrow pane clips it at the edge) — the brand name itself clickable (the owner's wish, 23.10), the
+      // address not spelled out. A Link has no colour prop: it takes the surface's own link colour, so no coloured Text beside
+      // it. One Latin run, read left to right in either pane: the row's content is pushed to the reading edge. The Client
+      // keeps its own height (officeHeight, without CREDIT_ROWS) at the pane's top, so the engine's offset still names the Client's rows from its first; the credit's rows
       // only add to the pane's content under it (the module counts them where it measures that offset: office-client.tsx
       // THE STALE OFFSET).
       // THE LOGO (decision 28b): the small Legal Mind logo at the row's reading edge, BEFORE the words — the right of the line
@@ -943,10 +946,9 @@ export function registerUi(on: On): void {
       // and its first in English. A Markdown inline image (office-layout.ts logoMarkdown) of the bytes register.tsx read once
       // (model.ts BRAND): the desktop draws no `Image` element in the pane (paint probe rounds 7-8) but draws this (round 9), as
       // wide as its box — so a Box LOGO_CELLS wide and one row tall (the credit keeps its one row: CREDIT_ROWS), clipped, never
-      // shrunk. One cell between it and the words: the Box's margin on the words' side, not the row's columnGap — a gap would
-      // also open between the Text and the Link, whose one space is the Text's trailing no-break space. The row's items
-      // centred on the cross axis. No logo read (BRAND.logo ''): the credit alone, as before. The Markdown has no link and no
-      // `onLinkPress`: nothing in it to press
+      // shrunk. One cell between it and the words: the Box's margin on the words' side. The row's items centred on the cross
+      // axis. No logo read (BRAND.logo ''): the credit alone, as before. The Markdown has no link and no `onLinkPress`:
+      // nothing in it to press (the credit's Link is the one thing to click)
       const logo = BRAND.logo !== '' && (
         <Box key="logo" width={LOGO_CELLS} height={1} flexShrink={0} overflow="hidden" {...(rtl ? { marginLeft: 1 } : { marginRight: 1 })}>
           <Markdown text={logoMarkdown(BRAND.logo)} />
@@ -957,8 +959,7 @@ export function registerUi(on: On): void {
           <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
           <Box key="credit" flexDirection="row" justifyContent={rtl ? 'flex-end' : 'flex-start'} alignItems="center" width="100%" height={1} marginTop={1} overflow="hidden">
             {rtl ? null : logo}
-            <Text color={BRAND_ACCENT_DARK}>{nb(CREDIT)}</Text>
-            <Link href={CREDIT_URL} label={CREDIT_SITE} />
+            <Link href={CREDIT_URL} label={nb(CREDIT)} />
             {rtl ? logo : null}
           </Box>
         </Box>
@@ -1242,14 +1243,15 @@ export function registerUi(on: On): void {
     if (office.oversized > 0) footerBits.push(L.oversizedN(office.oversized))
     if (scanError !== null && scanError !== '') footerBits.push(scanError)
     const footer = footerBits.length > 0 && <Text dimColor>{clip(footerBits.join(' · '), width)}</Text>
-    // --- THE CREDIT LINE (decision 27a): the pane's last line, a blank line above it — `© Legal Mind · ` in the logo's dark teal
-    //     (BRAND_ACCENT_DARK, decision 28a) and, inline, a Link to the site (an OSC 8 span on the terminal, its URL after it in dim
-    //     where the terminal draws none; an anchor elsewhere); the same words in both languages (no i18n key), at the reading edge
-    //     (the row direction: one Latin run, read left to right in either pane). No logo here (decision 28b): a Markdown image
-    //     draws on the desktop alone, and these cards are the other surfaces' (and the desktop's fallback) ---
+    // --- THE CREDIT LINE (decision 27a): the pane's last line, a blank line above it — ONE Link to the site whose label is the
+    //     whole credit, `© Legal Mind` (an OSC 8 span on the terminal, its URL after it in dim where the terminal draws none; an
+    //     anchor elsewhere): the brand name itself is the link (the owner's wish, 23.10), in the surface's own link colour (a
+    //     Link has no colour prop, so no Text beside it); the same words in both languages (no i18n key), at the reading edge
+    //     (the row direction). No logo here (decision 28b): a Markdown image draws on the desktop alone, and these cards are the
+    //     other surfaces' (and the desktop's fallback) ---
     const credit = (
       <Box key="credit" flexDirection={row} marginTop={1}>
-        <Text color={BRAND_ACCENT_DARK}>{CREDIT}<Link href={CREDIT_URL}>{CREDIT_SITE}</Link></Text>
+        <Link href={CREDIT_URL} label={nb(CREDIT)} />
       </Box>
     )
 

@@ -354,7 +354,7 @@ export function emptyLines(p: OfficeProps): { msg: string[]; sub: string[] } {
 }
 
 /**
- * THE CREDIT LINE's rows (decision 27a): a blank line, then the credit (`© Legal Mind · legalmind.co.il`, office-layout.ts
+ * THE CREDIT LINE's rows (decision 27a): a blank line, then the credit (`© Legal Mind`, one Link to legalmind.co.il, office-layout.ts
  * CREDIT) — the pane's last line on the desktop, drawn by the HOOKS under the office Client (ui.tsx: one height-1 Box with a
  * top margin of 1, after the Client in the pane's column), never by the module: the page cannot draw a Link inside a Client
  * (paint probe round 6, 23.10 — the module's credit faulted every render). So the pane's content grows by them and the

@@ -65,8 +65,8 @@ Requires Claude Code 2.1.304 or newer.
   same pane draws as text cards, and the desktop falls back to them (retrying the
   office a couple of times first) if the office cannot be drawn.
 - **Legal Mind branding.** The card frames and the header are drawn in the teal of
-  the Legal Mind logo, and the last line of the pane reads
-  `© Legal Mind · legalmind.co.il` (a link). In the desktop app that line also
+  the Legal Mind logo, and the last line of the pane reads `© Legal Mind`, the
+  whole of it a link to legalmind.co.il. In the desktop app that line also
   shows the small Legal Mind logo; the other surfaces show the text only.
 - **Privacy.** Reads only your local Claude Code transcripts, writes nothing outside
   its own settings, and makes no network calls.

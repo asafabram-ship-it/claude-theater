@@ -26,7 +26,7 @@ import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent } from './model'
 import { CHROME_ROWS_SEARCH, WINDOW_ROWS, chromeRows, emptyRows, fixedRows, helpRows, officeHeight, overlayHeight, overscanOf, windowOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
-import { BRAND_ACCENT_DARK, CARD_BORDER, CREDIT, CREDIT_SITE, CREDIT_URL, FOCUS_MARK, geometry, nb, officeModel, rowCount } from './office-layout'
+import { CARD_BORDER, CREDIT, CREDIT_URL, FOCUS_MARK, geometry, nb, officeModel, rowCount } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaName } from './personas'
@@ -159,8 +159,8 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   expect(await ui.find({ in: OFFICE_KEY, type: 'Link' }), 'no Link inside the Client').toBeUndefined()
   const link = await ui.find({ type: 'Link' })
   expect(link?.props.href, 'the credit\'s link').toBe(CREDIT_URL)
-  expect(link?.props.label, 'the credit\'s link').toBe(CREDIT_SITE)
-  expect((await ui.find({ type: 'Text', text: nb(CREDIT) }))?.props.color).toBe(BRAND_ACCENT_DARK)   // (its words no-break)
+  expect(link?.props.label, 'the credit\'s link').toBe(nb(CREDIT))   // (the whole credit is the Link: `© Legal Mind`, no-break)
+  expect(await ui.find({ type: 'Text', text: nb(CREDIT) }), 'no credit Text beside the Link').toBeUndefined()
   expect((await kindsOf(ui)).at(-1)).toBe('round')   // the module's column ends with its last card
   // one card, its rows the two agents: the status mark, `${emoji} ${name}`, the model word, the activity whole
   const cards = await cardsOf(ui)

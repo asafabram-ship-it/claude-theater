@@ -1080,15 +1080,16 @@ test('THE ROOM MEMO (roomCache): officeModel with a cache builds a room\'s base 
   expect(cache.builds).toBe(built + 2)
 })
 
-test('THE BRAND ACCENTS (decision 28a) and THE CREDIT LINE (decision 27a): the frames in the logo\'s light teal, the header and the credit in its dark teal (the logo sampled dark #206060-#207070, light #30A0B0 — decision 27b\'s gold was the documents\' palette) — no navy, no background; the credit the same words in both languages (`© Legal Mind · ` then the address, a link to the site), nothing in it a surface refuses, no Hebrew in it', () => {
+test('THE BRAND ACCENTS (decision 28a) and THE CREDIT LINE (decision 27a): the frames in the logo\'s light teal, the header in its dark teal (the logo sampled dark #206060-#207070, light #30A0B0 — decision 27b\'s gold was the documents\' palette) — no navy, no background; the credit the same words in both languages (`© Legal Mind`, the whole of it ONE link to the site — the name once, the address not in the label), nothing in it a surface refuses, no Hebrew in it', () => {
   expect(BRAND_ACCENT).toBe('#31A3AD')
   expect(BRAND_ACCENT_DARK).toBe('#1F7A82')
   expect(CARD_BORDER).toBe(BRAND_ACCENT)
-  expect(CREDIT).toBe('© Legal Mind · ')
+  expect(CREDIT).toBe('© Legal Mind')
   expect(CREDIT_SITE).toBe('legalmind.co.il')
   expect(CREDIT_URL).toBe(`https://${CREDIT_SITE}`)
-  expect(`${CREDIT}${CREDIT_SITE}`).not.toMatch(REFUSED_RE)
+  expect(CREDIT).not.toContain(CREDIT_SITE)   // (the label does not spell the address: the name is not said twice)
+  expect(CREDIT).not.toMatch(REFUSED_RE)
   expect(nb(CREDIT)).not.toMatch(REFUSED_RE)
-  expect(hebrewRuleOk(`${CREDIT}${CREDIT_SITE}`)).toBe(true)   // (no Hebrew: one Latin run in either pane)
+  expect(hebrewRuleOk(CREDIT)).toBe(true)   // (no Hebrew: one Latin run in either pane)
   expect(textWidth(nb(CREDIT))).toBe(textWidth(CREDIT))
 })

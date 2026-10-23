@@ -6,7 +6,8 @@
 // each post into the same prefs / view / $.store change the text cards' press
 // makes, one atom per message; anything else it ignores. And the fallback: a
 // `ui.fault` of the office (register.tsx) draws the text cards and toasts
-// once; `/theater` tries the Client again.
+// once; the Client is tried again by itself (CLIENT_RETRY_MS later, CLIENT_RETRIES
+// times), and `/theater` tries it again at once.
 //
 // A post is seen only by the posting plugin's own hooks (never a test hook
 // beneath), so these tests read its effects: the store, the counted $.state
@@ -16,7 +17,7 @@ import { expect, test } from 'claude-code/testing'
 import type { JsonValue } from 'claude-code'
 
 import type { Agent } from './model'
-import { PERSONA_EMOJI, POLL_MS } from './model'
+import { CLIENT_RETRIES, CLIENT_RETRY_MS, PERSONA_EMOJI, POLL_MS } from './model'
 import { SEARCH_MAX } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
 import { OFFICE_KEY, type OfficeProps } from './office-props'
@@ -279,12 +280,13 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(await ui.find({ key: 'open:a1' })).toBeDefined() // the text cards (their help card drawn above them: the view kept)
   expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
-  // the fallback holds over the redraws (the window back in range) and the polls; no second toast
+  // the fallback holds over the redraws (the window back in range) until the automatic retry is due (CLIENT_RETRY_MS; the
+  // next test is the retries' own); no second toast
   await ui.redraw({ ...PANE.props })
-  await clock.advance(POLL_MS)
+  await clock.advance(CLIENT_RETRY_MS - 1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(captured.toasts).toHaveLength(1)
-  // /theater: the person asks again → the Client is drawn again, on the window in range
+  // /theater: the person asks again, before the retry (it drops the pending one) → the Client is drawn again, on the window in range
   await $.command.run(THEATER)
   expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
   expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
@@ -297,6 +299,84 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   expect(await ui.find({ key: 'open:a1' })).toBeDefined()
   // (reset: the flag is the plugin bundle's module memory)
   await ui.redraw({ ...PANE.props })
+  await $.command.run(THEATER)
+  expect(await ui.find({ type: 'Client' })).toBeDefined()
+  await ui.unmount()
+})
+
+/**
+ * THE CLIENT'S RETRIES (live check 8, 23.10): the Client's first draw timed out while the worker scanned, and the office
+ * stayed on the text cards for the whole conversation (no /theater to try again). The kit's clock holds the module's
+ * `$.clock.after`; `clock.advance(CLIENT_RETRY_MS)` crosses the retry's due time, as the engine's clock does.
+ */
+// (mounts, faults, redraws and clock advances through the kit: the budget is load headroom, as the fault test's)
+test('ui.fault on the office, the retries (live check 8): the Client is drawn again CLIENT_RETRY_MS after a fault, silently; CLIENT_RETRIES retries per session, then the cards stay; /theater counts them anew and drops a pending one', { timeoutMs: 30_000 }, async ($, on) => {
+  expect(CLIENT_RETRIES).toBe(2)
+  expect(CLIENT_RETRY_MS).toBe(3000)
+  const logs: string[] = []
+  on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
+  const { captured, clock } = beneath(on, () => fixture(), PREFS())
+  await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
+  // the fault's trigger, as the test above sets it: the settings open (view.helpOpen, kept over the cards and every retry), so a
+  // redraw at the stale offset puts the popover's `top` past the surface's bound (see FAULT_OFFSET)
+  await ui.press({ key: 'help' })
+  expect((await propsOf(ui)).helpOpen).toBe(true)
+  const faulted = { ...PANE.props, scroll: { offset: FAULT_OFFSET, bodyRows: 40 } }
+  const failures = () => logs.filter(l => l.startsWith('office Client failed')).length
+  /** A fault of the Client on screen: the cards (the plugin bundle's flag is module memory the test cannot read: the tree says it); then the window back in range (what the live engine's own redraw hands). */
+  const fault = async () => {
+    expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
+    await ui.redraw(faulted)
+    expect(await ui.find({ type: 'Client' })).toBeUndefined()
+    expect(await ui.find({ key: 'open:a1' })).toBeDefined()
+    await ui.redraw({ ...PANE.props })
+  }
+  /** The retry: not yet due a millisecond short of CLIENT_RETRY_MS, due at it — the Client is drawn again, a fresh instance. */
+  const retry = async () => {
+    await clock.advance(CLIENT_RETRY_MS - 1)
+    expect(await ui.find({ type: 'Client' })).toBeUndefined()
+    await clock.advance(1)
+    expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
+    expect(await ui.find({ key: 'open:a1' })).toBeUndefined()
+  }
+  // the first fault: told once (toast and transcript line), then the retry draws the Client again
+  await fault()
+  expect(captured.toasts).toHaveLength(1)
+  expect(failures()).toBe(1)
+  await retry()
+  // the retry's Client faults again: the next retry, and nothing more is said
+  await fault()
+  expect(captured.toasts).toHaveLength(1)
+  expect(failures()).toBe(1)
+  await retry()
+  // the third fault: CLIENT_RETRIES (2) retries are spent — the cards stay over the redraws, the polls and any wait
+  await fault()
+  await clock.advance(CLIENT_RETRY_MS * 3)
+  await clock.advance(POLL_MS * 3)
+  expect(await ui.find({ type: 'Client' })).toBeUndefined()
+  expect(await ui.find({ key: 'open:a1' })).toBeDefined()
+  expect(captured.toasts).toHaveLength(1)
+  expect(failures()).toBe(1)
+  // /theater still brings the Client back at once and counts the retries anew: a fault after it is told again and retried again
+  await $.command.run(THEATER)
+  expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
+  await fault()
+  expect(captured.toasts).toHaveLength(2)
+  expect(failures()).toBe(2)
+  // ... a retry still pending when the person runs /theater is dropped: it must not clear a newer fault's flag early
+  await clock.advance(CLIENT_RETRY_MS - 1000)
+  await $.command.run(THEATER)
+  expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
+  await fault()
+  expect(captured.toasts).toHaveLength(3)   // (the first fault since /theater, told)
+  await clock.advance(1000)                 // the dropped retry's due time: the newer fault's own is 2000 ms away
+  expect(await ui.find({ type: 'Client' })).toBeUndefined()
+  await clock.advance(CLIENT_RETRY_MS - 1000)
+  expect((await ui.find({ type: 'Client' }))?.key).toBe(OFFICE_KEY)
+  // (reset: the flag and the count are the plugin bundle's module memory)
   await $.command.run(THEATER)
   expect(await ui.find({ type: 'Client' })).toBeDefined()
   await ui.unmount()

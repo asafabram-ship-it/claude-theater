@@ -213,3 +213,15 @@ export const USAGE = { fiveHour: null as { pct: number; resetsAt: string } | nul
  * again); read by ui.tsx's render. Module memory: a hot reload clears it too.
  */
 export const DESKTOP = { clientFailed: false }
+
+/**
+ * THE CLIENT'S RETRIES (live check 8, 23.10): a fault of the office Client is most often the surface's first
+ * draw timing out while the plugin's worker is busy with the first transcript scan ("did not answer a render
+ * within 2000ms of a loaded frame" at the pane's auto-open on the first subagent spawn; the same module drew
+ * fine seconds later in a probe pane) — and the person could not run /theater to try again (the command was not
+ * listed in that conversation). So register.tsx's `ui.fault` hook tries the Client again by itself: once per
+ * fault, CLIENT_RETRY_MS after it ($.clock.after — the scan is done by then), up to CLIENT_RETRIES retries per
+ * session (module memory, reset by /theater); only then do the text cards stay.
+ */
+export const CLIENT_RETRIES = 2
+export const CLIENT_RETRY_MS = 3000

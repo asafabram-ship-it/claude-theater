@@ -1,0 +1,1998 @@
+// Scanner: the TypeScript port of claude_theater.py's file reading over `$.fs`.
+// Reads ~/.claude/projects/**/agent-*.jsonl, the parent session files, the
+// workflow journal.jsonl files and the ~/.claude/sessions/<pid>.json registry,
+// and produces the office payload (every open conversation, one room each).
+//
+// OWNER: builder "scanner". Contract (do not rename exports; register.tsx and
+// live.ts call them):
+//   scanAll(io, now)     -> Payload           the whole office, sorted, personas resolved
+//   demoPayload(now)     -> Payload           the synthetic office (--demo), never touches files
+//   resolveHome(io)      -> string            "~" (HOME, else USERPROFILE), "" when neither
+//
+// ENGINE RULE (claude plugin validate refuses otherwise): `$` itself is never
+// passed across an import. The scanner therefore takes a `ScanIo` adapter: a
+// handful of closures register.tsx builds IN ITS OWN FILE over $.fs / $.env
+// (`scanIo($)`). This also makes the scanner testable with an in-memory Io
+// over the fixtures, no engine needed.
+// The pure functions below port the Python functions of the same name and
+// MUST keep their semantics (tests under hooks/scanner.test.ts use the
+// fixtures in ../../fixtures/cc-2.1 and cc-future).
+//
+// Rules:
+// - No DOM, no Node: every read goes through io.read / io.list / io.stat / io.exists
+//   (= $.fs.read / list / stat / exists, same shapes, see ScanIo). Paths are
+//   handled as strings with "/" separators (Windows accepts them); `~` is
+//   whatever `io.home()` answers, trailing separators stripped.
+// - Never throw out of scanAll: a file that cannot be read is skipped and counted.
+// - Files over FS_READ_LIMIT (4 MiB): `$.fs.read` rejects them and `$.fs` has no
+//   partial read. Behaviour (documented in the plan):
+//     * an agent transcript over the limit is SKIPPED (its agent is not drawn),
+//     * a parent session file over the limit yields no names / no project cwd
+//       for its subagents (role "" / project "") and no topic for its lead
+//       (the lead is still drawn, from the file's stat alone),
+//     * a workflow journal over the limit yields "no result yet",
+//   and every such file is counted ONCE per scan in `payload.oversized`
+//   (the footer shows `oversizedN`); never a crash. OPTIONAL closures on ScanIo
+//   (`head`, `tail`; the hooks module may build them over `$.process.run`, e.g.
+//   PowerShell `Get-Content -TotalCount / -Tail`) lift the limit for a
+//   transcript (first line + tail), a journal (tail), a project cwd and a topic
+//   (head); only the Agent/Task name map of an oversized parent still needs the
+//   whole file and stays unknown (counted). Their absence is always tolerated.
+// - Throttle: directory listings are cached GLOB_TTL_SEC between scans (Python
+//   _throttled_glob); parsed agents are cached per (path, mtime, size) and only
+//   `status`/`closed`/`role` are recomputed on a cache hit (Python _AGENT_CACHE);
+//   a transcript that changed is parsed from where its last parse stopped
+//   (append-only files: appendParse keeps the covered length and the last
+//   MAX_EVENTS events on the entry; the whole file is parsed only on first
+//   sight or after a rewrite), and a session file's model is searched the same
+//   way; a file that yields nothing (corrupt first line, unflushed, unreadable) gets
+//   a NEGATIVE entry under the same key (retried after GLOB_TTL_SEC when the
+//   cause may pass), and a growing oversized file re-runs its tail helper at
+//   most every GLOB_TTL_SEC; parent files (names) are cached by mtime, the
+//   project cwd and the topic once known (first lines of an append-only file),
+//   journals by mtime; within one scan a file is read at most once (a per-scan
+//   read memo). Caches are module-level (lost on hot reload, which is fine:
+//   they are rebuilt on the next scan) and evicted like the Python ones:
+//   agent entries whose file aged out, parent/session entries no longer
+//   referenced, persona seats of agents no longer present.
+// - `phase` of a room lead: the Python payload put "" there; the mod's
+//   TheaterPhase type has no "" so a lead carries 'thinking' (the UI never
+//   draws a lead's phase: `tool` is "" for it).
+
+import type { FsEntry, FsStat } from 'claude-code'
+
+import {
+  CONTINUATION_STOP_REASONS,
+  EMPTY_PAYLOAD,
+  FS_READ_LIMIT,
+  GLOB_TTL_SEC,
+  IN_FLIGHT_MAX_SEC,
+  KNOWN_CC_VERSIONS,
+  MAX_AGE_MIN,
+  MAX_EVENTS,
+  PERSONA_EMOJI,
+  RESULT_CHAR_LIMIT,
+  RUNNING_STALE_SEC,
+  SHORT_MAX,
+  STATUS_ORDER,
+  TAIL_MAX_BYTES,
+  capPoints,
+  clipResult,
+  personaIndex,
+  shortTask,
+  type Agent,
+  type Payload,
+  type TheaterPhase,
+  type TheaterStatus,
+} from './model'
+
+/**
+ * The file-system surface the scanner needs, as closures over `$` built by the
+ * hooks module (`scanIo($)` in register.tsx). Same contracts as `$.fs.*`:
+ * `read` rejects a missing file and one over FS_READ_LIMIT; `list` rejects a
+ * missing directory; `stat` rejects ENOENT; `exists` never rejects.
+ */
+export type ScanIo = {
+  read: (path: string) => Promise<string>
+  list: (path: string) => Promise<FsEntry[]>
+  stat: (path: string) => Promise<FsStat>
+  exists: (path: string) => Promise<boolean>
+  /** $HOME, else %USERPROFILE% (register.tsx reads both with literal names, as `$.env.get` requires). */
+  home: () => Promise<string | undefined>
+  /**
+   * OPTIONAL: the first `lines` lines of a file of ANY size (text, lines joined
+   * by "\n"). Used only for files over FS_READ_LIMIT; absent → such a file
+   * degrades as documented in the header.
+   */
+  head?: (path: string, lines: number) => Promise<string>
+  /** OPTIONAL: the last `bytes` bytes of a file of ANY size, as text. Same role as `head`. */
+  tail?: (path: string, bytes: number) => Promise<string>
+  /**
+   * OPTIONAL: whether the process owning a ~/.claude/sessions record is alive
+   * (Python _pid_alive). Absent → every registered session is trusted as open
+   * (the engine removes the record on exit; only a crash leaves one behind).
+   */
+  pidAlive?: (pid: number) => Promise<boolean>
+}
+
+// ---------------------------------------------------------------------------
+// Path helpers (strings, "/" separators; no Node `path`)
+// ---------------------------------------------------------------------------
+
+/** Backslashes → "/", trailing separators stripped (a bare drive root "C:/" keeps its slash). */
+export function normPath(p: string): string {
+  const s = (p ?? '').replace(/\\/g, '/')
+  const stripped = s.replace(/\/+$/, '')
+  return stripped === '' && s.startsWith('/') ? '/' : /^[A-Za-z]:$/.test(stripped) ? stripped + '/' : stripped
+}
+
+/** The directory part of a "/"-separated path ("" when none). */
+export function dirname(p: string): string {
+  const s = normPath(p)
+  const idx = s.lastIndexOf('/')
+  if (idx < 0) return ''
+  if (idx === 0) return '/'
+  const head = s.slice(0, idx)
+  return /^[A-Za-z]:$/.test(head) ? head + '/' : head
+}
+
+/** The last path component. */
+export function basename(p: string): string {
+  const s = normPath(p)
+  const idx = s.lastIndexOf('/')
+  return idx < 0 ? s : s.slice(idx + 1)
+}
+
+/** Joins with "/" (the base's trailing separator tolerated). */
+export function joinPath(base: string, ...parts: string[]): string {
+  let out = normPath(base)
+  for (const part of parts) {
+    if (!part) continue
+    out = out.endsWith('/') ? out + part : out === '' ? part : `${out}/${part}`
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Reading helpers: the whole file when it fits, the optional closures otherwise
+// ---------------------------------------------------------------------------
+
+/** Why a file's text is unavailable. */
+type Unreadable = { text: null; oversized: boolean }
+/** `whole`: the entire file text, when the read fetched it anyway (readHead on a file that fits). */
+type ReadOutcome = { text: string; oversized: false; whole?: string } | Unreadable
+
+/**
+ * Python read_tail_lines on an in-memory text: when longer than `maxBytes`
+ * keep the last `maxBytes` chars and drop the (possibly partial) first line.
+ * Chars approximate bytes here; the window is a tuning constant, not a contract.
+ */
+export function tailLines(text: string, maxBytes = TAIL_MAX_BYTES): string[] {
+  let data = text ?? ''
+  if (data.length > maxBytes) {
+    data = data.slice(data.length - maxBytes)
+    const nl = data.indexOf('\n')
+    if (nl !== -1) data = data.slice(nl + 1)
+  }
+  return data.split('\n').filter(ln => ln.trim() !== '')
+}
+
+/** The first `lines` lines of a file (whole read when it fits, else `io.head`). */
+async function readHead(io: ScanIo, path: string, size: number, lines: number): Promise<ReadOutcome> {
+  if (size <= FS_READ_LIMIT) {
+    try {
+      const text = await io.read(path)
+      return { text: text.split('\n').slice(0, lines).join('\n'), oversized: false, whole: text }
+    } catch {
+      return { text: null, oversized: false }
+    }
+  }
+  if (io.head) {
+    try {
+      return { text: await io.head(path, lines), oversized: false }
+    } catch {
+      /* fall through: degrade */
+    }
+  }
+  return { text: null, oversized: true }
+}
+
+/** The whole file when it fits, else its last TAIL_MAX_BYTES via `io.tail`. */
+async function readTail(io: ScanIo, path: string, size: number): Promise<ReadOutcome> {
+  if (size <= FS_READ_LIMIT) {
+    try {
+      return { text: await io.read(path), oversized: false }
+    } catch {
+      return { text: null, oversized: false }
+    }
+  }
+  if (io.tail) {
+    try {
+      return { text: await io.tail(path, TAIL_MAX_BYTES), oversized: false }
+    } catch {
+      /* fall through */
+    }
+  }
+  return { text: null, oversized: true }
+}
+
+/** The whole file (Python: iterate every line). Over the limit: unavailable. */
+async function readWhole(io: ScanIo, path: string, size: number): Promise<ReadOutcome> {
+  if (size > FS_READ_LIMIT) return { text: null, oversized: true }
+  try {
+    return { text: await io.read(path), oversized: false }
+  } catch {
+    return { text: null, oversized: false }
+  }
+}
+
+/** `io.stat` that answers null instead of rejecting. */
+async function statOrNull(io: ScanIo, path: string): Promise<FsStat | null> {
+  try {
+    return await io.stat(path)
+  } catch {
+    return null
+  }
+}
+
+function parseJsonObject(line: string): Record<string, unknown> | null {
+  try {
+    const rec: unknown = JSON.parse(line)
+    return rec !== null && typeof rec === 'object' && !Array.isArray(rec) ? (rec as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+}
+
+// ---------------------------------------------------------------------------
+// Transcript events (Python class Event / parse_agent_event / parse_events)
+// ---------------------------------------------------------------------------
+
+/** One parsed transcript line (agent-*.jsonl or a session file). */
+export type TranscriptEvent = {
+  /** The record's `type` ("user", "assistant", "system", ...); "unknown" when absent. */
+  kind: string
+  /** Concatenated text blocks of the message ("" when none). */
+  text: string
+  /** Names of the tool_use blocks in an assistant message. */
+  toolUses: string[]
+  /** True when a user record carries a tool_result block. */
+  hasToolResult: boolean
+  /** `message.stop_reason`, null when absent. */
+  stopReason: string | null
+  /** Record timestamp in ms, null when unreadable. */
+  tsMs: number | null
+  /** The record's `version` field ("" when absent or not a string). */
+  version: string
+  /** `message.model` ("claude-opus-5-5", ...; "" when absent or not a string). Set on assistant records. */
+  model: string
+  /**
+   * The text handed back by a terminal hand-back tool_use in this message
+   * (SubagentHandback's `input.message`, StructuredOutput's structured input
+   * as prose/JSON); null when the message calls no such tool.
+   */
+  handback: string | null
+  /** The raw parsed record (for `cwd`, `sessionId`, ...). */
+  raw: Record<string, unknown>
+}
+
+/**
+ * Tools whose call IS the subagent's final act: the engine ends the loop on
+ * them and relays the input to the parent (a background Agent-tool subagent
+ * reports through SubagentHandback; a workflow subagent through
+ * StructuredOutput). Seen in 2.1.288 transcripts: the call's record carries
+ * `stop_reason: null`, then a user tool_result ("Report delivered") closes
+ * the file — nothing else is ever appended unless the parent resumes it.
+ */
+export const HANDBACK_TOOLS: readonly string[] = ['SubagentHandback', 'StructuredOutput']
+
+/**
+ * The parent's `<task-notification>` for a finished subagent may land in the
+ * parent file a few hundred ms BEFORE the subagent's own tool_result is
+ * flushed (observed: 230 ms). A notification this close before the agent
+ * file's mtime still counts as "after it"; a resumed agent (SendMessage)
+ * moves its mtime well past this and is live again.
+ */
+export const NOTICE_SLACK_MS = 10_000
+
+/** Python iso_to_ms: an ISO-8601 timestamp → ms since epoch, null when unreadable. */
+export function isoToMs(s: unknown): number | null {
+  if (typeof s !== 'string' || !s) return null
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? Math.trunc(t) : null
+}
+
+/**
+ * Python parse_agent_event: one JSON line → TranscriptEvent, or null when the
+ * line is not a JSON object with a `type` (counted as skipped by the caller).
+ * Never throws.
+ */
+export function parseAgentEvent(line: string): TranscriptEvent | null {
+  if (!line || line.trim() === '') return null
+  const rec = parseJsonObject(line)
+  if (rec === null) return null
+
+  const rtype = rec.type
+  const msg = asRecord(rec.message)
+  const content = msg.content
+
+  const textParts: string[] = []
+  const toolUses: string[] = []
+  let hasToolResult = false
+  let handback: string | null = null
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block === null || typeof block !== 'object') continue
+      const b = block as Record<string, unknown>
+      const bt = b.type
+      if (bt === 'text') {
+        const t = b.text
+        if (typeof t === 'string' && t) textParts.push(t)
+      } else if (bt === 'tool_use') {
+        const name = b.name
+        toolUses.push(typeof name === 'string' ? name : '')
+        if (typeof name === 'string' && HANDBACK_TOOLS.includes(name)) {
+          const inp = asRecord(b.input)
+          handback = typeof inp.message === 'string' ? inp.message : workflowResultText(b.input)
+        }
+      } else if (bt === 'tool_result') {
+        hasToolResult = true
+      }
+    }
+  } else if (typeof content === 'string') {
+    if (content) textParts.push(content)
+  }
+
+  const ver = rec.version
+  const stop = msg.stop_reason
+  const model = msg.model
+  return {
+    kind: typeof rtype === 'string' && rtype ? rtype : 'unknown',
+    text: textParts.join(' ').trim(),
+    toolUses: toolUses.filter(Boolean),
+    hasToolResult,
+    stopReason: stop === undefined || stop === null ? null : typeof stop === 'string' ? stop : String(stop),
+    tsMs: isoToMs(rec.timestamp),
+    // Only trust a string version stamp (a future build emitting a number/object
+    // must not later crash majorMinor()/sorting).
+    version: typeof ver === 'string' ? ver : '',
+    model: typeof model === 'string' ? model.trim() : '',
+    handback,
+    raw: rec,
+  }
+}
+
+/**
+ * The model the agent runs on: `message.model` of the LATEST assistant record
+ * that carries one ("" when none). The latest wins so a mid-run model switch
+ * (or a fallback) shows what runs now.
+ */
+export function lastModel(events: TranscriptEvent[]): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (ev && ev.kind === 'assistant' && ev.model) return ev.model
+  }
+  return ''
+}
+
+/**
+ * `lastModel` over a raw transcript text, scanning from the end so a long
+ * conversation parses only its last few lines; lines without `"model"` are
+ * skipped before the JSON parse. Used for a room lead's model.
+ */
+export function parseLastModel(text: string): string {
+  const lines = (text ?? '').split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ln = lines[i] ?? ''
+    if (!ln.includes('"model"') || !ln.includes('"assistant"')) continue
+    const ev = parseAgentEvent(ln)
+    if (ev && ev.kind === 'assistant' && ev.model) return ev.model
+  }
+  return ''
+}
+
+/** The two title records a conversation file carries (2026-10-17, real transcripts: no other kind). */
+export type TitleRecords = { custom: string; ai: string }
+
+/**
+ * The conversation's title records in a raw transcript text, scanning from the end: the
+ * LAST `{"type":"custom-title","customTitle":…}` (the person's rename — the engine
+ * rewrites it, and the ai-title, on later turns) and the LAST
+ * `{"type":"ai-title","aiTitle":…}`; "" for a kind the text does not hold. Lines without
+ * the key are skipped before the JSON parse; a record whose title is not a string is none.
+ */
+export function parseLastTitle(text: string): TitleRecords {
+  const out: TitleRecords = { custom: '', ai: '' }
+  const lines = (text ?? '').split('\n')
+  for (let i = lines.length - 1; i >= 0 && !out.custom; i--) {
+    const ln = lines[i] ?? ''
+    const isCustom = ln.includes('"customTitle"')
+    if (!isCustom && (out.ai || !ln.includes('"aiTitle"'))) continue
+    const rec = parseJsonObject(ln)
+    if (rec === null) continue
+    if (isCustom && rec.type === 'custom-title' && typeof rec.customTitle === 'string') out.custom = rec.customTitle.trim()
+    else if (!out.ai && rec.type === 'ai-title' && typeof rec.aiTitle === 'string') out.ai = rec.aiTitle.trim()
+  }
+  return out
+}
+
+/**
+ * Python parse_events: every line, in order, dropping unparsable ones; returns
+ * the events, the skipped count (non-blank lines that did not parse) and the
+ * distinct version stamps seen.
+ */
+export function parseEvents(lines: string[]): { events: TranscriptEvent[]; skipped: number; versions: string[] } {
+  const events: TranscriptEvent[] = []
+  const versions = new Set<string>()
+  let skipped = 0
+  for (const ln of lines) {
+    const ev = parseAgentEvent(ln)
+    if (ev === null) {
+      if (ln && ln.trim() !== '') skipped += 1
+      continue
+    }
+    events.push(ev)
+    if (ev.version) versions.add(ev.version)
+  }
+  return { events, skipped, versions: [...versions] }
+}
+
+/**
+ * Incremental parse: transcripts are append-only, so a file that grew is
+ * parsed from `prev.textLen` on, never from the start again. A trailing line
+ * without its newline waits for the next scan (`textLen` stays before it). A
+ * file shorter than before — or whose kept length no longer ends on a newline
+ * — was rewritten: parse it whole (`reset`). The kept events are the last
+ * MAX_EVENTS (what status/phase/done read); `versions` accumulate, `skipped`
+ * counts only the lines this call met. Limits: a file that is one
+ * unterminated line yields no events until its newline arrives, and a
+ * rewrite is caught only when the file shrank or the byte at `textLen - 1`
+ * is no longer a newline (a rewrite that keeps both goes unnoticed).
+ */
+export function appendParse(
+  prev: { textLen: number; events: TranscriptEvent[]; versions: string[] },
+  whole: string,
+): { textLen: number; events: TranscriptEvent[]; versions: string[]; skipped: number; reset: boolean } {
+  const reset = whole.length < prev.textLen || (prev.textLen > 0 && whole[prev.textLen - 1] !== '\n')
+  const from = reset ? 0 : prev.textLen
+  const cut = whole.lastIndexOf('\n')
+  if (cut < from) return { textLen: from, events: reset ? [] : prev.events, versions: reset ? [] : prev.versions, skipped: 0, reset }
+  const fresh = whole.slice(from, cut + 1)
+  const parsed = parseEvents(fresh.split('\n').filter(ln => ln.trim() !== ''))
+  const events = (reset ? parsed.events : [...prev.events, ...parsed.events]).slice(-MAX_EVENTS)
+  const versions = [...new Set([...(reset ? [] : prev.versions), ...parsed.versions])]
+  return { textLen: cut + 1, events, versions, skipped: parsed.skipped, reset }
+}
+
+/** Python last_tool_use_name: name of the last tool_use in the last assistant event that has one, else "". */
+export function lastToolUseName(events: TranscriptEvent[]): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (ev && ev.kind === 'assistant' && ev.toolUses.length > 0) return ev.toolUses[ev.toolUses.length - 1] ?? ''
+  }
+  return ''
+}
+
+// ---------------------------------------------------------------------------
+// State decisions (Python detect_done / compute_in_flight / compute_phase /
+// compute_status). These four are the semantics the whole product rests on.
+// ---------------------------------------------------------------------------
+
+export type DoneInfo = {
+  isDone: boolean
+  /**
+   * "Done once idle": the last turn LOOKS final (a text answer, no tool) but
+   * its record carries no stop_reason — the norm in 2.1.288 transcripts, where
+   * every content block is its own record and the stop_reason is written only
+   * sometimes. The text may still be followed by a tool_use within seconds, so
+   * the agent counts as done only once silent for RUNNING_STALE_SEC
+   * (computeStatus), where it would otherwise read "idle" for ever.
+   */
+  idle: boolean
+  endMs: number | null
+  result: string | null
+  truncated: boolean
+}
+
+const NOT_DONE: DoneInfo = { isDone: false, idle: false, endMs: null, result: null, truncated: false }
+
+/** The message's last tool_use is a terminal hand-back (SubagentHandback / StructuredOutput). */
+function isHandbackTurn(ev: TranscriptEvent): boolean {
+  const lastTool = ev.toolUses[ev.toolUses.length - 1]
+  return lastTool !== undefined && HANDBACK_TOOLS.includes(lastTool)
+}
+
+/**
+ * Python detect_done, extended for the 2.1.288 transcript shapes seen in real
+ * journals:
+ *   - the last user/assistant event is an assistant text (no tool_use) with a
+ *     stop_reason not in CONTINUATION_STOP_REASONS → done (Python's rule);
+ *     with NO stop_reason → `idle` (done once silent, see DoneInfo);
+ *   - the last assistant turn calls a HANDBACK tool (optionally followed by
+ *     its own user tool_result) → done at once, the hand-back's input text as
+ *     the result; any other pending tool_use → not done;
+ *   - a user record with text after that (the parent resumed the agent) → not
+ *     done again (never-pin semantics: new activity reopens the agent).
+ * Result text collapsed and clipped with clipResult().
+ */
+export function detectDone(events: TranscriptEvent[]): DoneInfo {
+  let i = events.length - 1
+  for (; i >= 0; i--) {
+    const ev = events[i]
+    if (ev && (ev.kind === 'assistant' || ev.kind === 'user')) break
+  }
+  if (i < 0) return { ...NOT_DONE }
+  let last = events[i]!
+  let resultTs: number | null = null
+  if (last.kind === 'user') {
+    // only the hand-back's own tool_result may follow the final turn; a prompt resumes the agent
+    if (!last.hasToolResult || last.text) return { ...NOT_DONE }
+    resultTs = last.tsMs
+    let j = i - 1
+    for (; j >= 0; j--) {
+      const ev = events[j]
+      if (ev && (ev.kind === 'assistant' || ev.kind === 'user')) break
+    }
+    const prev = j >= 0 ? events[j]! : null
+    if (prev === null || prev.kind !== 'assistant' || !isHandbackTurn(prev)) return { ...NOT_DONE }
+    last = prev
+  }
+  if (last.toolUses.length > 0) {
+    if (!isHandbackTurn(last)) return { ...NOT_DONE }
+    const { result, truncated } = clipResult(last.handback ?? last.text)
+    return { isDone: true, idle: false, endMs: resultTs ?? last.tsMs, result, truncated }
+  }
+  if (last.stopReason === null) {
+    // a thinking-only or empty record mid-generation is not an answer
+    if (!last.text) return { ...NOT_DONE }
+    const { result, truncated } = clipResult(last.text)
+    return { isDone: false, idle: true, endMs: last.tsMs, result, truncated }
+  }
+  if (CONTINUATION_STOP_REASONS.includes(last.stopReason)) return { ...NOT_DONE }
+  const { result, truncated } = clipResult(last.text)
+  return { isDone: true, idle: false, endMs: last.tsMs, result, truncated }
+}
+
+/** Python compute_in_flight: last assistant dispatched a tool, or last record is a user tool_result. */
+export function computeInFlight(events: TranscriptEvent[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (!ev) continue
+    if (ev.kind === 'assistant') return ev.toolUses.length > 0
+    if (ev.kind === 'user') return ev.hasToolResult
+  }
+  return false
+}
+
+/** Python compute_phase: "tool" when the last assistant turn has a pending tool_use, else "thinking". */
+export function computePhase(events: TranscriptEvent[]): TheaterPhase {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (!ev) continue
+    if (ev.kind === 'assistant') return ev.toolUses.length > 0 ? 'tool' : 'thinking'
+    if (ev.kind === 'user') return 'thinking' // a tool_result just landed → the model reasons
+  }
+  return 'thinking'
+}
+
+/**
+ * Python compute_status — the single ordered decision, shared by agents and
+ * session leads. `nowSec`/`mtimeSec` in SECONDS (as Python), to keep the
+ * thresholds readable:
+ *   1. done wins
+ *   1b. a final-looking answer without a stop_reason (`idleDone`, DoneInfo.idle)
+ *       counts as done once idle — where Python would have shown "stale" for ever
+ *   2. closed + idle (raw mtime > RUNNING_STALE_SEC) collapses to done
+ *   3. in_flight and not closed and silent <= IN_FLIGHT_MAX_SEC → running
+ *   4. else stale when idle, else running
+ */
+export function computeStatus(
+  nowSec: number,
+  mtimeSec: number,
+  isDone: boolean,
+  inFlight: boolean,
+  closed: boolean,
+  idleDone = false,
+): TheaterStatus {
+  const silent = nowSec - mtimeSec
+  const idle = silent > RUNNING_STALE_SEC
+  if (isDone) return 'done'
+  if (idleDone && idle) return 'done'
+  if (closed && idle) return 'done'
+  if (inFlight && !closed && silent <= IN_FLIGHT_MAX_SEC) return 'running'
+  return idle ? 'stale' : 'running'
+}
+
+// ---------------------------------------------------------------------------
+// Versions (Python major_minor / unknown_versions) — for the UI's drift banner
+// ---------------------------------------------------------------------------
+
+/** Python major_minor: "2.1.288" → "2.1"; a stamp without a dot is returned as is. */
+export function majorMinor(version: string): string {
+  const parts = (version ?? '').split('.')
+  return parts.length >= 2 ? parts.slice(0, 2).join('.') : version ?? ''
+}
+
+/** Python unknown_versions: the sorted major.minor versions seen that are not in KNOWN_CC_VERSIONS. */
+export function unknownVersions(versions: readonly string[]): string[] {
+  const out = new Set<string>()
+  for (const v of versions) {
+    const mm = majorMinor(v)
+    if (mm && !KNOWN_CC_VERSIONS.includes(mm)) out.add(mm)
+  }
+  return [...out].sort()
+}
+
+// ---------------------------------------------------------------------------
+// Workflow agents (journal.jsonl beside the agent file)
+// ---------------------------------------------------------------------------
+
+/**
+ * Python is_workflow_agent, verbatim: a workflow subagent lives under
+ * `subagents/workflows/wf_<id>/` — a path test only, no extra stat, either slash.
+ */
+export function isWorkflowAgent(agentPath: string): boolean {
+  return normPath(agentPath).includes('/workflows/wf_')
+}
+
+/** Python _workflow_result_text: a prose field of the structured result, else its compact JSON. */
+export function workflowResultText(resultObj: unknown): string {
+  if (typeof resultObj === 'string') return resultObj
+  if (resultObj !== null && typeof resultObj === 'object' && !Array.isArray(resultObj)) {
+    const rec = resultObj as Record<string, unknown>
+    for (const k of ['notes', 'summary', 'text', 'message', 'result', 'classification_reason']) {
+      const v = rec[k]
+      if (typeof v === 'string' && v.trim() !== '') return v
+    }
+    try {
+      return JSON.stringify(resultObj)
+    } catch {
+      return String(resultObj)
+    }
+  }
+  return resultObj === null || resultObj === undefined ? '' : String(resultObj)
+}
+
+type JournalCacheEntry = { mtimeMs: number; size: number; oversized: boolean; results: Map<string, DoneInfo> }
+/** journal path → parsed `result` records by agentId (Python re-reads every scan; the mod caches by mtime). */
+const JOURNAL_CACHE = new Map<string, JournalCacheEntry>()
+
+/** Parses the journal's `result` records (last one per agent wins: re-runs supersede). */
+function parseJournalResults(lines: string[]): Map<string, DoneInfo> {
+  const out = new Map<string, DoneInfo>()
+  for (const ln of lines) {
+    if (!ln.includes('"result"')) continue // cheap pre-filter before the JSON parse
+    const rec = parseJsonObject(ln)
+    if (rec === null || rec.type !== 'result') continue
+    const agentId = rec.agentId
+    if (typeof agentId !== 'string' || !agentId) continue
+    const { result, truncated } = clipResult(workflowResultText(rec.result))
+    out.set(agentId, { isDone: true, idle: false, endMs: null, result: result || null, truncated })
+  }
+  return out
+}
+
+/**
+ * Python workflow_journal_result: the journal's `result` record for this
+ * agent id → DoneInfo (endMs null: the journal carries no timestamp; the
+ * caller substitutes the file mtime). Not found → isDone false.
+ */
+export async function workflowJournalResult(io: ScanIo, agentPath: string, agentId: string): Promise<DoneInfo> {
+  const entry = await journalFor(io, joinPath(dirname(agentPath), 'journal.jsonl'))
+  const found = entry?.results.get(agentId)
+  return found ? { ...found } : { ...NOT_DONE }
+}
+
+async function journalFor(io: ScanIo, journal: string): Promise<JournalCacheEntry | null> {
+  const st = await statOrNull(io, journal)
+  if (st === null || st.kind !== 'file') return null
+  const cached = JOURNAL_CACHE.get(journal)
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached
+  const read = await readTail(io, journal, st.size)
+  const entry: JournalCacheEntry = {
+    mtimeMs: st.mtimeMs,
+    size: st.size,
+    oversized: read.oversized,
+    results: read.text === null ? new Map() : parseJournalResults(tailLines(read.text)),
+  }
+  JOURNAL_CACHE.set(journal, entry)
+  return entry
+}
+
+// ---------------------------------------------------------------------------
+// Parent session file: names, project cwd, topic
+// ---------------------------------------------------------------------------
+
+export type NameInfo = { description: string; subagent_type: string }
+
+/** Python _norm_prompt: collapse whitespace, trim; the join key between an agent's task and its Agent/Task call. */
+export function normPrompt(s: string): string {
+  return (s ?? '').split(/\s+/).filter(Boolean).join(' ')
+}
+
+/**
+ * Python parent_session_file: walk up from the agent file's directory to the
+ * directory named `<session_id>`; the parent transcript is `<that>.jsonl`
+ * beside it. null when sessionless or the session directory is not an ancestor.
+ */
+export function parentSessionFile(agentPath: string, sessionId: string): string | null {
+  if (!sessionId) return null
+  let p = dirname(agentPath)
+  while (p && basename(p) !== sessionId) {
+    const nxt = dirname(p)
+    if (nxt === p || nxt === '') return null
+    p = nxt
+  }
+  return p ? p + '.jsonl' : null
+}
+
+type NameCacheEntry = { mtimeMs: number; oversized: boolean; map: Map<string, NameInfo>; notices: Map<string, number | null> }
+type ProjectCacheEntry = { mtimeMs: number; oversized: boolean; cwd: string }
+/** `full`: the head read returned the whole 81-line window — a later append cannot change what the window holds. */
+type SessionCacheEntry = { mtimeMs: number; oversized: boolean; full: boolean; topic: string; cwd: string }
+/** One session file's tail facts: the lead's model and the conversation's title records, with where the search stopped. */
+type ModelCacheEntry = {
+  mtimeMs: number
+  /** The lead's model: `message.model` of the latest assistant record, "" when none. */
+  model: string
+  /** The conversation's own title: the latest `custom-title` record's text (the person's rename), "" when none. */
+  custom: string
+  /** The latest `ai-title` record's text (the engine's own naming of the chat), "" when none. */
+  ai: string
+  /** When the tail was last read for it (ms; 0 = noted from a read made anyway). */
+  at: number
+  /** How much of the WHOLE file the model search has covered (chars, up to a newline); 0 when it saw only a tail. */
+  textLen: number
+}
+
+const NAME_CACHE = new Map<string, NameCacheEntry>() // parent file → Agent/Task prompt → {description, subagent_type}
+const PROJECT_CACHE = new Map<string, ProjectCacheEntry>() // parent file → the conversation's real working dir
+const SESSION_CACHE = new Map<string, SessionCacheEntry>() // session file → (topic, cwd)
+/**
+ * session file → the lead's model (latest assistant record) AND the
+ * conversation's title records (the latest custom-title and ai-title — the
+ * room's title, sessionTitle). Read by sessionTailFor (the file's tail,
+ * mtime-cached, throttled) and also filled opportunistically whenever a scan
+ * reads the whole session file anyway (nameMapFor for a parent with
+ * subagents, sessionSummary's head read on a file that fits), so the
+ * dedicated tail read is skipped while that mtime is current. Evicted with
+ * the session (scanSessions).
+ */
+const SESSION_MODEL_CACHE = new Map<string, ModelCacheEntry>()
+
+/** What a read of the session file's text found: the model and the titles its lines name, and where the whole-file search stops. */
+type TailFound = { model: string; textLen: number; reset: boolean } & TitleRecords
+
+/**
+ * `parseLastModel` and `parseLastTitle` over only what a whole-file text gained since the
+ * last look (`prev.textLen`; the file is append-only): the model and the titles the new
+ * lines name, "" when none (the caller keeps the cached ones then). A rewritten file
+ * (shorter, or its kept length no longer on a newline) is searched whole — `reset`, and
+ * the caller drops what it kept; a trailing half-line waits for its newline.
+ */
+function appendLastTail(prev: ModelCacheEntry | undefined, whole: string): TailFound {
+  const known = prev?.textLen ?? 0
+  const reset = whole.length < known || (known > 0 && whole[known - 1] !== '\n')
+  const from = reset ? 0 : known
+  const cut = whole.lastIndexOf('\n')
+  if (cut < from) return { model: '', custom: '', ai: '', textLen: from, reset }
+  const text = whole.slice(from, cut + 1)
+  return { model: parseLastModel(text), ...parseLastTitle(text), textLen: cut + 1, reset }
+}
+
+/** The cache entry after a read: what the new lines name wins, else what was kept (nothing kept across a rewrite). */
+function tailEntry(cached: ModelCacheEntry | undefined, found: TailFound, mtimeMs: number, at: number): ModelCacheEntry {
+  const kept = found.reset ? undefined : cached
+  return {
+    mtimeMs, at, textLen: found.textLen,
+    model: found.model || kept?.model || '',
+    custom: found.custom || kept?.custom || '',
+    ai: found.ai || kept?.ai || '',
+  }
+}
+
+/** Records the lead's model and titles from a whole-file text a scan fetched anyway (by mtime; what the new lines do not name leaves the last known). */
+function noteSessionModel(sessionFile: string, mtimeMs: number, whole: string | undefined): void {
+  if (whole === undefined) return
+  const cached = SESSION_MODEL_CACHE.get(sessionFile)
+  if (cached && cached.mtimeMs === mtimeMs) return
+  SESSION_MODEL_CACHE.set(sessionFile, tailEntry(cached, appendLastTail(cached, whole), mtimeMs, 0))
+}
+
+/** The conversation's title for its room: the person's rename, else the engine's naming, else "" (the caller falls back to the first typed prompt). */
+export function sessionTitle(entry: TitleRecords | undefined): string {
+  return entry?.custom || entry?.ai || ''
+}
+
+/** A conversation's title for the room head: whitespace collapsed, whole up to SHORT_MAX code points (model.ts capPoints: an emoji at the cut stays whole; a typed prompt goes through shortTask's first-sentence cut instead). */
+export function shortTitle(title: string): string {
+  return capPoints(normPrompt(title), SHORT_MAX)
+}
+
+/**
+ * The room lead's model and title, read RELIABLY (not only when some other read of the
+ * session file happened to fetch its text): the latest assistant `message.model` and the
+ * latest title records in the file's TAIL — readTail: the whole file when it fits
+ * $.fs.read, else its last TAIL_MAX_BYTES through the optional `io.tail`
+ * closure (an oversized conversation degrades to "" without it, as the other
+ * oversized reads do). Cached by mtime; a conversation that keeps growing is
+ * re-read at most every GLOB_TTL_SEC (as an oversized transcript's tail is),
+ * so the 5 s poll never re-reads a chatty lead every tick, and a whole file
+ * is searched only from where the last look stopped (appendLastTail); a
+ * text that names no model or title keeps the last known one. A read made anyway
+ * (noteSessionModel: the name map, the summary's head) is reused when its
+ * mtime is current.
+ */
+export async function sessionTailFor(io: ScanIo, sessionFile: string, st: FsStat, now: number): Promise<{ model: string; title: string }> {
+  const cached = SESSION_MODEL_CACHE.get(sessionFile)
+  if (cached && (cached.mtimeMs === st.mtimeMs || now - cached.at < GLOB_TTL_SEC * 1000)) return { model: cached.model, title: sessionTitle(cached) }
+  const read = await readTail(io, sessionFile, st.size)
+  // the whole file when it fits (searched from the last look on); a tail text has no offset to resume from
+  const found: TailFound =
+    read.text === null ? { model: '', custom: '', ai: '', textLen: cached?.textLen ?? 0, reset: false }
+    : st.size <= FS_READ_LIMIT ? appendLastTail(cached, read.text)
+    : { model: parseLastModel(read.text), ...parseLastTitle(read.text), textLen: 0, reset: false }
+  const entry = tailEntry(cached, found, st.mtimeMs, now)
+  SESSION_MODEL_CACHE.set(sessionFile, entry)
+  return { model: entry.model, title: sessionTitle(entry) }
+}
+
+/** Python name_map_for's parse: every Agent/Task tool_use → first spawn of a prompt wins. */
+export function parseNameMap(text: string): Map<string, NameInfo> {
+  const m = new Map<string, NameInfo>()
+  for (const ln of text.split('\n')) {
+    if (!ln.includes('"type":"tool_use"') || !ln.includes('"description"')) continue
+    const rec = parseJsonObject(ln)
+    if (rec === null || rec.type !== 'assistant') continue
+    const content = asRecord(rec.message).content
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      const b = asRecord(block)
+      if (b.type !== 'tool_use' || (b.name !== 'Task' && b.name !== 'Agent')) continue
+      const inp = asRecord(b.input)
+      const key = normPrompt(typeof inp.prompt === 'string' ? inp.prompt : '')
+      // First spawn wins: re-running the same prompt later must not overwrite
+      // the earlier agent's role with a new one.
+      if (key && !m.has(key)) {
+        m.set(key, {
+          description: typeof inp.description === 'string' ? inp.description : '',
+          subagent_type: typeof inp.subagent_type === 'string' ? inp.subagent_type : '',
+        })
+      }
+    }
+  }
+  return m
+}
+
+/** Task statuses a `<task-notification>` reports when the subagent's loop is over. */
+const NOTICE_TERMINAL: readonly string[] = ['completed', 'failed', 'killed']
+
+/**
+ * The parent's record of its subagents' completion: when a background
+ * subagent stops, the engine enqueues a `<task-notification>` into the parent
+ * conversation (a `queue-operation` record and a `queued_command` attachment,
+ * both carrying `<task-id>agentId</task-id>` and `<status>completed</status>`).
+ * Returns agentId → the LATEST terminal notification's timestamp (ms; null
+ * when the record has none). The same task-id notifies again after a resume.
+ */
+export function parseTaskNotifications(text: string): Map<string, number | null> {
+  const out = new Map<string, number | null>()
+  for (const ln of text.split('\n')) {
+    if (!ln.includes('<task-notification>') || !ln.includes('<task-id>')) continue
+    const id = /<task-id>([^<\s]+)<\/task-id>/.exec(ln)?.[1]
+    const status = /<status>([^<]+)<\/status>/.exec(ln)?.[1]?.trim()
+    if (!id || !status || !NOTICE_TERMINAL.includes(status)) continue
+    const rec = parseJsonObject(ln)
+    const ts = rec === null ? null : isoToMs(rec.timestamp)
+    const prior = out.get(id)
+    if (prior === undefined || prior === null || (ts !== null && ts >= prior)) out.set(id, ts)
+  }
+  return out
+}
+
+/** The parent file's parsed entry (name map + task notifications), mtime-cached; null when unreadable. */
+async function parentEntryFor(
+  io: ScanIo,
+  parentFile: string | null,
+  statOf: (path: string) => Promise<FsStat | null>,
+): Promise<NameCacheEntry | null> {
+  if (!parentFile) return null
+  const st = await statOf(parentFile)
+  if (st === null || st.kind !== 'file') return null
+  const cached = NAME_CACHE.get(parentFile)
+  if (cached && cached.mtimeMs === st.mtimeMs) return cached
+  const read = await readWhole(io, parentFile, st.size)
+  const entry: NameCacheEntry = {
+    mtimeMs: st.mtimeMs,
+    oversized: read.oversized,
+    map: read.text === null ? new Map() : parseNameMap(read.text),
+    notices: read.text === null ? new Map() : parseTaskNotifications(read.text),
+  }
+  NAME_CACHE.set(parentFile, entry)
+  if (read.text !== null) noteSessionModel(parentFile, st.mtimeMs, read.text) // the parent IS the room lead's file
+  return entry
+}
+
+/**
+ * Python name_map_for: every Agent/Task tool_use in the parent transcript →
+ * { normPrompt(prompt): { description, subagent_type } }. mtime-cached per file.
+ * `statOf` lets a scan share one stat per parent across its agents.
+ */
+export async function nameMapFor(
+  io: ScanIo,
+  parentFile: string | null,
+  statOf: (path: string) => Promise<FsStat | null> = path => statOrNull(io, path),
+): Promise<Map<string, NameInfo>> {
+  return (await parentEntryFor(io, parentFile, statOf))?.map ?? new Map()
+}
+
+/**
+ * The parent's terminal `<task-notification>`s (parseTaskNotifications) —
+ * the engine's own word that a subagent's loop ended, read from the same
+ * cached parse as nameMapFor (no extra file read).
+ */
+export async function taskNotificationsFor(
+  io: ScanIo,
+  parentFile: string | null,
+  statOf: (path: string) => Promise<FsStat | null> = path => statOrNull(io, path),
+): Promise<Map<string, number | null>> {
+  return (await parentEntryFor(io, parentFile, statOf))?.notices ?? new Map()
+}
+
+/**
+ * Whether a parent notification at `noticeMs` (null: undated) ends an agent
+ * whose file was last written at `mtimeMs`: yes unless the agent wrote again
+ * more than NOTICE_SLACK_MS after it (it was resumed).
+ */
+export function noticeEndsAgent(noticeMs: number | null | undefined, mtimeMs: number): boolean {
+  if (noticeMs === undefined) return false
+  return noticeMs === null || noticeMs + NOTICE_SLACK_MS >= mtimeMs
+}
+
+/** Python project_cwd_for's parse: the first non-empty "cwd" within the first 51 lines. */
+export function parseProjectCwd(text: string): string {
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length && i <= 50; i++) {
+    const ln = lines[i] ?? ''
+    if (!ln.includes('"cwd"')) continue
+    const rec = parseJsonObject(ln)
+    if (rec === null) continue
+    const c = rec.cwd
+    if (typeof c === 'string' && c) return c
+  }
+  return ''
+}
+
+/**
+ * Python project_cwd_for: the conversation's real working directory from the
+ * parent file's first records ("" unknown). Cached by mtime — and, once known,
+ * for good: the value comes from the first lines of an append-only file, so a
+ * chat that grows every turn (and a > 4 MiB one, whose head is a helper
+ * process) is not re-read for it.
+ */
+export async function projectCwdFor(
+  io: ScanIo,
+  parentFile: string | null,
+  statOf: (path: string) => Promise<FsStat | null> = path => statOrNull(io, path),
+): Promise<string> {
+  if (!parentFile) return ''
+  const st = await statOf(parentFile)
+  if (st === null || st.kind !== 'file') return ''
+  const cached = PROJECT_CACHE.get(parentFile)
+  if (cached && (cached.mtimeMs === st.mtimeMs || cached.cwd)) return cached.cwd
+  // The first lines of a session file can be metadata (queue-operation) with no
+  // cwd; the working dir appears on the first user/assistant record.
+  const read = await readHead(io, parentFile, st.size, 51)
+  const entry: ProjectCacheEntry = {
+    mtimeMs: st.mtimeMs,
+    oversized: read.oversized,
+    cwd: read.text === null ? '' : parseProjectCwd(read.text),
+  }
+  PROJECT_CACHE.set(parentFile, entry)
+  return entry.cwd
+}
+
+/**
+ * Tag names of text the HOST injects into a user record (never typed by the
+ * person): a leading block of one of these that is not closed is dropped whole.
+ */
+const INJECTED_TAG = /^(system-reminder|task-notification|command-|local-command|hook|caveat|agent-message|pasted_content)/i
+
+/**
+ * The whitespace and the invisible format characters (a bidi mark such as U+202B RLE, which a
+ * Hebrew keyboard puts before what is typed; a BOM) at the start of a message: the tag test looks
+ * past them. Verified on real transcripts (2026-10-17): a paste arrives as `‫‫\n\n<pasted_content id="…">…`.
+ */
+const LEADING_FORMAT_RE = /^[\s\p{Cf}]+/u
+
+/**
+ * Removes the host's injected text from a user message: every
+ * `<system-reminder>…</system-reminder>` anywhere (the engine appends them to
+ * typed prompts), then every paired `<tag …>…</tag>` block the text STARTS
+ * with (`<command-name>`, `<local-command-caveat>`, `<task-notification>`,
+ * `<pasted_content>` — a paste is never the topic; what follows it, if
+ * anything, is). A leading tag that is not closed is kept unless it is a
+ * known injection (a person typing "<div> is broken" keeps their text).
+ * Leading bidi marks and whitespace never hide a tag. Trimmed.
+ */
+export function stripInjectedBlocks(text: string): string {
+  let s = (text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').replace(LEADING_FORMAT_RE, '').trim()
+  for (;;) {
+    const m = /^<([a-zA-Z][\w-]*)(?:\s[^>]*)?>/.exec(s)
+    if (!m) break
+    const tag = m[1] ?? ''
+    const close = `</${tag}>`
+    const end = s.indexOf(close, m[0].length)
+    if (end < 0) {
+      if (INJECTED_TAG.test(tag)) return ''
+      break
+    }
+    s = s.slice(end + close.length).replace(LEADING_FORMAT_RE, '').trim()
+  }
+  return s
+}
+
+/**
+ * Python _first_user_text, on what the person TYPED: the string content or the
+ * first text block that is left non-empty once the host's injected blocks are
+ * stripped (a record whose text blocks are all injections yields ""; a
+ * `isMeta` record — a local command's echo — is never a topic).
+ */
+function firstUserText(rec: Record<string, unknown>): string {
+  if (rec.isMeta === true) return ''
+  const c = asRecord(rec.message).content
+  if (typeof c === 'string') return stripInjectedBlocks(c)
+  if (Array.isArray(c)) {
+    for (const b of c) {
+      let t = ''
+      if (typeof b === 'string') t = b
+      else if (b !== null && typeof b === 'object' && (b as Record<string, unknown>).type === 'text') {
+        const raw = (b as Record<string, unknown>).text
+        t = typeof raw === 'string' ? raw : ''
+      }
+      const typed = stripInjectedBlocks(t)
+      if (typed) return typed
+    }
+  }
+  return ''
+}
+
+/**
+ * A typed slash command: `/name`, `/plugin:name`, `/name args` — the first word is a slash and
+ * word characters, nothing else (`/tmp/x is full` and `/ 2` are text). Leading blanks and format
+ * characters (a Hebrew keyboard's RLE before the slash) are looked past.
+ */
+const SLASH_COMMAND_RE = /^[\s\p{Cf}]*\/[\w:-]+(?:\s|$)/u
+
+/** The head window of a conversation file the summary reads (Python: the first 81 lines). */
+const SUMMARY_HEAD_LINES = 81
+
+/** Python session_summary's parse over the first SUMMARY_HEAD_LINES lines: (topic = first typed user text that is not a slash command, cwd = first cwd). */
+export function parseSessionSummary(text: string): { topic: string; cwd: string } {
+  let topic = ''
+  let cwd = ''
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length && i < SUMMARY_HEAD_LINES; i++) {
+    const ln = lines[i] ?? ''
+    if (!ln.includes('"cwd"') && !ln.includes('"type":"user"')) continue
+    const rec = parseJsonObject(ln)
+    if (rec === null) continue
+    if (!cwd) cwd = typeof rec.cwd === 'string' ? rec.cwd : ''
+    // the first user record whose text the PERSON typed (an injected
+    // <system-reminder>/<command-name>/… block alone is skipped, see firstUserText) that is
+    // not a slash command (`/theater`, `/superpowers:brainstorming x` — the command that
+    // opened the pane is never what the conversation is about)
+    if (!topic && rec.type === 'user') {
+      const typed = normPrompt(firstUserText(rec))
+      if (typed && !SLASH_COMMAND_RE.test(typed)) topic = typed
+    }
+    if (topic && cwd) break
+  }
+  return { topic, cwd }
+}
+
+/** Does a head text fill the whole SUMMARY_HEAD_LINES window (its last line present and not blank)? */
+function headFull(text: string): boolean {
+  const ls = text.split('\n')
+  return ls.length >= SUMMARY_HEAD_LINES && (ls[SUMMARY_HEAD_LINES - 1] ?? '') !== ''
+}
+
+/**
+ * Python session_summary: (topic, cwd) of a top-level conversation — the first
+ * user text (the UI shortens it). Cached by mtime, and for good once both are
+ * known, or once the head window was read FULL (an append past it cannot
+ * change it: a conversation opened with commands alone — `/theater`,
+ * `/model …` — would otherwise be re-read whole on every poll while it
+ * chats; its title then comes from the tail cache or the folder name), or,
+ * on an oversized file, once either is known — for the same reason as
+ * projectCwdFor.
+ */
+export async function sessionSummary(
+  io: ScanIo,
+  sessionFile: string,
+  stat?: FsStat | null,
+): Promise<{ topic: string; cwd: string }> {
+  const st = stat === undefined ? await statOrNull(io, sessionFile) : stat
+  if (st === null) return { topic: '', cwd: '' }
+  const cached = SESSION_CACHE.get(sessionFile)
+  const settled =
+    cached !== undefined &&
+    (cached.mtimeMs === st.mtimeMs || cached.full || (cached.topic !== '' && cached.cwd !== '') ||
+      (st.size > FS_READ_LIMIT && (cached.topic !== '' || cached.cwd !== '')))
+  if (cached && settled) return { topic: cached.topic, cwd: cached.cwd }
+  const read = await readHead(io, sessionFile, st.size, SUMMARY_HEAD_LINES)
+  const parsed = read.text === null ? { topic: '', cwd: '' } : parseSessionSummary(read.text)
+  SESSION_CACHE.set(sessionFile, { mtimeMs: st.mtimeMs, oversized: read.oversized, full: read.text !== null && headFull(read.text), ...parsed })
+  if (read.text !== null) noteSessionModel(sessionFile, st.mtimeMs, read.whole)
+  return parsed
+}
+
+// ---------------------------------------------------------------------------
+// Open conversations registry (~/.claude/sessions/<pid>.json)
+// ---------------------------------------------------------------------------
+
+type SessionRec = { sessionId: string; pid: number | null }
+let SESSIONS_CACHE: { sig: string | null; recs: SessionRec[] } = { sig: null, recs: [] }
+
+/**
+ * Python live_session_ids: the session ids of OPEN conversations, or null when
+ * the registry directory does not exist (older build → nothing is hidden).
+ * JSON parsing is cached on the directory's (name, mtime) signature; liveness
+ * (`io.pidAlive`, when the hooks module supplies it) is re-checked every scan.
+ * Without `pidAlive` a registered record is trusted (Python assumes alive on
+ * any uncertainty too).
+ */
+export async function liveSessionIds(io: ScanIo, home: string, nowSec: number): Promise<Set<string> | null> {
+  void nowSec
+  const dir = joinPath(home, '.claude', 'sessions')
+  let entries: FsEntry[]
+  try {
+    entries = await io.list(dir)
+  } catch {
+    return null
+  }
+  const files = entries
+    .filter(e => e.kind === 'file' && e.name.endsWith('.json'))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const sig = files.map(f => `${f.name}@${f.mtimeMs}`).join('|')
+  let recs: SessionRec[]
+  if (sig === SESSIONS_CACHE.sig) {
+    recs = SESSIONS_CACHE.recs
+  } else {
+    recs = []
+    for (const f of files) {
+      let rec: Record<string, unknown> | null = null
+      try {
+        rec = parseJsonObject(await io.read(joinPath(dir, f.name)))
+      } catch {
+        continue
+      }
+      if (rec === null) continue
+      const sid = rec.sessionId
+      if (typeof sid === 'string' && sid) {
+        const pid = rec.pid
+        recs.push({ sessionId: sid, pid: typeof pid === 'number' && Number.isFinite(pid) ? pid : null })
+      }
+    }
+    SESSIONS_CACHE = { sig, recs }
+  }
+  const out = new Set<string>()
+  for (const r of recs) {
+    let alive = true
+    if (io.pidAlive && r.pid !== null && r.pid > 0) {
+      try {
+        alive = await io.pidAlive(r.pid)
+      } catch {
+        alive = true // any uncertainty → open (never wrongly hide a chat)
+      }
+    }
+    if (alive) out.add(r.sessionId)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Personas (Python resolve_personas): distinct within a room, stable across scans
+// ---------------------------------------------------------------------------
+
+/** (roomKey, agentId) → slot; re-seated before newcomers so an avatar never flips. */
+const PERSONA_ASSIGNED = new Map<string, number>()
+
+function personaKey(roomKey: string, id: string): string {
+  return `${roomKey}\u0000${id}`
+}
+
+/**
+ * Mutates `persona_id`/`emoji` on each agent: group by room (session_full or
+ * the agent's own id), re-seat incumbents on their remembered slot, place
+ * newcomers by linear probing from personaIndex(id). Module-level memory
+ * `(roomKey, id) → slot`, pruned of agents no longer present.
+ */
+export function resolvePersonas(agents: Agent[]): void {
+  const rooms = new Map<string, Agent[]>()
+  for (const a of agents) {
+    const key = a.session_full || a.id
+    const room = rooms.get(key)
+    if (room) room.push(a)
+    else rooms.set(key, [a])
+  }
+  const liveKeys = new Set<string>()
+  const n = PERSONA_EMOJI.length
+  for (const [roomKey, members] of rooms) {
+    // newcomers oldest-first (fixed first-event start_ms), lead pinned first
+    members.sort((x, y) => {
+      const lx = x.is_session ? 0 : 1
+      const ly = y.is_session ? 0 : 1
+      if (lx !== ly) return lx - ly
+      const sx = x.start_ms ?? 0
+      const sy = y.start_ms ?? 0
+      if (sx !== sy) return sx - sy
+      return x.id < y.id ? -1 : x.id > y.id ? 1 : 0
+    })
+    const taken = new Set<number>()
+    const seated: Array<[Agent, number]> = []
+    const newcomers: Agent[] = []
+    for (const a of members) {
+      const ck = personaKey(roomKey, a.id)
+      liveKeys.add(ck)
+      const slot = PERSONA_ASSIGNED.get(ck)
+      if (slot !== undefined && slot >= 0 && slot < n && !taken.has(slot)) {
+        taken.add(slot)
+        seated.push([a, slot])
+      } else {
+        newcomers.push(a)
+      }
+    }
+    for (const a of newcomers) {
+      const base = ((a.persona_id ?? 0) % n + n) % n
+      let slot = base
+      for (let k = 0; k < n; k++) {
+        const cand = (base + k) % n
+        if (!taken.has(cand)) {
+          slot = cand
+          break
+        }
+      }
+      taken.add(slot)
+      PERSONA_ASSIGNED.set(personaKey(roomKey, a.id), slot)
+      seated.push([a, slot])
+    }
+    for (const [a, slot] of seated) {
+      a.persona_id = slot
+      a.emoji = PERSONA_EMOJI[slot] ?? PERSONA_EMOJI[0] ?? ''
+    }
+  }
+  // prune seats of agents no longer present so the map cannot grow unbounded
+  for (const key of [...PERSONA_ASSIGNED.keys()]) {
+    if (!liveKeys.has(key)) PERSONA_ASSIGNED.delete(key)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Throttled tree listing (Python _throttled_glob)
+// ---------------------------------------------------------------------------
+
+/** One file the listing found. */
+export type ListedFile = { path: string; mtimeMs: number; size: number }
+type Listing = { sessionFiles: ListedFile[]; agentFiles: ListedFile[] }
+type ListingCacheEntry = { at: number; listing: Listing }
+
+/** The deepest an agent file sits below ~/.claude/projects (<enc>/<sid>/subagents/workflows/wf_x/agent.jsonl = 5). */
+const MAX_WALK_DEPTH = 6
+
+const GLOB_CACHE = new Map<string, ListingCacheEntry>() // projects dir → (timestamp ms, listing)
+
+async function listOrEmpty(io: ScanIo, dir: string): Promise<FsEntry[]> {
+  try {
+    return await io.list(dir)
+  } catch {
+    return []
+  }
+}
+
+/** Every `agent-*.jsonl` at any depth below `dir` (links not followed, depth-bounded). */
+async function walkAgentFiles(io: ScanIo, dir: string, depth: number, out: ListedFile[]): Promise<void> {
+  if (depth > MAX_WALK_DEPTH) return
+  const entries = await listOrEmpty(io, dir)
+  const subdirs: string[] = []
+  for (const e of entries) {
+    if (e.isLink) continue
+    if (e.kind === 'file') {
+      if (e.name.startsWith('agent-') && e.name.endsWith('.jsonl')) {
+        out.push({ path: joinPath(dir, e.name), mtimeMs: e.mtimeMs, size: e.size })
+      }
+    } else if (e.kind === 'dir') {
+      subdirs.push(joinPath(dir, e.name))
+    }
+  }
+  await Promise.all(subdirs.map(d => walkAgentFiles(io, d, depth + 1, out)))
+}
+
+/**
+ * Python _throttled_glob for both patterns at once:
+ *   projects/* /*.jsonl          → sessionFiles (top-level conversations)
+ *   projects/** /agent-*.jsonl   → agentFiles
+ * Rebuilt at most every GLOB_TTL_SEC; a failing rebuild keeps the previous list.
+ * Keyed by the projects dir so a test pointing at another root never reads
+ * this root's paths.
+ */
+export async function throttledListing(io: ScanIo, projectsDir: string, nowMs: number): Promise<Listing> {
+  const cached = GLOB_CACHE.get(projectsDir)
+  if (cached && nowMs - cached.at < GLOB_TTL_SEC * 1000) return cached.listing
+  let listing: Listing
+  try {
+    const sessionFiles: ListedFile[] = []
+    const agentFiles: ListedFile[] = []
+    const top = await io.list(projectsDir)
+    const projectDirs: string[] = []
+    for (const e of top) {
+      if (e.isLink) continue
+      if (e.kind === 'dir') projectDirs.push(joinPath(projectsDir, e.name))
+      else if (e.kind === 'file' && e.name.startsWith('agent-') && e.name.endsWith('.jsonl')) {
+        agentFiles.push({ path: joinPath(projectsDir, e.name), mtimeMs: e.mtimeMs, size: e.size })
+      }
+    }
+    await Promise.all(
+      projectDirs.map(async pdir => {
+        const entries = await listOrEmpty(io, pdir)
+        const subdirs: string[] = []
+        for (const e of entries) {
+          if (e.isLink) continue
+          if (e.kind === 'file' && e.name.endsWith('.jsonl')) {
+            const f = { path: joinPath(pdir, e.name), mtimeMs: e.mtimeMs, size: e.size }
+            sessionFiles.push(f)
+            if (e.name.startsWith('agent-')) agentFiles.push(f)
+          } else if (e.kind === 'dir') {
+            subdirs.push(joinPath(pdir, e.name))
+          }
+        }
+        await Promise.all(subdirs.map(d => walkAgentFiles(io, d, 2, agentFiles)))
+      }),
+    )
+    listing = { sessionFiles, agentFiles }
+  } catch {
+    listing = cached ? cached.listing : { sessionFiles: [], agentFiles: [] }
+  }
+  GLOB_CACHE.set(projectsDir, { at: nowMs, listing })
+  return listing
+}
+
+// ---------------------------------------------------------------------------
+// Agent cache (Python _AGENT_CACHE) and the scan itself
+// ---------------------------------------------------------------------------
+
+type AgentCacheEntry = {
+  mtimeMs: number
+  size: number
+  /** When the entry was parsed (ms): an oversized file's tail is re-read at most every GLOB_TTL_SEC. */
+  at: number
+  /** The parsed agent, before the per-scan `status`/`closed`/`role` overwrite; null = a negative entry (nothing drawn for this (mtime,size)). */
+  adict: Agent | null
+  isDone: boolean
+  /** DoneInfo.idle: a final-looking answer with no stop_reason → done once idle (computeStatus). */
+  idleDone: boolean
+  inFlight: boolean
+  versions: string[]
+  /** Malformed lines met so far in this file (a running total across incremental parses; re-counted on every hit). */
+  skipped: number
+  oversized: boolean
+  parent: string | null
+  /** How much of the file the parse has covered (chars, up to a newline): a changed file is parsed from here on (appendParse). 0 for a tail-only or negative entry. */
+  textLen: number
+  /** The last MAX_EVENTS parsed events with `raw` stripped (`{}`), the base of the next incremental parse; [] for a tail-only or negative entry. */
+  events: TranscriptEvent[]
+  /** A negative entry worth another try (a rejected read, an unflushed first line): re-parse once `now >= retryAt`. */
+  retryAt?: number
+}
+
+const AGENT_CACHE = new Map<string, AgentCacheEntry>()
+/** path → the first line of an OVERSIZED agent transcript (immutable: append-only file), so its head helper runs once. */
+const FIRST_LINE_CACHE = new Map<string, string>()
+
+/** A negative cache entry: the file at this (mtime,size) yields no agent; `skipped`/`oversized` are re-counted on every hit. */
+function negativeEntry(mtimeMs: number, size: number, now: number, opts: { skipped?: number; oversized?: boolean; retry?: boolean } = {}): AgentCacheEntry {
+  return {
+    mtimeMs, size, at: now, adict: null, isDone: false, idleDone: false, inFlight: false, versions: [], parent: null,
+    skipped: opts.skipped ?? 0, oversized: opts.oversized ?? false, textLen: 0, events: [],
+    ...(opts.retry ? { retryAt: now + GLOB_TTL_SEC * 1000 } : {}),
+  }
+}
+
+/** Python extract_task: the first event's text. */
+function extractTask(first: TranscriptEvent | null): string {
+  return first ? first.text : ''
+}
+
+/** The age filter of both Python scans: changed within MAX_AGE_MIN. */
+function isRecent(nowMs: number, mtimeMs: number): boolean {
+  return (nowMs - mtimeMs) / 60000 <= MAX_AGE_MIN
+}
+
+/** Python's display sort: (STATUS_ORDER, lead first, newest first). */
+export function sortAgents(agents: Agent[]): void {
+  agents.sort((x, y) => {
+    const ox = STATUS_ORDER[x.status] ?? 3
+    const oy = STATUS_ORDER[y.status] ?? 3
+    if (ox !== oy) return ox - oy
+    const lx = x.is_session ? 0 : 1
+    const ly = y.is_session ? 0 : 1
+    if (lx !== ly) return lx - ly
+    return (y.start_ms ?? 0) - (x.start_ms ?? 0)
+  })
+}
+
+/** The last payload scanAll produced (returned again, with `error`, when a scan fails unexpectedly). */
+let LAST_GOOD: Payload = { ...EMPTY_PAYLOAD }
+
+/** Drops every module-level cache (tests; a hot reload does this by itself). */
+export function resetScannerCaches(): void {
+  AGENT_CACHE.clear()
+  FIRST_LINE_CACHE.clear()
+  NAME_CACHE.clear()
+  PROJECT_CACHE.clear()
+  SESSION_CACHE.clear()
+  SESSION_MODEL_CACHE.clear()
+  JOURNAL_CACHE.clear()
+  GLOB_CACHE.clear()
+  PERSONA_ASSIGNED.clear()
+  SESSIONS_CACHE = { sig: null, recs: [] }
+  LAST_GOOD = { ...EMPTY_PAYLOAD }
+}
+
+/** Tests: the incremental-parse base kept for a transcript (covered length, events with `raw` stripped); undefined when not cached. */
+export function cachedTranscriptBase(path: string): { textLen: number; events: readonly TranscriptEvent[] } | undefined {
+  const entry = AGENT_CACHE.get(path)
+  return entry ? { textLen: entry.textLen, events: entry.events } : undefined
+}
+
+// ---------------------------------------------------------------------------
+// Entry points used by register.tsx
+// ---------------------------------------------------------------------------
+
+/** "~": $HOME, else %USERPROFILE%; "" when neither is set (the scan then yields an empty office). */
+export async function resolveHome(io: ScanIo): Promise<string> {
+  const home = (await io.home()) ?? ''
+  return normPath(home)
+}
+
+/**
+ * Python _scan_agents + scan_sessions: the whole office.
+ * - every agent-*.jsonl under ~/.claude/projects changed within MAX_AGE_MIN
+ * - plus every open top-level conversation as its room's lead (is_session)
+ * - closed = registry says the chat is gone; status via computeStatus
+ * - role/subagent_type re-resolved every scan from the parent's name map
+ * - resolvePersonas, then sort (STATUS_ORDER, lead first, newest first)
+ * `now` is ms since epoch (the caller's $.clock.now()). Never throws: on an unexpected
+ * error it returns the last good payload (or EMPTY_PAYLOAD) and rethrows
+ * NOTHING — the caller records $.state scanError from the `error` field.
+ */
+export async function scanAll(io: ScanIo, now: number): Promise<Payload & { error?: string }> {
+  try {
+    const home = await resolveHome(io)
+    if (!home) return { ...EMPTY_PAYLOAD, scanned_ms: now, error: 'HOME/USERPROFILE not set' }
+    const payload = await scanOffice(io, home, now)
+    LAST_GOOD = payload
+    return payload
+  } catch (err) {
+    return { ...LAST_GOOD, scanned_ms: now, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+async function scanOffice(rawIo: ScanIo, home: string, now: number): Promise<Payload> {
+  const nowSec = now / 1000
+  const projectsDir = joinPath(home, '.claude', 'projects')
+  // One read per file per scan: a changed parent is wanted by the name map, the
+  // project cwd and the topic (up to three whole reads through the host
+  // boundary otherwise). The memo lives for this scan only.
+  const reads = new Map<string, Promise<string>>()
+  const io: ScanIo = {
+    ...rawIo,
+    read: path => {
+      let p = reads.get(path)
+      if (!p) {
+        p = rawIo.read(path)
+        p.catch(() => undefined) // observed by every awaiting caller; never unhandled through the memo
+        reads.set(path, p)
+      }
+      return p
+    },
+  }
+  const live = await liveSessionIds(io, home, nowSec) // open conversations; null = registry unsupported
+  const listing = await throttledListing(io, projectsDir, now)
+
+  // One stat per parent file per scan (Python stats per call; through `$` each is a round trip).
+  const parentStats = new Map<string, Promise<FsStat | null>>()
+  const statOf = (path: string): Promise<FsStat | null> => {
+    let p = parentStats.get(path)
+    if (!p) {
+      p = statOrNull(io, path)
+      parentStats.set(path, p)
+    }
+    return p
+  }
+
+  const agents: Agent[] = []
+  const versions = new Set<string>()
+  let skipped = 0
+  const oversizedFiles = new Set<string>()
+  const seen = new Set<string>()
+  const seenParents = new Set<string>()
+  const seenJournals = new Set<string>()
+
+  // A file older than MAX_AGE_MIN at listing time is at most GLOB_TTL_SEC
+  // stale: if it was touched since, the next listing brings it back. The
+  // survivors are re-stat'd every scan (Python stats every glob hit) so the
+  // cache key and `status` track the file, not the listing.
+  const candidates = listing.agentFiles.filter(f => isRecent(now, f.mtimeMs + GLOB_TTL_SEC * 1000))
+  const stats = await Promise.all(candidates.map(f => statOrNull(io, f.path)))
+
+  for (let i = 0; i < candidates.length; i++) {
+    const path = candidates[i]!.path
+    const st = stats[i]
+    if (st === null || st === undefined || st.kind !== 'file') continue
+    const mtimeMs = st.mtimeMs
+    const size = st.size
+    if (!isRecent(now, mtimeMs)) continue
+    seen.add(path)
+
+    let entry = AGENT_CACHE.get(path)
+    const oversized = size > FS_READ_LIMIT
+    // A hit: same (mtime,size) — except that a growing OVERSIZED file (its key
+    // moves every tick) reuses its entry for GLOB_TTL_SEC, so its tail helper
+    // runs at most that often; and a negative entry marked for retry is
+    // re-parsed once its time comes.
+    const hit =
+      entry !== undefined &&
+      (entry.mtimeMs === mtimeMs && entry.size === size
+        ? entry.retryAt === undefined || now < entry.retryAt
+        : oversized && entry.adict !== null && now - entry.at < GLOB_TTL_SEC * 1000)
+    if (hit && entry) {
+      if (entry.adict === null) {
+        // nothing to draw for this file as it is: count what the parse found
+        skipped += entry.skipped
+        if (entry.oversized) oversizedFiles.add(path)
+        continue
+      }
+      // A workflow agent's done-signal lives in the SIBLING journal.jsonl, which
+      // is NOT part of the (mtime,size) key: re-read it every scan until done.
+      if (!entry.isDone && entry.adict.is_workflow) {
+        const w = await workflowJournalResult(io, path, entry.adict.id)
+        if (w.isDone) {
+          entry.isDone = true
+          entry.inFlight = false
+          entry.adict.result = w.result
+          entry.adict.truncated = w.truncated
+          entry.adict.end_ms = w.endMs ?? mtimeMs
+        }
+      }
+    } else {
+      // First line: the agent's identity and task. Tail: its current state.
+      // One read when the file fits; the optional head/tail closures otherwise
+      // (an oversized file's first line, immutable, is read through the helper once).
+      const whole = !oversized ? await readWhole(io, path, size) : null
+      const knownFirst = oversized ? FIRST_LINE_CACHE.get(path) : undefined
+      const first: ReadOutcome = whole ?? (knownFirst !== undefined ? { text: knownFirst, oversized: false } : await readHead(io, path, size, 1))
+      if (first.text === null) {
+        if (first.oversized) oversizedFiles.add(path)
+        // a rejected read (locked, vanished) or no helper: try again after the listing TTL, not every tick
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: first.oversized, retry: true }))
+        continue
+      }
+      const nl = first.text.indexOf('\n') // not split(): `first` is the whole file when it fits
+      const firstLine = nl === -1 ? first.text : first.text.slice(0, nl)
+      if (firstLine.trim() === '') {
+        // exists but not flushed yet — not malformed; the flush moves (mtime,size), the retry covers a same-key flush
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { retry: true }))
+        continue
+      }
+      if (oversized) FIRST_LINE_CACHE.set(path, firstLine)
+      const firstEv = parseAgentEvent(firstLine)
+      if (firstEv === null) {
+        // a corrupt first line stays corrupt until the file changes: counted, never re-parsed meanwhile
+        skipped += 1
+        AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { skipped: 1 }))
+        continue
+      }
+      const fileVersions = new Set<string>()
+      if (firstEv.version) fileVersions.add(firstEv.version)
+
+      const rawId = firstEv.raw.agentId
+      const agentId = (typeof rawId === 'string' && rawId) || basename(path).slice(6, -6)
+      const rawSession = firstEv.raw.sessionId
+      const session = typeof rawSession === 'string' ? rawSession : ''
+      const startMs = firstEv.tsMs
+      const task = extractTask(firstEv)
+
+      // The file's state: a file that fits is parsed incrementally from its
+      // whole text (appendParse: only what was appended since the entry's
+      // textLen; the whole file on first sight or after a rewrite); an
+      // oversized one through its tail closure, every time, as before.
+      let events: TranscriptEvent[] = []
+      let fileSkipped = 0
+      let textLen = 0
+      if (whole && whole.text !== null) {
+        // the previous parse is the base when it covered the whole file (a tail parse has no offset to resume from)
+        const prev = entry && entry.adict !== null && entry.textLen > 0
+          ? { textLen: entry.textLen, events: entry.events, versions: entry.versions, skipped: entry.skipped }
+          : { textLen: 0, events: [] as TranscriptEvent[], versions: [] as string[], skipped: 0 }
+        const inc = appendParse(prev, whole.text)
+        events = inc.events
+        fileSkipped = (inc.reset ? 0 : prev.skipped) + inc.skipped // malformed lines are counted once, when met
+        textLen = inc.textLen
+        for (const v of inc.versions) fileVersions.add(v)
+      } else {
+        const tail = await readTail(io, path, size)
+        if (tail.text !== null) {
+          const parsed = parseEvents(tailLines(tail.text))
+          events = parsed.events
+          fileSkipped = parsed.skipped
+          for (const v of parsed.versions) fileVersions.add(v)
+        } else if (tail.oversized) {
+          oversizedFiles.add(path)
+          AGENT_CACHE.set(path, negativeEntry(mtimeMs, size, now, { oversized: true, retry: true }))
+          continue
+        }
+      }
+
+      const workflow = isWorkflowAgent(path)
+      const tool = lastToolUseName(events)
+      const pid = personaIndex(agentId)
+      const parent = parentSessionFile(path, session)
+      const project = await projectCwdFor(io, parent, statOf)
+      let done: DoneInfo
+      let role = ''
+      let subagentType = ''
+      if (workflow) {
+        // Authoritative status/result is the sibling journal.jsonl; only fall
+        // back to the transcript when no result is recorded yet.
+        done = await workflowJournalResult(io, path, agentId)
+        if (!done.isDone) done = detectDone(events)
+        if (done.isDone && done.endMs === null) done.endMs = mtimeMs // the journal carries no timestamp
+        subagentType = 'workflow-subagent'
+      } else {
+        done = detectDone(events)
+        const info = task.trim() ? (await nameMapFor(io, parent, statOf)).get(normPrompt(task)) : undefined
+        role = info?.description ?? ''
+        subagentType = info?.subagent_type ?? ''
+      }
+      // A finished agent is never in_flight (a workflow agent's lingering
+      // StructuredOutput tool_use must not read as "working").
+      const inFlight = !done.isDone && computeInFlight(events)
+      const rawCwd = firstEv.raw.cwd
+      const adict: Agent = {
+        id: agentId,
+        persona_id: pid,
+        emoji: PERSONA_EMOJI[pid] ?? '',
+        role,
+        subagent_type: subagentType,
+        status: 'running', // placeholder: recomputed below every scan
+        tool,
+        phase: computePhase(events),
+        task,
+        task_short: shortTask(task),
+        result: done.result,
+        start_ms: startMs,
+        end_ms: done.endMs,
+        session: session.slice(0, 8),
+        session_full: session,
+        cwd: typeof rawCwd === 'string' ? rawCwd : '',
+        project,
+        mtime_ms: mtimeMs,
+        is_session: false,
+        closed: false,
+        is_workflow: workflow,
+        truncated: done.truncated,
+        model: lastModel(events),
+      }
+      entry = {
+        mtimeMs, size, at: now, adict, isDone: done.isDone, idleDone: done.idle, inFlight, versions: [...fileVersions], skipped: fileSkipped, oversized: false, parent,
+        // A whole-file parse leaves its covered length and events as the next scan's base; a tail parse leaves
+        // none. The base is kept WITHOUT `raw` (the whole record, tool results included): nothing reads it off
+        // the cache, and MAX_EVENTS bounds the count, not the bytes.
+        textLen, events: textLen > 0 ? events.map(e => ({ ...e, raw: {} })) : [],
+      }
+      AGENT_CACHE.set(path, entry)
+    }
+
+    if (entry.adict === null) continue
+    for (const v of entry.versions) versions.add(v)
+    skipped += entry.skipped
+    const a: Agent = { ...entry.adict }
+    // `closed` BEFORE status: a subagent whose parent chat has closed collapses
+    // once idle by RAW mtime (the in_flight override only rescues LIVE agents).
+    const closed = live !== null && a.session_full !== '' && !live.has(a.session_full)
+    a.closed = closed
+    // role/subagent_type — and the engine's completion notice — come from the
+    // PARENT file, which the agent-keyed cache cannot notice changing:
+    // re-resolve every scan (the parent's parse is mtime-cached).
+    const parent = entry.parent
+    if (parent) seenParents.add(parent)
+    if (a.is_workflow) seenJournals.add(joinPath(dirname(path), 'journal.jsonl'))
+    let isDone = entry.isDone
+    let inFlight = entry.inFlight
+    if (!isDone && !a.is_workflow && parent) {
+      // The parent's <task-notification> for this agent (the engine's own word
+      // that the loop ended) wins over a transcript whose last record is a
+      // lingering tool_result — unless the agent wrote again since (resumed).
+      const noticeMs = (await taskNotificationsFor(io, parent, statOf)).get(a.id)
+      if (noticeEndsAgent(noticeMs, mtimeMs)) {
+        isDone = true
+        inFlight = false
+        if (a.end_ms === null) a.end_ms = noticeMs ?? mtimeMs
+      }
+    }
+    a.status = computeStatus(nowSec, mtimeMs / 1000, isDone, inFlight, closed, entry.idleDone)
+    const normTask = normPrompt(a.task)
+    if (normTask && !a.is_workflow && parent) {
+      const info = (await nameMapFor(io, parent, statOf)).get(normTask)
+      if (info) {
+        a.role = info.description
+        a.subagent_type = info.subagent_type
+      }
+    }
+    agents.push(a)
+  }
+
+  // Evict entries for files that aged out / vanished so the caches cannot grow
+  // unbounded over a long-lived session.
+  for (const p of [...AGENT_CACHE.keys()]) if (!seen.has(p)) AGENT_CACHE.delete(p)
+  for (const p of [...FIRST_LINE_CACHE.keys()]) if (!seen.has(p)) FIRST_LINE_CACHE.delete(p)
+  for (const p of [...NAME_CACHE.keys()]) if (!seenParents.has(p)) NAME_CACHE.delete(p)
+  for (const p of [...PROJECT_CACHE.keys()]) if (!seenParents.has(p)) PROJECT_CACHE.delete(p)
+  for (const p of [...JOURNAL_CACHE.keys()]) if (!seenJournals.has(p)) JOURNAL_CACHE.delete(p)
+
+  // Top-level conversations as room leads (Python scan_sessions).
+  agents.push(...(await scanSessions(io, listing.sessionFiles, live, now)))
+
+  for (const [p, e] of NAME_CACHE) if (e.oversized) oversizedFiles.add(p)
+  for (const [p, e] of PROJECT_CACHE) if (e.oversized) oversizedFiles.add(p)
+  for (const [p, e] of SESSION_CACHE) if (e.oversized) oversizedFiles.add(p)
+  for (const [p, e] of JOURNAL_CACHE) if (e.oversized) oversizedFiles.add(p)
+
+  resolvePersonas(agents)
+  sortAgents(agents)
+  return {
+    agents,
+    versions: [...versions].sort(),
+    skipped,
+    oversized: oversizedFiles.size,
+    scanned_ms: now,
+    demo: false,
+    stars: {}, // the ⭐ stamps are the poll's (register.tsx, ui.tsx starsOf), never the scan's
+  }
+}
+
+/**
+ * Python scan_sessions: every recent top-level conversation as its room's lead.
+ * start_ms is the last-activity time so the timer reads as "active/idle";
+ * a conversation missing from the registry is a CLOSED chat → done (the room
+ * collapses and hides by default) instead of lingering as stale.
+ */
+async function scanSessions(io: ScanIo, sessionFiles: ListedFile[], live: Set<string> | null, now: number): Promise<Agent[]> {
+  const nowSec = now / 1000
+  const entries: Agent[] = []
+  const candidates = sessionFiles.filter(f => isRecent(now, f.mtimeMs + GLOB_TTL_SEC * 1000))
+  const stats = await Promise.all(candidates.map(f => statOrNull(io, f.path)))
+  const seenSessions = new Set<string>()
+  for (let i = 0; i < candidates.length; i++) {
+    const path = candidates[i]!.path
+    const st = stats[i]
+    if (st === null || st === undefined || st.kind !== 'file') continue
+    const mtimeMs = st.mtimeMs
+    if (!isRecent(now, mtimeMs)) continue
+    seenSessions.add(path)
+    const { topic: prompt, cwd } = await sessionSummary(io, path, st)
+    const uuid = basename(path).slice(0, -6)
+    const tail = await sessionTailFor(io, path, st, now)
+    // the room's title (ui.tsx roomStats: the lead's task_short): the conversation's own title record,
+    // else the first typed prompt, else "" (the UI falls back to the folder name). The drawer's task
+    // stays the prompt the person typed.
+    const topic = tail.title || prompt
+    const closed = live !== null && !live.has(uuid)
+    // No transcript is parsed for a session, so in_flight is always false.
+    // is_done=closed makes a closed chat leave immediately; an open one falls
+    // to the mtime rule.
+    const status = computeStatus(nowSec, mtimeMs / 1000, closed, false, closed)
+    const pid = personaIndex(uuid)
+    entries.push({
+      id: uuid,
+      persona_id: pid,
+      emoji: PERSONA_EMOJI[pid] ?? '',
+      role: '',
+      subagent_type: '',
+      status,
+      tool: '',
+      phase: 'thinking',
+      task: prompt || topic,
+      // a title is drawn whole (never cut to its first sentence: `Task 2: real titles` is not `Task 2:`); a typed prompt as before
+      task_short: tail.title ? shortTitle(topic) : shortTask(topic),
+      result: null,
+      start_ms: mtimeMs,
+      end_ms: closed ? mtimeMs : null,
+      session: uuid.slice(0, 8),
+      session_full: uuid,
+      cwd,
+      project: cwd,
+      mtime_ms: mtimeMs,
+      is_session: true,
+      closed,
+      is_workflow: false,
+      truncated: false,
+      model: tail.model,
+      topic,
+    })
+  }
+  // evict cache entries for session files no longer in the recent window
+  for (const p of [...SESSION_CACHE.keys()]) if (!seenSessions.has(p)) SESSION_CACHE.delete(p)
+  for (const p of [...SESSION_MODEL_CACHE.keys()]) if (!seenSessions.has(p)) SESSION_MODEL_CACHE.delete(p)
+  return entries
+}
+
+// ---------------------------------------------------------------------------
+// Demo mode (Python demo_payload): a synthetic, populated office. Builds the
+// payload in memory and NEVER reads the real ~/.claude/projects journals.
+// ---------------------------------------------------------------------------
+
+type DemoOpts = {
+  role?: string
+  subagent_type?: string
+  start_offset?: number
+  result?: string | null
+  is_session?: boolean
+  mtime_offset?: number
+  /** The model id; the demo's default is the mid-tier model. */
+  model?: string
+  /** A finished agent's finish, in seconds before now (default 2: just finished). */
+  end_offset?: number
+}
+
+function demoAgent(
+  now: number,
+  aid: string,
+  session: string,
+  cwd: string,
+  status: TheaterStatus,
+  tool: string,
+  task: string,
+  opts: DemoOpts = {},
+): Agent {
+  const pid = personaIndex(aid)
+  const startOffset = opts.start_offset ?? 60
+  const mtimeOffset = opts.mtime_offset ?? 0
+  return {
+    id: aid,
+    persona_id: pid,
+    emoji: PERSONA_EMOJI[pid] ?? '',
+    role: opts.role ?? '',
+    subagent_type: opts.subagent_type ?? '',
+    status,
+    tool: tool || '',
+    phase: tool ? 'tool' : 'thinking',
+    task,
+    task_short: shortTask(task),
+    result: status === 'done' ? (opts.result ?? null) : null,
+    start_ms: Math.trunc(now - startOffset * 1000),
+    end_ms: status === 'done' ? Math.trunc(now - (opts.end_offset ?? 2) * 1000) : null,
+    session: session.slice(0, 8),
+    session_full: session,
+    cwd,
+    project: cwd,
+    mtime_ms: Math.trunc(now - mtimeOffset * 1000),
+    is_session: opts.is_session ?? false,
+    closed: false,
+    is_workflow: false,
+    truncated: false,
+    model: opts.model ?? 'claude-sonnet-5-5',
+    ...(opts.is_session ? { topic: task } : {}),
+  }
+}
+
+/**
+ * Python demo_payload, the ONE demo cast (ui.tsx draws this too): a synthetic,
+ * populated office — two rooms led by their topics, personas, a just-finished
+ * ⭐ agent, a stale one, an MCP tool. Pure: builds in memory, never reads
+ * files. `phase` cycles the scene so the demo animates (Python: phase=None
+ * picks by time): a ~12 s loop where phase 3 walks a new agent in (the last of
+ * its room's working rows: live check 7, Q10) and phase 6
+ * finishes the finisher (its ⭐ and confetti; the demo is never toasted or
+ * chimed: register.tsx). Python's agents and offsets, and four earlier
+ * finishes in the research room (pre-check 6): it holds RECENT_DONE + 2
+ * finished, each at its own time, so a room that hides its finished draws
+ * three and counts two on its more line — "show finished" visibly changes
+ * the demo.
+ */
+export function demoPayload(now: number, phase?: number): Payload {
+  const cwd = '/home/dev/acme-web'
+  const s1 = 'demo-session-frontend-1111'
+  const s2 = 'demo-session-research-2222'
+  const ph = Number.isInteger(phase) ? (((phase as number) % 12) + 12) % 12 : Math.trunc(now / 1000) % 12
+  const finishing = ph >= 6 && ph < 10
+  const walkedIn = ph >= 3
+  const agents: Agent[] = [
+    demoAgent(now, 'demo-research-aa', s2, cwd, 'running', 'WebSearch',
+      'Research incremental static regeneration approaches and summarize the trade-offs.',
+      { role: 'research the ISR landscape', subagent_type: 'general-purpose', start_offset: 95, model: 'claude-opus-5-5' }),
+    demoAgent(now, 'demo-reader-bb', s1, cwd, 'running', 'Read',
+      'Read the auth middleware and map every place the session token is validated.',
+      { role: 'map session-token validation', subagent_type: 'Explore', start_offset: 42, model: 'claude-haiku-4-5-20251001' }),
+    demoAgent(now, 'demo-grep-cc', s1, cwd, 'running', 'Grep',
+      'Find all TODO and FIXME comments across the repo and group them by file.',
+      { start_offset: 18, model: 'claude-haiku-4-5-20251001' }),
+    demoAgent(now, 'demo-mcp-dd', s2, cwd, 'running', 'mcp__github__search_issues',
+      "Pull the open issues labeled 'bug' and cluster them by component.",
+      { role: 'triage open bugs', subagent_type: 'general-purpose', start_offset: 63, model: 'claude-sonnet-5-5' }),
+    demoAgent(now, 'demo-build-ee', s1, cwd, 'stale', 'Bash',
+      'Run the full test suite and report any failures.', { start_offset: 320, model: 'claude-sonnet-5-5' }),
+    demoAgent(now, 'demo-writer-ff', s2, cwd, 'done', 'Write',
+      'Draft the migration guide for the v2 config format.',
+      {
+        role: 'draft the v2 migration guide', subagent_type: 'general-purpose', start_offset: 150, model: 'claude-opus-5-5',
+        result: 'Done. Wrote migration-v2.md: a step-by-step guide covering the renamed keys, the '
+          + 'deprecation timeline, and a codemod snippet. Flagged two breaking changes for manual review.',
+      }),
+    // the research room's earlier finishes (pre-check 6), newest first — the office's order (start) is their finish order too
+    demoAgent(now, 'demo-survey-ii', s2, cwd, 'done', 'WebFetch',
+      'Compare how the three candidate frameworks cache regenerated pages.',
+      {
+        role: 'compare ISR cache strategies', subagent_type: 'general-purpose', start_offset: 160, end_offset: 45, model: 'claude-sonnet-5-5',
+        result: 'Two of the three keep a per-route cache with stale-while-revalidate; the third rebuilds on demand only.',
+      }),
+    demoAgent(now, 'demo-bench-jj', s2, cwd, 'done', 'Bash',
+      'Benchmark the cold build with and without on-demand revalidation.',
+      {
+        role: 'benchmark the cold build', subagent_type: 'general-purpose', start_offset: 230, end_offset: 110, model: 'claude-haiku-4-5-20251001',
+        result: 'Cold build 4m12s without, 1m38s with on-demand revalidation (median of five runs).',
+      }),
+    demoAgent(now, 'demo-dedupe-kk', s2, cwd, 'done', 'mcp__github__search_issues',
+      'Find duplicate bug reports and link each to the oldest issue.',
+      {
+        role: 'dedupe the bug reports', subagent_type: 'general-purpose', start_offset: 260, end_offset: 170, model: 'claude-sonnet-5-5',
+        result: 'Linked 9 duplicates to 4 original issues; closed none.',
+      }),
+    demoAgent(now, 'demo-label-ll', s2, cwd, 'done', 'mcp__github__search_issues',
+      'Label the open issues untouched for ninety days as stale.',
+      {
+        role: 'label the stale issues', subagent_type: 'general-purpose', start_offset: 330, end_offset: 240, model: 'claude-haiku-4-5-20251001',
+        result: 'Labelled 17 issues stale.',
+      }),
+    demoAgent(now, 'demo-finisher-gg', s1, cwd, finishing ? 'done' : 'running', 'StructuredOutput',
+      'Summarize the security review findings into a prioritized list.',
+      {
+        role: 'summarize the security review', subagent_type: 'code-reviewer', start_offset: 51, model: 'claude-fable-5-1',
+        result: 'Summary: 3 high, 5 medium, 11 low. Top item: the password-reset token is not '
+          + 'compared in constant time.',
+      }),
+  ]
+  if (walkedIn) {
+    // appears mid-loop so the pane plays its walk-in animation
+    agents.push(demoAgent(now, 'demo-newcomer-hh', s2, cwd, 'running', 'Edit',
+      'Apply the review fixes to the config loader and re-run the type checker.',
+      { role: 'apply the review fixes', subagent_type: 'general-purpose', start_offset: 3, model: 'claude-sonnet-5-5' }))
+  }
+  // the two conversations themselves → each leads its room with the topic as the title
+  agents.push(demoAgent(now, 'demo-conv-frontend', s1, cwd, 'running', '',
+    'Ship the v2 config migration and clean up the auth middleware.',
+    { start_offset: 380, is_session: true, mtime_offset: 7, model: 'claude-fable-5-1' }))
+  agents.push(demoAgent(now, 'demo-conv-research', s2, cwd, 'running', '',
+    'Plan the static-regeneration rollout and triage the bug backlog.',
+    { start_offset: 300, is_session: true, mtime_offset: 14, model: 'claude-opus-5-5' }))
+  resolvePersonas(agents)
+  sortAgents(agents)
+  // THE WALK-IN AT THE END (live check 7, Q10): the newcomer is the LAST of the running block — so the last of its room's
+  // working rows, under every row that was there (sorted by its start, newest first, it led the room's rows and pushed them
+  // all down a line under the pointer); the payload stays sorted running / stale / done
+  const at = agents.findIndex(a => a.id === 'demo-newcomer-hh')
+  if (at >= 0) {
+    const [newcomer] = agents.splice(at, 1)
+    agents.splice(agents.map(a => a.status).lastIndexOf('running') + 1, 0, newcomer!)
+  }
+  return { agents, versions: ['2.1.0'], skipped: 0, oversized: 0, scanned_ms: now, demo: true, stars: {} }
+}
+
+// RESULT_CHAR_LIMIT is applied through clipResult (model.ts); re-exported so
+// the UI can mention the limit in the "truncated" note without importing twice.
+export { RESULT_CHAR_LIMIT }

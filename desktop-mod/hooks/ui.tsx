@@ -1,0 +1,1273 @@
+// UI: draws the 🎭 pane (the office) from $.state and handles its presses /
+// typing. The port of PAGE's JS (claude_theater.py) over the engine's
+// elements (Box/Text/Button/Input, plus the `confetti.tsx` Client surface
+// module for the finish burst on the surfaces that have a frame clock).
+//
+// OWNER: builder "ui". Contract (register.tsx calls these):
+//   registerUi(on)         adds the ui.render hook for the pane and the `ui.message`
+//                          hook of its desktop office Client (applyOfficeMessage)
+//   paneTitle(lang, run)   the pane's title for $.ui.open
+//   workingCount(payload)  PAGE's `run`: open-chat agents working now
+//   starsOf(...)           the finish beat's ⭐ stamps (pure; the poll runs it, see below)
+//   renderKey(payload, now) the flicker guard's projection of a payload (the poll compares it)
+//   officeView, parseRoomDone  what the office shows (the poll celebrates only a shown finish)
+//   rememberRoomDone(map)  the render's copy of the overrides, after the poll pruned them in $.store
+//
+// What it draws (spec "עובר כמו שהוא"), top to bottom — every line budgeted
+// from e.props.bodyColumns (gridFor / clip / cellWidth), nothing fixed-width:
+//   header   one line: title · "● N working · ◌ M idle · ✓ K finished" (PAGE
+//            #counts; decision 29's COUNT_ICON where PAGE drew 🟢 ⏳ ✅); under
+//            COMPACT_BELOW columns "🎭 · ●N ◌M ✓K" alone; with a
+//            five-hour reading (USAGE) it ends "· ⏳ 5h 42%" when that fits whole
+//   toolbar  one row: [f] show finished · [m] 🔔/🔕 · [l] language · [h] help ·
+//            [d] demo (+ exit); compact → icons only and no hotkey chips
+//   search   an Input (not on mobile, which has none), the 🔍 in its placeholder
+//   help     the keyboard-shortcuts popover (PAGE renderHelp) while open
+//   drawer   the selected agent (PAGE fillDrawer): chips (status, subagent_type,
+//            duration/elapsed, tool), model, activity, task, result, "shortened"
+//   DESKTOP  (e.surface === 'desktop') the whole pane is instead ONE `Client`
+//            (key OFFICE_KEY, module ./office-client.tsx) and, under it in a
+//            column Box, THE CREDIT LINE (`credit` below: the page cannot draw a
+//            Link inside a Client, paint probe round 6): the hooks build its JSON
+//            props from state (office-props.ts buildOfficeProps — the rooms, the
+//            drawer, the counts, the flags, the i18n strings, the usage meter) and
+//            size it to its FULL content (office-chrome.ts officeHeight: the
+//            chrome rows + the larger of office-layout.ts rowCount — the layout's
+//            rows counted without building a cell — and the overlay's own
+//            height), so the engine scrolls it natively
+//            and hands the window back as e.props.scroll (offset → props.offset,
+//            bodyRows → props.rows). The drawer and the settings popover take no
+//            row of the flow: they are ONE absolute overlay from the root (top
+//            max(offset, chrome rows) on inverseText, so nothing under it moves
+//            and at the pane's top it sits under the toolbar, never over the
+//            header); the Client reaches the overlay's bottom only on an office
+//            shorter than it. The module draws the chrome and the room cards
+//            with their agent rows (office-layout.ts; drawn with an overscan
+//            capped to WINDOW_ROWS lines, so the half-cell card borders leave no
+//            blank row in view) and the keyboard focus marker (the finish is the
+//            props' ⭐: no tint). EVERY click is a native Button (a row's name /
+//            model / emoji / word cells, the pin on every title, the more line,
+//            the closes, the toolbar): no hover, no hit-test by y. A press POSTS,
+//            through the module's outbox (below), what the person did
+//            (open / pin / roomDone / the toolbar / search —
+//            OfficeMessage) to `ui.message`: the hook below (applyOfficeMessage)
+//            applies each post as the text cards' press of the same name does
+//            (the shared transitions: one prefs / view atom, the store mirror)
+//            and ANSWERS it with the Client's next props (live check 7: drawn
+//            at once, not after the redraw); the write's redraw follows with the
+//            same props and the new height — the newest answer only (THE NEWEST
+//            ANSWER: a hook that a later post or a render overtook answers `{}`,
+//            so an older read never sticks on screen). Equal state → equal
+//            props → no redraw. A post is a numbered batch of the frame's
+//            actions (the module's outbox), each applied once however the
+//            posts' hooks overlap. The Client is drawn only where the
+//            surface's table has one (`'Client' in els`) and while
+//            !DESKTOP.clientFailed; a `ui.fault` of the module (register.tsx)
+//            sets the flag and the desktop falls through to the text cards below
+//            until /theater tries the Client again.
+//   rooms    one per conversation (session_full): pinned first 📌, then rooms with
+//            a running agent, then by last activity (PAGE's sort). Room header,
+//            one line: 📌/○ · 💬 topic-or-project (clipped from its end) · small
+//            label/sid when it fits · ●N · ◌N · ✓N (toggles that room's "show
+//            finished"). Cards fill the row: 1 per row under COLS2_FROM, 2 to
+//            COLS3_FROM, 3 past it. A card is two lines, no frame:
+//              ● 💬 emoji name ✕★⏱︎              mm:ss   (💬 on the lead's name only)
+//                activity · 🧠 model · subagent_type     (a "·" only between two parts;
+//                                                         the model ALWAYS, "🧠 ?" when unknown)
+//            the name a plain Button (Enter/click opens the drawer); ● is the
+//            status colour (▸ focused, ◉ selected), ⏱︎ ≥ LONG_RUNNING_MS, ★
+//            within JUST_FINISHED_MS, ✕ failed/killed (from the live map) — the
+//            badges decision 29's monochrome marks in their colours
+//            (office-layout.ts MARK, markFg), where the colour emoji were.
+//   nav      [k] previous · [j] next · [o] open · [x] close — the arrow-key walk
+//   empty    office (with "▶ watch a demo") / no-active / none-in-window / no-match
+//   footer   the too-long conversations (oversizedN), scanError, dim (the desktop
+//            office: scanError alone — the too-long conversations are the
+//            settings popover's note, office-props.ts `oversized`)
+//   credit   THE CREDIT LINE (decision 27a), the pane's last line, a blank line
+//            above it: `© Legal Mind`, the WHOLE credit ONE Link to
+//            legalmind.co.il (office-layout.ts CREDIT, CREDIT_URL) — the brand
+//            name itself is the link (the owner's wish, 23.10; the address is
+//            not spelled, so the name is not said twice). The Link takes the
+//            surface's own link colour (it has no colour prop), so no Text
+//            beside it. The same words in both languages, CENTRED on the row (Asaf, 23.10).
+//            On the desktop the hooks draw it too, UNDER the office Client in the
+//            pane's own tree — never inside the Client: the page cannot draw a Link
+//            there (paint probe round 6, 23.10: the module's own credit faulted
+//            every render, and the office fell back to these cards for everyone);
+//            the Client's height (officeHeight) leaves its CREDIT_ROWS out. There
+//            the row also carries the small Legal Mind LOGO beside the name,
+//            before the words (decision 28b): a Markdown inline image of the PNG
+//            register.tsx read once (model.ts BRAND) — the desktop draws no Image
+//            element in the pane (paint probe rounds 7-8) but draws that (round
+//            9); never on the text cards, where no Markdown image draws
+//
+// Rules:
+// - A render hook never writes state; presses/inputs write with update($, ...)
+//   from Button/Input closures declared in this file (so `$` never crosses an
+//   import — validate rule).
+// - Read state with read($, atom) so the pane redraws on every $.state.set;
+//   atoms are declared in THIS file (validate rule), never imported. The pane
+//   reads payload / prefs / view / scanError (+ tick off the desktop) and NOT
+//   the live map: a live agent's every tool.call writes it, and on the desktop
+//   every redraw blinks (see renderKey — the flicker guard).
+// - Draw with the table of e.surface: `$.ui.resolve(e)`. Width is
+//   e.props.bodyColumns (narrower than the viewport when docked).
+// - Hebrew default; `dirOf(prefs.lang)` decides the row direction (RTL = row-reverse).
+// - Every hook is registered with `.catch(($, e, next) => next(e))`.
+//
+// The finish beat (PAGE updateWS: prevStatus running→done on a VISIBLE card →
+// confetti + ding + toast + ⭐) runs in the POLL (register.tsx), not here: the
+// poll stamps the just-finished ids into the payload it publishes
+// (`payload.stars`, by starsOf below) and toasts / chimes there, so a finish
+// costs the ONE $.state write of the publish and this render only DRAWS
+// `office.stars` (the ⭐, the terminal's confetti burst, the desktop row's
+// hop) — it writes nothing. ENGINE FACTS (probed, 2.1.288): a plugin's hooks
+// never see its own $.state.set, a render may toast and play audio, a render
+// may NOT write state. As in PAGE the beat fires only for an agent the office
+// shows (its room shows finished, it matches the search, its chat is open) —
+// the poll asks officeView exactly as this render does. The demo's cast obeys
+// "show finished" and the rooms' toggles as the office does (live check 5: the
+// demo once forced it on, and the toggle seemed broken) and is never toasted.
+//
+// Demo mode (PAGE ?demo=1): `view.demo` → the pane draws scanner's
+// demoPayload, the ONE port of Python demo_payload, AS THE POLL PUBLISHED IT
+// (effectivePayload, live check 7: never re-drawn from the clock on a click's
+// redraw): a 12 s scripted loop (phase 3: a newcomer walks in at the end of its
+// room's working rows, phases 6-9: the finisher completes → the beat). The poll
+// publishes the cast as it moves, so the office redraws on its publishes alone.
+//
+// Pane title (PAGE document.title): "🟢 N · " + the app title while N agents
+// work — paneTitle(lang, run); the poll retitles when N changes, setLang on a
+// language switch.
+//
+// Reload: register.tsx hooks the same render ahead of this one and kicks its
+// ensurePolling through `$.clock.after(0, …)` (never inside the draw) so a pane
+// that stayed up over a hot reload resumes its poll on the first redraw.
+//
+// Per-room "show finished" overrides (PAGE roomDone, tri-state): kept in
+// $.store under 'roomDone' (the prefs contract has only the global flag) and
+// cached in this module; a room that comes to match the global toggle drops
+// its override, and the toolbar's ☐ / ☑ clears them all (live check 7: it sets
+// every card — showDoneEverywhere). Pins live in prefs.pins.
+
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
+
+import { ACT_GLYPH, I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
+import { BRAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
+import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
+import { UNKNOWN_MODEL_PILL } from './office-svg'
+// the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
+// count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
+import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
+import { BRAND_ACCENT, COUNT_ICON, CREDIT, CREDIT_URL, DOT_FG, FAIL_FG, LOGO_CELLS, MARK, cutWords, logoMarkdown, nb, rowCount } from './office-layout'
+import { OFFICE_KEY, buildOfficeProps } from './office-props'
+import type { OfficeProps } from './office-props'
+import { personaFeminine, personaName } from './personas'
+import { demoPayload } from './scanner'
+import { usageShort } from './usage'
+
+// $.state atoms (validate: declared as consts in the file that reads them;
+// the same keys register.tsx writes — see ../types/index.d.ts).
+const payloadAtom = atom({ plugin: 'agent-theater', key: 'payload' } as const, EMPTY_PAYLOAD)
+const prefsAtom = atom({ plugin: 'agent-theater', key: 'prefs' } as const, DEFAULT_PREFS)
+const viewAtom = atom({ plugin: 'agent-theater', key: 'view' } as const, DEFAULT_VIEW)
+const scanErrorAtom = atom({ plugin: 'agent-theater', key: 'scanError' } as const, null)
+/** The poll's clock: read ONLY on the text surfaces (their mm:ss tick with it); the desktop never subscribes, so a tick reloads no frame. */
+const tickAtom = atom({ plugin: 'agent-theater', key: 'tick' } as const, 0)
+
+/** $.store key of the per-room "show finished" overrides (PAGE ct_roomDone). */
+export const STORE_ROOM_DONE_KEY = 'roomDone'
+/** The narrowest body the pane lays out for (a narrower bodyColumns is drawn as this and scrolls). */
+export const MIN_WIDTH = 24
+/** Under this many columns the header, toolbar, room headers and nav draw icons alone, without key-hint chips (the one threshold, office-chrome.ts: the desktop Client's toolbar reads it too). */
+export { COMPACT_BELOW } from './office-chrome'
+/** Two cards share a row from this width, three from COLS3_FROM. */
+export const COLS2_FROM = 72
+export const COLS3_FROM = 120
+/** A card never grows past this (a lone card in a wide pane stays readable). */
+export const CARD_MAX_W = 60
+/** PAGE confetti(): the burst is removed after this many ms (the ⭐ outlives it, JUST_FINISHED_MS). */
+const BURST_MS = 1050
+
+/**
+ * THE TICK GUARD. `tick` (the text surfaces' mm:ss clock) is written by the
+ * poll only while a TEXT surface has drawn the pane lately: the desktop app
+ * redraws the pane on a write of any value of the plugin, so a per-poll tick
+ * with only the desktop open WAS the flicker. Set by the render hook.
+ */
+let textSurfaceDrawnAt = -Infinity
+/** The engine clock's last answer in the render (its fallback when a host has no clock). */
+let clockSeen = 0
+/** How long a text surface's last draw keeps the tick running (it redraws on every tick, so a live one renews it). */
+export const TEXT_SURFACE_TTL_MS = 10_000
+/** Should the poll write the tick at `now`? */
+export function textSurfaceActive(now: number): boolean {
+  return now - textSurfaceDrawnAt < TEXT_SURFACE_TTL_MS
+}
+
+/** The pane title shown in the tab: PAGE document.title = (run ? "🟢 N · " : "") + docTitle. */
+export function paneTitle(lang: Lang, run = 0): string {
+  const base = lang === 'he' ? '🎭 התיאטרון' : '🎭 Theater'
+  return (run > 0 ? `🟢 ${run} · ` : '') + base
+}
+
+/** PAGE render()'s `run`: agents of open chats working right now (the live working-count of the title). */
+export function workingCount(payload: Pick<Payload, 'agents'>): number {
+  return payload.agents.filter(a => a.status === 'running' && !a.closed).length
+}
+
+// ---------------------------------------------------------------------------
+// Pure ports of PAGE's helpers (exported for ui.test.ts).
+// ---------------------------------------------------------------------------
+
+/** PAGE fmt(): mm:ss, "--:--" for null/negative. */
+export function fmt(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms < 0 || !Number.isFinite(ms)) return '--:--'
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  const x = s % 60
+  return `${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`
+}
+
+/** PAGE baseName(): the last path segment, "—" when empty. */
+export function baseName(p: string | null | undefined): string {
+  return (p ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '—'
+}
+
+/** PAGE roomLabel(): the conversation's project, not a nested subagent cwd. */
+export function roomLabel(a: Pick<Agent, 'project' | 'cwd'>): string {
+  return baseName(a.project || a.cwd)
+}
+
+/**
+ * PAGE tickTimers() (cards) and fillDrawer() (drawer): what the clock shows.
+ * lead → time since last activity; unknown start → null ("--:--"); done →
+ * final duration (the drawer falls back to last activity / now when end_ms is
+ * null; the card, as PAGE's `st==="done"&&en` branch, falls through to the
+ * live count when end_ms is null — a closed chat's collapsed subagent keeps
+ * counting, exactly as the extension did); stale → frozen at last activity;
+ * running → live.
+ */
+export function agentElapsed(a: Agent, now: number, forDrawer = false): number | null {
+  const s = a.start_ms ?? 0
+  const en = a.end_ms ?? 0
+  const mt = a.mtime_ms ?? 0
+  if (a.is_session) return mt ? now - mt : null
+  if (!s) return null
+  if (a.status === 'done') return forDrawer ? (en || mt || now) - s : en ? en - s : now - s
+  if (a.status === 'stale') return mt && mt > s ? mt - s : null
+  return now - s
+}
+
+/** PAGE longrun: a live (non-lead) agent running over LONG_RUNNING_MS. */
+export function isLongRunning(a: Agent, now: number): boolean {
+  if (a.status !== 'running' || a.is_session) return false
+  const v = agentElapsed(a, now)
+  return v !== null && v > LONG_RUNNING_MS
+}
+
+/** PAGE matchesSearch(): role, task, tool, persona name (in `lang`), room label. */
+export function matchesSearch(a: Agent, q: string, lang: Lang): boolean {
+  const needle = q.toLowerCase()
+  return (
+    (a.role ?? '').toLowerCase().includes(needle) ||
+    (a.task ?? '').toLowerCase().includes(needle) ||
+    (a.tool ?? '').toLowerCase().includes(needle) ||
+    personaName(a.persona_id, lang).toLowerCase().includes(needle) ||
+    roomLabel(a).toLowerCase().includes(needle)
+  )
+}
+
+/** PAGE render(): per-session stats from ALL agents (so a room shows ✅N even when its finished are hidden). */
+export type RoomStat = { running: number; stale: number; done: number; label: string; topic: string; sid: string; mtime: number }
+
+export function roomStats(all: readonly Agent[]): Map<string, RoomStat> {
+  const stat = new Map<string, RoomStat>()
+  for (const a of all) {
+    let v = stat.get(a.session_full)
+    if (!v) {
+      v = { running: 0, stale: 0, done: 0, label: roomLabel(a), topic: '', sid: a.session, mtime: 0 }
+      stat.set(a.session_full, v)
+    }
+    if (a.status === 'running') v.running++
+    else if (a.status === 'stale') v.stale++
+    else if (a.status === 'done') v.done++
+    v.mtime = Math.max(v.mtime, a.mtime_ms ?? 0)
+    if (a.is_session && a.task_short) v.topic = a.task_short // PAGE: the lead's task_short (first sentence / 90 chars)
+    if (!v.label || v.label === '—') v.label = roomLabel(a)
+  }
+  return stat
+}
+
+/** PAGE roomShowsDone(): the room's override, else the global toggle. */
+export function roomShowsDone(roomDone: Readonly<Record<string, boolean>>, showDone: boolean, sess: string): boolean {
+  return sess in roomDone ? !!roomDone[sess] : showDone
+}
+
+/** PAGE toggleRoomDone(): tri-state — an override equal to the global toggle is dropped. */
+export function toggledRoomDone(roomDone: Readonly<Record<string, boolean>>, showDone: boolean, sess: string): Record<string, boolean> {
+  const nv = !roomShowsDone(roomDone, showDone, sess)
+  const out: Record<string, boolean> = { ...roomDone }
+  if (nv === showDone) delete out[sess]
+  else out[sess] = nv
+  return out
+}
+
+export type OfficeView = {
+  /** Agents the office draws, in payload order (room grouping happens at draw). */
+  visible: Agent[]
+  /** Room ids in display order. */
+  rooms: string[]
+  stat: Map<string, RoomStat>
+  /** Cards in display order (room by room), the arrow-key walk's list. */
+  order: Agent[]
+  /** Per room that hides its finished: how many finished agents (of the search) it holds past the `recentDone` it draws. */
+  moreDone: Map<string, number>
+  /** Per room: its finished agents of the search (open chats), shown or not — whether it draws the more / hide line at all (live check 7, Q6). */
+  finished: Map<string, number>
+}
+
+/**
+ * THE RECENT FINISHED (Asaf, 2026-10-17): on the desktop office a room that hides its finished still
+ * draws this many of them — the most recently finished — and a row counting the rest (office-layout.ts);
+ * the global ☑ and the room's toggle mean "show every finished". Such a finish keeps its ⭐ (the office
+ * draws it) but is not toasted or chimed (register.tsx: the beat stays what it was — a finish the room
+ * shows by its toggle). The text cards (the terminal, the desktop's fallback) and their walk keep hiding
+ * every finished agent of such a room.
+ */
+export const RECENT_DONE = 3
+
+/** When an agent finished, for the recent-finished pick: its end stamp, else its last activity (what the payload has); neither known = just finished (ranked first). */
+function finishedAt(a: Agent): number {
+  return a.end_ms ?? a.mtime_ms ?? Number.POSITIVE_INFINITY
+}
+
+/**
+ * PAGE render()'s filtering and ordering: search → drop closed chats and the
+ * finished the room hides (but for the `recentDone` most recently finished of
+ * each room — THE BADGED FIRST: a failed agent, or one whose ⭐ is alive
+ * (`starred`, the ids the caller stamps: office-props.ts), ranks ahead of the
+ * rest, so it is never held behind the more line (the cards design, round 8);
+ * then by end_ms, then mtime_ms, newest first; ties by payload order) → rooms
+ * sorted pinned, then with-running, then by last activity (newest first).
+ * (Without a recent-done pick — the text cards, the poll — `starred` changes
+ * nothing.)
+ */
+export function officeView(
+  all: readonly Agent[],
+  q: string,
+  lang: Lang,
+  showDone: boolean,
+  roomDone: Readonly<Record<string, boolean>>,
+  pins: readonly string[],
+  recentDone = 0,
+  starred: ReadonlySet<string> = new Set(),
+): OfficeView {
+  const stat = roomStats(all)
+  const needle = q.toLowerCase().trim()
+  const searched = needle ? all.filter(a => matchesSearch(a, needle, lang)) : [...all]
+  // the finished agents of a room that hides them: the recentDone newest stay, the rest are counted
+  const held = new Map<string, Agent[]>()
+  const finished = new Map<string, number>()
+  for (const a of searched) {
+    if (a.closed || a.status !== 'done') continue
+    finished.set(a.session_full, (finished.get(a.session_full) ?? 0) + 1)
+    if (roomShowsDone(roomDone, showDone, a.session_full)) continue
+    const list = held.get(a.session_full) ?? []
+    list.push(a)
+    held.set(a.session_full, list)
+  }
+  const kept = new Set<string>()
+  const moreDone = new Map<string, number>()
+  const badged = (a: Agent): number => (a.failed === true || starred.has(a.id) ? 1 : 0)
+  for (const [s, list] of held) {
+    const ranked = list.map((a, i) => ({ a, i })).sort((x, y) => badged(y.a) - badged(x.a) || finishedAt(y.a) - finishedAt(x.a) || x.i - y.i)
+    ranked.slice(0, recentDone).forEach(({ a }) => kept.add(a.id))
+    if (ranked.length > recentDone) moreDone.set(s, ranked.length - recentDone)
+  }
+  const visible = searched.filter(a => !a.closed && (a.status !== 'done' || roomShowsDone(roomDone, showDone, a.session_full) || kept.has(a.id)))
+  const rooms = [...new Set(visible.map(a => a.session_full))]
+  const pinned = new Set(pins)
+  rooms.sort((x, y) => {
+    const sx = stat.get(x)
+    const sy = stat.get(y)
+    return (
+      (pinned.has(y) ? 1 : 0) - (pinned.has(x) ? 1 : 0) ||
+      ((sy?.running ?? 0) > 0 ? 1 : 0) - ((sx?.running ?? 0) > 0 ? 1 : 0) ||
+      (sy?.mtime ?? 0) - (sx?.mtime ?? 0)
+    )
+  })
+  const order: Agent[] = []
+  for (const s of rooms) for (const a of visible) if (a.session_full === s) order.push(a)
+  return { visible, rooms, stat, order, moreDone, finished }
+}
+
+/** PAGE emptyHTML kind: office (nothing at all) | nomatch | nonewindow | noactive. */
+export function emptyKind(q: string, total: number, showDone: boolean): 'office' | 'nomatch' | 'nonewindow' | 'noactive' {
+  if (q.trim()) return 'nomatch'
+  if (total === 0) return 'office'
+  return showDone ? 'nonewindow' : 'noactive'
+}
+
+/** PAGE #counts: open-chat agents by status. */
+export function headerCounts(all: readonly Agent[]): { run: number; idle: number; done: number } {
+  const open = all.filter(a => !a.closed)
+  return {
+    run: open.filter(a => a.status === 'running').length,
+    idle: open.filter(a => a.status === 'stale').length,
+    done: open.filter(a => a.status === 'done').length,
+  }
+}
+
+/**
+ * THE FINISH BEAT's stamps (PAGE updateWS over a whole payload; the poll runs
+ * it, register.tsx): the ⭐ map to publish — `prev` (the stars published last)
+ * minus the entries older than JUST_FINISHED_MS, plus `now` for every agent
+ * whose remembered status was not done and is done now (never on first sight,
+ * so a first scan or a reload celebrates nothing). `prevStatus` is the caller's
+ * memory, updated for EVERY agent of the payload (hidden ones too, so a later
+ * toggle cannot replay a stale running→done) and pruned to the payload's ids.
+ * Pure but for that memory; which of the new stamps the office shows (and so
+ * celebrates) is the caller's call (officeView).
+ */
+export function starsOf(prevStatus: Record<string, TheaterStatus>, agents: readonly Agent[], prev: Readonly<Record<string, number>>, now: number): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [id, t] of Object.entries(prev)) if (now - t < JUST_FINISHED_MS) out[id] = t
+  const live = new Set<string>()
+  for (const a of agents) {
+    live.add(a.id)
+    const before = prevStatus[a.id]
+    if (before !== undefined && before !== 'done' && a.status === 'done') out[a.id] = now
+    prevStatus[a.id] = a.status
+  }
+  for (const id of Object.keys(prevStatus)) if (!live.has(id)) delete prevStatus[id]
+  return out
+}
+
+/** The card's name: the Agent call's description, else the persona. */
+export function cardName(a: Agent, lang: Lang): string {
+  return a.role || personaName(a.persona_id, lang)
+}
+
+/** A room's title as the office draws it, before any cut: the lead's topic, else the project's folder, else the session id's head. */
+export function roomTitle(st: RoomStat | undefined, session: string): string {
+  return st?.topic || st?.label || session.slice(0, 8)
+}
+
+/** THE FINISH TOAST's stay (live check 5): short — it names who finished and where; the ⭐ stays on the row. */
+export const FINISH_TOAST_MS = 1500
+/** The room's title in the finish toast, in cells: cut on a word (office-layout.ts cutWords). */
+export const TOAST_TITLE_MAX = 30
+
+/**
+ * THE FINISH TOAST (live check 5): `✓ <persona> סיים · <room title>` / `✓ <persona> finished · <title>` (decision 29: the
+ * finished activity's ✓, where the ✅ was) — the persona's
+ * name, as the row draws it (never the Agent call's description), the Hebrew verb agreeing with it (`הדבורה סיימה`: personas.ts
+ * PERSONAS_HE_FEMININE, pre-check 6), then the conversation it finished in, its title (roomTitle)
+ * cut on a word to TOAST_TITLE_MAX cells; without a title the name and the word alone. The poll toasts it for FINISH_TOAST_MS
+ * (register.tsx), only for a finish the office shows and never for the demo's cast.
+ */
+export function finishToast(a: Agent, title: string, lang: Lang): string {
+  const L = I18N[lang]
+  const head = `${ACT_GLYPH.done} ${personaName(a.persona_id, lang)} ${personaFeminine(a.persona_id) ? L.finishedToastFem : L.finishedToast}`
+  const t = title.trim()
+  return t ? `${head} · ${cutWords(t, TOAST_TITLE_MAX)}` : head
+}
+
+/** The lead's chat marker: on the lead card's FIRST line only (before the avatar), never elsewhere, never alone. */
+export const LEAD_MARK = '💬'
+
+/**
+ * The card's second line as segments: the non-empty parts with a lone "·"
+ * between each pair — so the separator exists only BETWEEN two texts and
+ * never dangles at either end (an empty subagent_type or model leaves no
+ * trace), whichever way the row is laid out (RTL rows reverse the segments).
+ */
+export function joinParts(parts: readonly string[]): string[] {
+  const out: string[] = []
+  for (const p of parts) {
+    if (!p) continue
+    if (out.length > 0) out.push('·')
+    out.push(p)
+  }
+  return out
+}
+
+/**
+ * Cells a string takes on a terminal row: an emoji / wide glyph 2, a combining
+ * mark, variation selector or ZWJ 0, anything else (Hebrew included) 1. An
+ * approximation good enough to budget a line.
+ */
+export function cellWidth(s: string): number {
+  let w = 0
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0
+    if (cp === 0xfe0f || cp === 0xfe0e || cp === 0x200d || (cp >= 0x300 && cp <= 0x36f) || (cp >= 0x591 && cp <= 0x5c7)) continue
+    w += cp > 0xffff || (cp >= 0x2300 && cp <= 0x27bf) || (cp >= 0x2b00 && cp <= 0x2bff) || (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe4f) || (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) ? 2 : 1
+  }
+  return w
+}
+
+/**
+ * Cuts `s` to at most `max` cells, ending in "…" when something was dropped.
+ * The cut is always at the string's END (the beginning stays), whatever the
+ * row's direction: the engine's visual truncation in an RTL row cuts an
+ * English title's start off, so the pane never relies on it for a label.
+ */
+export function clip(s: string, max: number): string {
+  if (max <= 0) return ''
+  if (cellWidth(s) <= max) return s
+  if (max === 1) return '…'
+  let out = ''
+  let used = 0
+  for (const ch of s) {
+    const w = cellWidth(ch)
+    if (used + w > max - 1) break
+    out += ch
+    used += w
+  }
+  return out.trimEnd() + '…'
+}
+
+/**
+ * The card grid for a body of `width` cells: one card per row under
+ * COLS2_FROM, two to COLS3_FROM, three past it; cards share the row evenly
+ * (a 1-cell gutter between) and never grow past CARD_MAX_W.
+ */
+export function gridFor(width: number): { perRow: number; cardW: number } {
+  const w = Math.max(MIN_WIDTH, width)
+  const perRow = w >= COLS3_FROM ? 3 : w >= COLS2_FROM ? 2 : 1
+  const cardW = Math.min(CARD_MAX_W, Math.floor((w - (perRow - 1)) / perRow))
+  return { perRow, cardW }
+}
+
+/** DESKTOP: the clock the agent rows are timed from — the wall-clock minute, so every row's minutes (and so the props) move together, once a minute. */
+export function minuteClock(now: number): number {
+  return Math.floor(now / 60_000) * 60_000
+}
+
+/**
+ * The office the pane draws: while `view.demo`, THE PUBLISHED CAST (live check 7, R6) — the demo cast the poll published,
+ * with its ⭐, so a click's redraw draws what the last publish drew (once re-drawn from the clock on every redraw, a mute
+ * press walked the newcomer in and moved the rows); only the switch's first frames, before the poll published the demo,
+ * draw demoPayload(now). Else the scanned payload — and on LEAVING the demo, while state still holds the demo cast (the
+ * switch's scan not landed yet), THE OFFICE AS IT WAS (live check 7, R7 / Q5): `real`, the last scanned payload the pane drew
+ * (ui.tsx module memory), else an empty office — never the demo cast without its banner, taken for the office.
+ */
+export function effectivePayload(payload: Payload, view: Pick<View, 'demo'>, now: number, real: Payload | null = null): Payload {
+  if (!view.demo) return payload.demo ? (real ?? { ...EMPTY_PAYLOAD, scanned_ms: payload.scanned_ms }) : payload
+  return payload.demo ? payload : { ...demoPayload(now), stars: payload.stars }
+}
+
+/**
+ * THE OFFICE AS IT WAS (live check 7, R7): the last scanned (not demo) payload the pane drew — what leaving the demo draws at
+ * once, until the switch's scan lands (effectivePayload). Module memory: a hot reload in the demo leaves it null.
+ */
+let lastRealPayload: Payload | null = null
+/** The payload `seen` remembered as THE OFFICE AS IT WAS when it is a scanned one; `real` for effectivePayload either way. */
+function rememberReal(seen: Payload): Payload | null {
+  if (!seen.demo) lastRealPayload = seen
+  return lastRealPayload
+}
+
+/**
+ * THE FLICKER GUARD's projection: everything the pane DRAWS of a payload at
+ * `now`, as one string — and nothing it does not (scanned_ms, versions,
+ * skipped, raw timestamps). Two payloads with the same key draw the same
+ * office (the same Client props), so the poll publishes only when the key
+ * moved (register.tsx): a $.state.set redraws every reader, and on the
+ * desktop every redraw of the pane blinks, so a per-tick write WAS the
+ * flicker. Time enters at the resolution it is drawn:
+ * the elapsed MINUTE (the desktop row's timer; the text surfaces tick their
+ * mm:ss from the tick atom instead), the ⏰ long-running flag, and the ⭐ ids
+ * still inside the JUST_FINISHED window (`payload.stars`, the poll's stamps)
+ * — so a star's expiry and a minute's turn still redraw, once.
+ */
+export function renderKey(payload: Payload, now: number, coarse = false): string {
+  const parts: string[] = [payload.demo ? 'D' : 'S', String(payload.oversized)]
+  for (const a of payload.agents) {
+    const el = agentElapsed(a, minuteClock(now))
+    // coarse (the CALM key): who is in the office and whether live/done/failed (working ⇄ waiting ⏳ flaps), not what each one is doing
+    // this second (tool / phase) nor the minute on its clock
+    parts.push([
+      a.id, a.persona_id, a.emoji, a.role, a.subagent_type, coarse && a.status === 'stale' ? 'running' : a.status, coarse ? '' : a.tool, coarse ? '' : a.phase, a.task_short, a.task, a.result ?? '\u0000',
+      a.session, a.session_full, a.cwd, a.project, a.is_session ? 1 : 0, a.closed ? 1 : 0, a.is_workflow ? 1 : 0, a.truncated ? 1 : 0,
+      a.model, a.topic ?? '', a.failed ? 1 : 0,
+      coarse ? '' : el === null ? 'x' : Math.max(0, Math.floor(el / 60_000)), isLongRunning(a, now) ? 1 : 0,
+    ].join('\u0001'))
+  }
+  const alive = Object.entries(payload.stars).filter(([, t]) => now - t < JUST_FINISHED_MS).map(([id]) => id).sort()
+  parts.push(alive.join(','))
+  return parts.join('\u0002')
+}
+
+/** PAGE roomDone as $.store holds it (ct_roomDone): the object of booleans; anything else → {} (a bad value never breaks a draw). */
+export function parseRoomDone(stored: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+    for (const [k, v] of Object.entries(stored as Record<string, unknown>)) if (typeof v === 'boolean') out[k] = v
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Module memory (not drawn from; a hot reload only loses a walk-in, as PAGE's reload does).
+// ---------------------------------------------------------------------------
+
+/** PAGE roomDone, cached from $.store ('roomDone'); null until first read. */
+let roomDoneCache: Record<string, boolean> | null = null
+
+async function loadRoomDone($: EngineInterface): Promise<Record<string, boolean>> {
+  if (roomDoneCache !== null) return roomDoneCache
+  try {
+    roomDoneCache = parseRoomDone(await $.store.get(STORE_ROOM_DONE_KEY))
+  } catch {
+    roomDoneCache = {}
+  }
+  return roomDoneCache
+}
+
+/**
+ * The render's copy of the overrides follows every write of theirs: saveRoomDone's here, and the poll's
+ * (register.tsx prunes the rooms no longer present straight in $.store — no `$` crosses the import, so it
+ * hands the kept map over instead). A stale copy would write a pruned room back on the next toggle.
+ */
+export function rememberRoomDone(value: Record<string, boolean>): void {
+  roomDoneCache = value
+}
+
+async function saveRoomDone($: EngineInterface, value: Record<string, boolean>): Promise<void> {
+  rememberRoomDone(value)
+  await $.store.set(STORE_ROOM_DONE_KEY, value).catch(() => undefined)
+}
+
+/**
+ * THE TOOLBAR'S ☐ / ☑ (live check 7, Q6): flips the global "show finished" AND CLEARS EVERY PER-ROOM OVERRIDE, so it sets
+ * every card — a room's override won over it, and after one card click the toolbar box no longer moved that card. The
+ * render's copy is cleared before the prefs write redraws, the store after it (one write, only when there was an override).
+ */
+async function showDoneEverywhere($: EngineInterface): Promise<Prefs> {
+  const overridden = Object.keys(await loadRoomDone($)).length > 0
+  if (overridden) rememberRoomDone({})
+  const saved = await savePrefs($, flipShowDone)
+  if (overridden) await $.store.set(STORE_ROOM_DONE_KEY, {}).catch(() => undefined)
+  return saved
+}
+
+/** Writes prefs through the atom and mirrors them to $.store (they outlive the session). */
+async function savePrefs($: EngineInterface, fn: (p: Prefs) => Prefs): Promise<Prefs> {
+  const saved = await update($, prefsAtom, fn)
+  await $.store.set(STORE_PREFS_KEY, saved).catch(() => undefined)
+  return saved
+}
+
+/**
+ * PAGE setLang(): the pane's title (with the working count, as the poll keeps it), THEN the prefs — the retitle first, as the
+ * poll does (live check 7, R14): the engine draws the writes of one tick once, so the switch is one redraw, never the title a
+ * step behind the office.
+ */
+async function setLang($: EngineInterface, lang: Lang): Promise<Prefs> {
+  const payload = await read($, payloadAtom)
+  await $.ui.open({ id: PANE_ID, title: paneTitle(lang, workingCount(payload)) }).catch(() => undefined)
+  return savePrefs($, p => ({ ...p, lang }))
+}
+
+/** PAGE setDemo(): toggles the demo (its cast obeys "show finished" as the office does: live check 5). */
+async function setDemo($: EngineInterface, on: boolean): Promise<View> {
+  return update($, viewAtom, v => ({ ...v, demo: on, selected: null, focusIndex: -1 }))
+}
+
+// ---------------------------------------------------------------------------
+// The presses, ONE set of transitions for both doors: the text cards' Button /
+// Input closures (the render below) and the desktop office Client's posts
+// (applyOfficeMessage). Pure; the `$` plumbing (savePrefs, update, setLang,
+// setDemo, saveRoomDone) is this file's, so `$` never crosses an import.
+// ---------------------------------------------------------------------------
+
+const flipShowDone = (p: Prefs): Prefs => ({ ...p, showDone: !p.showDone })
+const flipMuted = (p: Prefs): Prefs => ({ ...p, muted: !p.muted })
+const flipPin = (room: string) => (p: Prefs): Prefs => ({ ...p, pins: p.pins.includes(room) ? p.pins.filter(x => x !== room) : [...p.pins, room] })
+/** The settings popover opened or closed — and an open drawer closed with it (live check 7, Q2: the settings replace the drawer, and closing them brings no old drawer back). */
+const flipHelp = (v: View): View => ({ ...v, helpOpen: !v.helpOpen, selected: null })
+/**
+ * The text cards' focus ON THE SELECTED CARD (live check 7, R2): what an `open` post of the office Client writes as
+ * view.focusIndex — the selection written at once, the card's place in the text cards' walk derived when they draw (the
+ * post no longer reads the office first: four reads before the write).
+ */
+export const FOCUS_ON_SELECTED = -2
+/** The drawer on `id`; `focusIndex` is the card's place in the text cards' walk (officeView().order), or FOCUS_ON_SELECTED. */
+const openedOn = (id: string, focusIndex: number) => (v: View): View => ({ ...v, selected: id, helpOpen: false, focusIndex })
+const drawerClosed = (v: View): View => ({ ...v, selected: null, helpOpen: false })
+/** The search set to `q`, cleaned (office-chrome.ts cleanSearch: SEARCH_MAX code points, the bidi controls removed, every other control character a space — an Input value holding either is refused, the text cards' as the Client's). */
+const searchedFor = (q: string) => (v: View): View => ({ ...v, search: cleanSearch(q), focusIndex: -1 })
+const otherLang = (lang: Lang): Lang => (lang === 'he' ? 'en' : 'he')
+
+/**
+ * Redraws the pane for a change that is not a $.state write (a room's "show finished" override lives in $.store): at once
+ * (live check 7, R3 — the redraw latch of 100 ms, once a burst's one redraw, is gone: the engine folds a burst of invalidates
+ * itself, ten redraws a second at most, and the press is drawn by the message's answer anyway). Never throws.
+ */
+function redraw($: EngineInterface): void {
+  try {
+    $.ui.invalidate('ui.render')
+  } catch {
+    // nothing draws the pane
+  }
+}
+
+/**
+ * THE LAST FRAME (live check 7, R2): the geometry and the footer of the office Client as the render last drew it — what the
+ * `ui.message` hook builds its `{ props }` answer with (a message carries no geometry). Module memory, set by the desktop
+ * render; null before the first one (then the hook answers `{}` and the redraw draws the press).
+ */
+let officeFrame: { columns: number; rows: number; offset: number; footer: string } | null = null
+
+/** What an office action wrote: the prefs or the view it wrote (the answer is built from them; never one only read), and whether anything changed. */
+type Applied = { prefs?: Prefs; view?: View; changed: boolean }
+const NOTHING: Applied = { changed: false }
+
+/** The outbox's last number applied, and whose (the posting instance's id): module memory (THE OUTBOX). */
+let appliedBatch = { i: '', n: 0 }
+
+/**
+ * THE NEWEST ANSWER (live check 7 review): the office's `ui.message` hooks started, and the desktop renders of the pane
+ * started — module memory. Two posts' hooks run at once and finish in any order (one awaits a slower $.store write), and
+ * every read of one dispatch sees the moment it began (d.ts: `$.state.get`), so an older hook's `{ props }` could reach the
+ * instance after a newer answer — or after a render that drew a newer write, a poll's publish among them — and stick there
+ * (equal props: nothing redraws it). A hook therefore answers only while no office post has started after it and no
+ * desktop render has started since it began; else `{}`. Dropping an answer costs nothing but its head start: every change
+ * a post makes is drawn by the redraw its own write (or roomDone's invalidate) asks for, which reads after it.
+ */
+let officeMessages = 0
+let officeRenders = 0
+/** The most actions of one post read (the module's outbox holds OUTBOX_MAX). */
+const BATCH_MAX = 16
+
+/**
+ * THE OFFICE'S POSTS (desktop): `e.data` of a `ui.message` from the office
+ * Client (office-client.tsx, OfficeMessage) — code's data, validated here,
+ * never trusted — applied as the text cards' press of the same name does,
+ * through the shared transitions above, ONE atom per action. A post is a BATCH
+ * (live check 7, R12: one post per frame, a later one replacing an undelivered
+ * one) — `{ t: 'batch', i, items }`, the module's outbox: each item numbered
+ * once per instance `i`, applied in order and only once (a later post carries
+ * the earlier actions too; the number checked at each item, as two posts'
+ * hooks overlap); an old single action is still applied as one:
+ *   showDone / mute / pin {room} → prefs (+ the $.store mirror)
+ *   lang → prefs (+ mirror) and the pane retitled (setLang)
+ *   help / close / open {id} / search {q} / demo → view (search: cleaned and
+ *     capped, cleanSearch; only when it differs, so an echo or a repeated Enter
+ *     redraws nothing)
+ *   roomDone {room} → the $.store override (the render's copy set at once), the
+ *     pane redrawn at once (no latch: live check 7, R3)
+ * Anything else changes nothing: `focus` (no longer posted — j / k move the
+ * module's own keyboard focus, and a post per key could displace a click's
+ * `open` in the same frame; mirrored into view.focusIndex it would also redraw
+ * — blink — the pane per key), `content` / `pull` (dropped with the native
+ * scroll, spec §2 item 11), an unknown `t`, a missing or mistyped field, a
+ * non-object.
+ */
+async function applyOfficeMessage($: EngineInterface, data: unknown): Promise<Applied> {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return NOTHING
+  const b = data as { t?: unknown; i?: unknown; items?: unknown }
+  if (b.t !== 'batch') return applyOfficeAction($, data)
+  // THE OUTBOX (office-client.tsx, live check 7 R12): the frame's actions, each numbered once per instance — a number this
+  // instance already sent is skipped (a later post carries the earlier actions too); at most BATCH_MAX are read
+  if (typeof b.i !== 'string' || !Array.isArray(b.items)) return NOTHING
+  const numbered = (b.items as unknown[]).slice(-BATCH_MAX).filter((it): it is { n: number } =>
+    it !== null && typeof it === 'object' && typeof (it as { n?: unknown }).n === 'number')
+  let all = NOTHING
+  for (const it of numbered) {
+    // checked AT EACH ITEM, not once before the loop (live check 7 review): the hooks of two posts run at once, and a later
+    // post of this instance — carrying this one's actions too — may have applied this item while this one awaited an earlier
+    // item's write (a slow $.store); applied twice, a flip undid itself. The number only moves forward
+    if (b.i === appliedBatch.i && it.n <= appliedBatch.n) continue
+    appliedBatch = { i: b.i, n: it.n }
+    const one = await applyOfficeAction($, it)
+    // (what the batch wrote last wins: the answer is built from it)
+    if (one.changed) all = { prefs: one.prefs ?? all.prefs, view: one.view ?? all.view, changed: true }
+  }
+  return all
+}
+
+/** One action of the office (an item of a batch, or an old single post): what it wrote. */
+async function applyOfficeAction($: EngineInterface, data: unknown): Promise<Applied> {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return NOTHING
+  const m = data as { t?: unknown; id?: unknown; room?: unknown; q?: unknown }
+  const wrote = (prefs: Prefs): Applied => ({ prefs, changed: true })
+  const shown = (view: View): Applied => ({ view, changed: true })
+  switch (m.t) {
+    case 'showDone':
+      return wrote(await showDoneEverywhere($))
+    case 'mute':
+      return wrote(await savePrefs($, flipMuted))
+    case 'pin':
+      return typeof m.room === 'string' ? wrote(await savePrefs($, flipPin(m.room))) : NOTHING
+    case 'lang':
+      return wrote(await setLang($, otherLang((await read($, prefsAtom)).lang)))
+    case 'help':
+      return shown(await update($, viewAtom, flipHelp))
+    case 'close':
+      return shown(await update($, viewAtom, drawerClosed))
+    case 'demo': {
+      // the demo's switch to a TARGET (live check 7, R7: `on`, so a double press of the exit leaves it off — the old flip
+      // re-entered the demo); an old post without one flips it. Already there: nothing written
+      const v = await read($, viewAtom)
+      const target = typeof (m as { on?: unknown }).on === 'boolean' ? (m as { on: boolean }).on : !v.demo
+      return target === v.demo ? NOTHING : shown(await setDemo($, target))
+    }
+    case 'open':
+      // the selection written FIRST (R2): the text cards' focus follows it, derived when they draw (FOCUS_ON_SELECTED)
+      return typeof m.id === 'string' ? shown(await update($, viewAtom, openedOn(m.id, FOCUS_ON_SELECTED))) : NOTHING
+    case 'search': {
+      if (typeof m.q !== 'string') return NOTHING
+      const q = cleanSearch(m.q) // (by code point: never half a surrogate pair; bidi controls removed, other control characters as spaces)
+      return (await read($, viewAtom)).search !== q ? shown(await update($, viewAtom, searchedFor(q))) : NOTHING
+    }
+    case 'roomDone': {
+      if (typeof m.room !== 'string') return NOTHING
+      const [prefs, cur] = await Promise.all([read($, prefsAtom), loadRoomDone($)])
+      // R3: the override the render reads is set at once (rememberRoomDone) and the redraw asked BEFORE the store write is
+      // awaited (the write redraws nothing: the override lives in $.store), so that redraw draws it at once (no latch); the
+      // answer follows the store write, and is dropped once the redraw has started (THE NEWEST ANSWER). The prefs read here
+      // are not handed on as written (live check 7 review): read before the store write, they would stand over a newer prefs
+      // write of the same batch
+      const next = toggledRoomDone(cur, prefs.showDone, m.room)
+      rememberRoomDone(next)
+      redraw($)
+      await saveRoomDone($, next)
+      return { changed: true }
+    }
+    default:
+      return NOTHING
+  }
+}
+
+/**
+ * THE ANSWER (live check 7, R2): the office Client's next props, built by the render's own buildOfficeProps from the values
+ * the message just wrote (`applied`) and the rest read at once (one round of concurrent reads), at the geometry and the
+ * footer of THE LAST FRAME — so the press is drawn without waiting for the redraw its write causes (the engine folds that
+ * to its redraw rate, behind every other bump of the plugin); the redraw follows with equal props (no second call of the
+ * module) and sizes the Client to the new content (`height` is the render's alone). Null when no frame was drawn yet, or
+ * the office Client is down (the text cards draw).
+ */
+async function officeAnswer($: EngineInterface, applied: Applied): Promise<OfficeProps | null> {
+  const frame = officeFrame
+  if (frame === null || DESKTOP.clientFailed) return null
+  const [prefs, payload, view, roomDone, clock] = await Promise.all([
+    applied.prefs ?? read($, prefsAtom), read($, payloadAtom), applied.view ?? read($, viewAtom), loadRoomDone($), $.clock.now().catch(() => null),
+  ])
+  const now = clock ?? Math.max(clockSeen, payload.scanned_ms)
+  return buildOfficeProps({ payload, real: rememberReal(payload), prefs, view, roomDone, now, usage: USAGE.fiveHour, footer: frame.footer, columns: frame.columns, rows: frame.rows, offset: frame.offset })
+}
+
+// ---------------------------------------------------------------------------
+// Hooks.
+// ---------------------------------------------------------------------------
+
+/** Adds the pane's render hook and its office Client's message hook. Called once from register(). */
+export function registerUi(on: On): void {
+  // The desktop office Client's posts (only this plugin's hooks see them): applied as the text cards' presses
+  // (applyOfficeMessage), then ANSWERED with the Client's next props (officeAnswer, live check 7 R2: `{ props }` hands the
+  // posting instance its props directly, its local state kept, with no ui.render run) — the write's redraw follows with the
+  // same props and the Client's new height. `{}` when nothing changed, nothing can be built, or the answer is no longer the
+  // newest (THE NEWEST ANSWER: a later post or a render since — the redraw draws it); a post never fails the surface.
+  on('ui.message', { element: 'office' }, async ($, e) => { // OFFICE_KEY, as a literal: validate reads a matcher statically
+    const mine = ++officeMessages
+    const renders = officeRenders
+    const newest = () => mine === officeMessages && renders === officeRenders
+    try {
+      const applied = await applyOfficeMessage($, e.data)
+      if (!applied.changed || !newest()) return {}
+      const props = await officeAnswer($, applied)
+      return props && newest() ? { props } : {}
+    } catch {
+      // a bad post, or a write refused: the office stays as it was
+      return {}
+    }
+  }).catch(($, e, next) => next(e))
+
+  on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, async ($, e) => {
+    const els = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = els
+    // the desktop draws the office Client (office-client.tsx); every other surface the text cards
+    const desktop = e.surface === 'desktop'
+    // (counted before its reads: a post's hook that began before them answers no more — THE NEWEST ANSWER)
+    if (desktop) officeRenders += 1
+    // ONE round of reads (live check 7, R2: they ran one after another, a round trip each, before every draw). The text
+    // surfaces subscribe to the poll's tick so their mm:ss advance; the desktop does NOT (its rows show minutes, and every
+    // redraw of it blinks — the tick must never reach it). The clock is the engine's; a host without one (a bare test) falls
+    // back to the last time the clock answered, or the scan's own time (never the runtime's wall clock: the hooks keep the
+    // engine's one clock)
+    const [prefs, payload, view, scanError, roomDone, clock] = await Promise.all([
+      read($, prefsAtom), read($, payloadAtom), read($, viewAtom), read($, scanErrorAtom), loadRoomDone($),
+      $.clock.now().then(t => (clockSeen = t)).catch(() => null), desktop ? undefined : read($, tickAtom),
+    ])
+    const now = clock ?? Math.max(clockSeen, payload.scanned_ms)
+    if (!desktop) textSurfaceDrawnAt = now
+    const lang = prefs.lang
+    const L: Strings = I18N[lang]
+    const rtl = dirOf(lang) === 'rtl'
+    const width = Math.max(MIN_WIDTH, e.props.bodyColumns || 80)
+    const real = rememberReal(payload)
+    const office = effectivePayload(payload, view, now, real)
+    const all = office.agents
+
+    // --- DESKTOP: the office is ONE Client. The hooks build its props from state (buildOfficeProps: pure,
+    //     plain JSON) and size it to its full content (officeHeight: the chrome rows + the larger of the layout's
+    //     rows and the floating overlay's height), so the engine scrolls it natively and hands the window back as
+    //     e.props.scroll; the module draws the agent rows, the chrome and the fx, and posts what the person did
+    //     (every click a native Button) to `ui.message` (applyOfficeMessage above). Nothing is written here.
+    //     Equal state → equal props → nothing redraws. Only where the surface's table has a Client (the
+    //     capability, not the name: spec §5), and never while DESKTOP.clientFailed (a `ui.fault` of the module,
+    //     register.tsx; /theater clears it): then the desktop falls through to the text cards below.
+    if (e.surface === 'desktop' && 'Client' in els && !DESKTOP.clientFailed) {
+      const { Client, Markdown } = els
+      // the footer: the scan error alone (the too-long conversations ride the settings popover: buildOfficeProps `oversized`,
+      // live check 6 — `דולגו 1 תמלילים גדולים מדי` on the main screen was unclear)
+      officeFrame = { columns: width, rows: e.props.scroll?.bodyRows ?? 30, offset: e.props.scroll?.offset ?? 0, footer: scanError ?? '' }
+      const props = buildOfficeProps({ payload, real, prefs, view, roomDone, now, usage: USAGE.fiveHour, ...officeFrame })
+      const height = officeHeight(props, rowCount(props)) // (the rows counted, no cell built: this runs on every render)
+      // THE CREDIT LINE under the Client (decision 27a; paint probe round 6, 23.10): the page cannot draw a `Link` inside a
+      // Client — the module's own credit (its Link nested in the coloured Text, or beside it) faulted every render ("a tree the
+      // page cannot draw") and the office fell back to the text cards for everyone; with a Text in the Link's place it drew.
+      // So the hooks draw it in the pane's own tree: a column of the Client, then the credit — a blank line (its top margin),
+      // then ONE height-1 line: ONE Link to the site whose label is the whole credit, `© Legal Mind` (no-break, nb: the line
+      // never wraps, a narrow pane clips it at the edge) — the brand name itself clickable (the owner's wish, 23.10), the
+      // address not spelled out. A Link has no colour prop: it takes the surface's own link colour, so no coloured Text beside
+      // it. One Latin run, read left to right in either pane: the row's content is centred (Asaf, 23.10: 'centre the logo part'). The Client
+      // keeps its own height (officeHeight, without CREDIT_ROWS) at the pane's top, so the engine's offset still names the Client's rows from its first; the credit's rows
+      // only add to the pane's content under it (the module counts them where it measures that offset: office-client.tsx
+      // THE STALE OFFSET).
+      // THE LOGO (decision 28b): the small Legal Mind logo at the row's reading edge, BEFORE the words — the right of the line
+      // in Hebrew, its left in English. The row is never reversed (the Latin run above), so the logo is its LAST child in Hebrew
+      // and its first in English. A Markdown inline image (office-layout.ts logoMarkdown) of the bytes register.tsx read once
+      // (model.ts BRAND): the desktop draws no `Image` element in the pane (paint probe rounds 7-8) but draws this (round 9), as
+      // wide as its box — so a Box LOGO_CELLS wide and one row tall (the credit keeps its one row: CREDIT_ROWS), clipped, never
+      // shrunk. One cell between it and the words: the Box's margin on the words' side. The row's items centred on the cross
+      // axis. No logo read (BRAND.logo ''): the credit alone, as before. The Markdown has no link and no `onLinkPress`:
+      // nothing in it to press (the credit's Link is the one thing to click)
+      const logo = BRAND.logo !== '' && (
+        <Box key="logo" width={LOGO_CELLS} height={1} flexShrink={0} overflow="hidden" {...(rtl ? { marginLeft: 1 } : { marginRight: 1 })}>
+          <Markdown text={logoMarkdown(BRAND.logo)} />
+        </Box>
+      )
+      return (
+        <Box flexDirection="column" width="100%">
+          <Client key={OFFICE_KEY} module="./office-client.tsx" width={width} height={height} props={props} />
+          <Box key="credit" flexDirection="row" justifyContent="center" alignItems="center" width="100%" height={1} marginTop={1} overflow="hidden">
+            {rtl ? null : logo}
+            <Link href={CREDIT_URL} label={nb(CREDIT)} />
+            {rtl ? logo : null}
+          </Box>
+        </Box>
+      )
+    }
+
+    // desktop (the text fallback) + Hebrew: a column's short lines hug its right edge
+    const colAlign = desktop && rtl ? 'flex-end' : undefined
+    const row = rtl ? 'row-reverse' : 'row'
+    const compact = width < COMPACT_BELOW
+    const { perRow, cardW } = gridFor(width)
+    const innerW = cardW - 2 // the status mark + its space
+    const showDone = prefs.showDone
+    const q = view.search
+    const { rooms, stat, order } = officeView(all, q, lang, showDone, roomDone, prefs.pins)
+    // the ⭐ as the poll published them (the finish beat is the poll's; a render only draws)
+    const stars = office.stars
+    const counts = headerCounts(all)
+    // (FOCUS_ON_SELECTED: the office Client's `open` — the selected card's place in this walk, derived here)
+    const focusAt = (v: View): number => (v.focusIndex === FOCUS_ON_SELECTED ? order.findIndex(a => a.id === v.selected) : v.focusIndex)
+    const focusIndex = order.length === 0 ? -1 : Math.min(focusAt(view), order.length - 1)
+    const focused = focusIndex >= 0 ? order[focusIndex] : undefined
+    const selected = view.selected !== null ? all.find(a => a.id === view.selected) : undefined
+    // a narrow pane shows no key-hint chips (the desktop draws one per hotkey: three rows of them at
+    // 45 columns); the hotkeys come back with the room, and the help popover lists them either way
+    const hk = (k: string) => (compact ? undefined : k)
+
+    // --- handlers (closures over $, declared here so `$` never crosses an import; the transitions are the
+    //     ones the desktop Client's posts go through, applyOfficeMessage) ---
+    const toggleShowDone = () => void showDoneEverywhere($)
+    const toggleMute = () => void savePrefs($, flipMuted)
+    const toggleLang = () => void setLang($, otherLang(lang))
+    const toggleHelp = () => void update($, viewAtom, flipHelp)
+    const toggleDemo = () => void setDemo($, !view.demo)
+    const openAgent = (id: string) => void update($, viewAtom, openedOn(id, order.findIndex(a => a.id === id)))
+    const closeDrawer = () => void update($, viewAtom, drawerClosed)
+    const moveFocus = (d: number) => void update($, viewAtom, v => {
+      if (order.length === 0) return { ...v, focusIndex: -1 }
+      const cur = focusAt(v) < 0 ? (d > 0 ? -1 : order.length) : focusAt(v)
+      return { ...v, focusIndex: Math.max(0, Math.min(order.length - 1, cur + d)) }
+    })
+    const openFocused = () => { if (focused) openAgent(focused.id) }
+    const togglePin = (s: string) => void savePrefs($, flipPin(s))
+    const toggleRoomDone = async (s: string) => {
+      await saveRoomDone($, toggledRoomDone(roomDone, showDone, s))
+      // redraw: the override lives outside $.state (a view write here, at once: a text surface does not blink; the
+      // desktop Client's roomDone is drawn by the message's {props} answer and an immediate invalidate — no latch: live check 7, R3)
+      await update($, viewAtom, v => ({ ...v }))
+    }
+    const setSearch = (value: string) => void update($, viewAtom, searchedFor(value))
+
+    // --- header: one line. Narrow → the counts alone as icons (the tab already says 🎭); wide → title + worded counts ---
+    const countsText = compact
+      ? `${COUNT_ICON.run}${counts.run}` + (counts.idle ? ` ${COUNT_ICON.idle}${counts.idle}` : '') + ` ${COUNT_ICON.done}${counts.done}`
+      : `${COUNT_ICON.run} ${counts.run} ${L.working}` + (counts.idle ? ` · ${COUNT_ICON.idle} ${counts.idle} ${L.idleN}` : '') + ` · ${COUNT_ICON.done} ${counts.done} ${L.finished}`
+    // the five-hour meter ends the counts (`· ⏳ 5h 42%`, usage.ts) when it fits whole: a percent cut in half is worse than none
+    // (the footer line under the prompt carries the full label on this surface)
+    const countsBudget = width - (compact ? 3 : cellWidth(L.appTitle) + 1)
+    const countsMeter = USAGE.fiveHour ? `${countsText} · ${usageShort(USAGE.fiveHour)}` : countsText
+    const header = (
+      <Box flexDirection={row} justifyContent="space-between" gap={1}>
+        {compact ? <Text bold>🎭</Text> : <Text bold>{L.appTitle}</Text>}
+        <Text dimColor>{clip(cellWidth(countsMeter) <= countsBudget ? countsMeter : countsText, countsBudget)}</Text>
+      </Box>
+    )
+    // --- toolbar: one row; icons alone when narrow, worded when there is room ---
+    const toolbar = (
+      <Box flexDirection={row} flexWrap={compact ? 'nowrap' : 'wrap'} gap={1}>
+        <Button key="showDone" hotkey={hk('f')} plain label={compact ? (showDone ? '☑' : '☐') : `${showDone ? '☑' : '☐'} ${L.showDone}`} onPress={toggleShowDone} />
+        <Button key="mute" hotkey={hk('m')} plain label={prefs.muted ? '🔕' : '🔔'} onPress={toggleMute} />
+        <Button key="lang" hotkey={hk('l')} plain label={compact ? (lang === 'he' ? 'EN' : 'עב') : L.switchTo} onPress={toggleLang} />
+        <Button key="help" hotkey={hk('h')} plain label="?" onPress={toggleHelp} />
+        {view.demo
+          ? <Button key="demo" hotkey={hk('d')} plain label={compact ? '🎬 ✕' : `🎬 ${L.demoLabel} · ${L.exitDemo}`} onPress={toggleDemo} />
+          : <Button key="demo" hotkey={hk('d')} plain dimColor label={compact ? '🎬' : `🎬 ${L.demoLabel}`} onPress={toggleDemo} />}
+      </Box>
+    )
+    // --- search: the Input alone (the 🔍 lives in its placeholder; no label, no submit
+    //     button: a `submitLabel` is drawn as a button beside the field on the desktop, and the
+    //     search already applies on every keystroke through onInput) ---
+    const search = e.surface !== 'mobile'
+      ? (() => {
+          const { Input } = $.ui.resolve(e)
+          return (
+            <Box flexDirection={row}>
+              <Input key="search" placeholder={`🔍 ${desktop && rtl ? L.searchPlaceholder.replace(/…$/, '') : L.searchPlaceholder}`} value={q} onInput={setSearch} onSubmit={setSearch} />
+            </Box>
+          )
+        })()
+      : null
+
+    // --- help popover (PAGE renderHelp) ---
+    // (no 's' row: the search is the Input itself now — Tab reaches it; the jump button was a duplicate. No Esc beside the x:
+    // the cards handle no Escape — the engine's Escape hands the keyboard back to the prompt and reaches no Button here)
+    const helpRows: Array<[string, string]> = [
+      [L.scFinished, 'f'], [L.scMove, 'k / j'], [L.scOpen, 'o · Enter'], [L.scClose, 'x'],
+      [L.scMute, 'm'], [L.scLang, 'l'], [L.scDemo, 'd'], [L.scHelp, 'h'],
+    ]
+    const help = view.helpOpen && (
+      <Box key="help" flexDirection="column" alignItems={colAlign} borderStyle="round" paddingX={1}>
+        <Box flexDirection={row} justifyContent="space-between">
+          <Text bold>{L.helpTitle}</Text>
+          <Button key="closeHelp" plain role="dismiss" label="✕" onPress={toggleHelp} />
+        </Box>
+        {helpRows.map(([what, keys]) => (
+          <Box flexDirection={row} justifyContent="space-between" gap={1}>
+            <Text>{clip(what, width - 14)}</Text>
+            <Text color="cyan">{keys}</Text>
+          </Box>
+        ))}
+        <Text dimColor wrap="wrap">{L.keysHint}</Text>
+      </Box>
+    )
+
+    // --- details drawer (PAGE fillDrawer) ---
+    const drawer = selected && (() => {
+      const a = selected
+      const dur = agentElapsed(a, now, true)
+      // ❌ failed/killed: live.ts merged the engine's status into the payload (the pane never reads the live map)
+      const failed = a.failed === true
+      const stx = failed ? `❌ ${L.dFailed}` : a.status === 'running' ? L.dWorking : a.status === 'done' ? L.dDone : L.dStale
+      const chips = [stx, a.subagent_type, (a.status === 'done' ? L.dDuration : L.dElapsed) + fmt(dur), a.tool].filter(Boolean)
+      const model = modelLabel(a.model) || UNKNOWN_MODEL_PILL // the row is always there ("?" when unknown)
+      const inner = width - 4
+      return (
+        <Box key="drawer" flexDirection="column" alignItems={colAlign} borderStyle="double" paddingX={1}>
+          <Box flexDirection={row} justifyContent="space-between" gap={1}>
+            <Text bold>{clip(`${a.emoji} ${personaName(a.persona_id, lang)}`, inner - 10)}</Text>
+            <Button key="close" hotkey="x" plain role="dismiss" label={compact ? '✕' : `✕ ${L.close}`} onPress={closeDrawer} />
+          </Box>
+          {a.role || a.task_short ? <Text dimColor>{clip(a.role || a.task_short, inner)}</Text> : null}
+          <Box flexDirection={row} flexWrap="wrap" gap={1}>
+            {chips.map(c => <Text key={`chip:${c}`} inverse>{` ${clip(c, inner - 2)} `}</Text>)}
+          </Box>
+          <Text bold>{L.dModel}</Text>
+          <Text key="model">{`🧠 ${model}`}</Text>
+          <Text bold>{L.dAction}</Text>
+          <Text>{activityLabel(a, lang)}</Text>
+          <Text bold>{L.dTask}</Text>
+          <Text wrap="wrap">{a.task || L.taskUnavailable}</Text>
+          {a.result ? <Text bold>{L.dResult}</Text> : null}
+          {a.result ? <Text wrap="wrap">{a.result}</Text> : null}
+          {a.result && a.truncated ? <Text dimColor wrap="wrap">{`✂ ${L.resultTruncated}`}</Text> : null}
+        </Box>
+      )
+    })()
+
+    // --- one card (PAGE createWS/updateWS): two lines, the row's full width, no frame ---
+    //   ● 💬 emoji name ✕★⏱︎         mm:ss      (💬 on the lead only)
+    //     activity · 🧠 model · type   (the model always: "🧠 ?" when unknown)
+    const card = (a: Agent) => {
+      const name = cardName(a, lang)
+      const failed = a.failed === true
+      const star = a.status === 'done' && a.id in stars && now - (stars[a.id] ?? 0) < JUST_FINISHED_MS
+      // the badges (decision 29): monochrome symbols, each in its colour (office-layout.ts MARK, markFg's), side by side
+      const badgeMarks: Array<[string, string]> = []
+      if (failed) badgeMarks.push([MARK.failed, FAIL_FG])
+      if (star) badgeMarks.push([MARK.star, BRAND_ACCENT])
+      if (isLongRunning(a, now)) badgeMarks.push([MARK.long, DOT_FG.stale])
+      const badges = badgeMarks.map(([g]) => g).join('')
+      const sub = a.role ? (a.subagent_type || personaName(a.persona_id, lang)) : a.subagent_type
+      // the model is ALWAYS on line 2, right after the activity ("🧠 ?" when unknown): which model runs each agent is never in doubt
+      const modelTag = `🧠 ${modelLabel(a.model) || UNKNOWN_MODEL_PILL}`
+      const isFocused = focused?.id === a.id
+      const isSelected = selected?.id === a.id
+      const color = a.status === 'running' ? 'green' : a.status === 'stale' ? 'yellow' : undefined
+      const done = a.status === 'done'
+      const mark = isSelected ? '◉' : isFocused ? '▸' : '●'
+      const timer = fmt(agentElapsed(a, now))
+      // the lead's 💬 rides its name on the first line (never a glyph of its own anywhere)
+      const nameLabel = clip(`${a.is_session ? `${LEAD_MARK} ` : ''}${a.emoji} ${name}`, innerW - cellWidth(timer) - 1 - (badges ? cellWidth(badges) + 1 : 0))
+      const activity = activityLabel(a, lang)
+      const subBudget = innerW - cellWidth(activity) - cellWidth(modelTag) - 3 - 3
+      const subText = sub && subBudget >= 4 ? clip(sub, subBudget) : ''
+      // line 2: activity · 🧠 model · type — the non-empty parts, a "·" only BETWEEN two of them (never a dangling separator)
+      const line2 = joinParts([activity, modelTag, subText])
+      const bursting = star && now - (stars[a.id] ?? 0) < BURST_MS
+      const burst = bursting
+        ? e.surface === 'terminal' // (the desktop's own celebration is the office Client's hop; its text fallback gets the emoji line)
+          ? (() => {
+              const { Client } = $.ui.resolve(e)
+              return <Client key={`confetti:${a.id}`} module="./confetti.tsx" props={{ seed: personaIndex(a.id), width: innerW }} width={innerW} height={1} />
+            })()
+          : <Text color="yellow">🎉 ✨ 🎊 ⭐</Text>
+        : null
+      return (
+        <Box key={`card:${a.id}`} flexDirection="column" width={cardW}>
+          <Box flexDirection={row} justifyContent="space-between" gap={1}>
+            <Box flexDirection={row} gap={1}>
+              <Text color={color} dimColor={done && !isSelected && !isFocused} bold={isFocused || isSelected} inverse={isSelected}>{mark}</Text>
+              <Button key={`open:${a.id}`} plain label={nameLabel} onPress={() => openAgent(a.id)} />
+              {badges ? <Box flexDirection={row}>{badgeMarks.map(([g, fg], i) => <Text key={`badge:${a.id}:${i}`} color={fg}>{g}</Text>)}</Box> : null}
+            </Box>
+            <Text key={`timer:${a.id}`} dimColor>{timer}</Text>
+          </Box>
+          <Box flexDirection={row} gap={1}>
+            <Text>{' '}</Text>
+            {line2.map((seg, i) =>
+              i === 0
+                ? <Text key={`act:${a.id}`} color={color} dimColor={done}>{seg}</Text>
+                : seg === modelTag && modelTag
+                  ? <Text key={`model:${a.id}`} dimColor>{seg}</Text>
+                  : <Text key={`l2:${a.id}:${i}`} dimColor>{seg}</Text>)}
+          </Box>
+          {burst}
+        </Box>
+      )
+    }
+
+    // --- rooms (PAGE ensureRoom + the room header): one line each ---
+    const roomBoxes = rooms.map(s => {
+      const st = stat.get(s)
+      const title = roomTitle(st, s)
+      const small = st?.topic ? st.label : (st?.sid ?? s.slice(0, 8))
+      const pinOn = prefs.pins.includes(s)
+      const showing = roomShowsDone(roomDone, showDone, s)
+      const members = order.filter(a => a.session_full === s)
+      const chunks: Agent[][] = []
+      for (let i = 0; i < members.length; i += perRow) chunks.push(members.slice(i, i + perRow))
+      // (decision 29's icons: the ● drawn green as the card's running mark — the 🟢 it replaces carried its own colour)
+      const countBits = [`${COUNT_ICON.run}${st?.running ?? 0}`, st?.stale ? `${COUNT_ICON.idle}${st.stale}` : '', st?.done ? `${COUNT_ICON.done}${st.done}` : ''].filter(Boolean)
+      const countsW = countBits.reduce((n, b) => n + cellWidth(b) + 1, 0)
+      // the title is cut by cell count from its own end (never the engine's visual truncation,
+      // which in an RTL row cuts an English title's beginning off)
+      const titleBudget = width - 3 - countsW - 2
+      const titleText = clip(`💬 ${title}`, titleBudget)
+      const smallText = !compact && titleBudget - cellWidth(titleText) > cellWidth(small) + 4 ? small : ''
+      return (
+        <Box key={`room:${s}`} flexDirection="column" marginTop={1}>
+          <Box flexDirection={row} justifyContent="space-between" gap={1}>
+            <Box flexDirection={row} gap={1}>
+              <Button key={`pin:${s}`} plain dimColor={!pinOn} label={pinOn ? '📌' : '○'} onPress={() => togglePin(s)} />
+              <Text bold>{titleText}</Text>
+              {smallText ? <Text dimColor>{smallText}</Text> : null}
+            </Box>
+            <Box flexDirection={row} gap={1}>
+              <Text color="green">{countBits[0]}</Text>
+              {st?.stale ? <Text color="yellow">{`${COUNT_ICON.idle}${st.stale}`}</Text> : null}
+              {st?.done
+                ? <Button key={`rdone:${s}`} plain dimColor={!showing} label={`${COUNT_ICON.done}${st.done}`} onPress={() => void toggleRoomDone(s)} />
+                : null}
+            </Box>
+          </Box>
+          {chunks.map((chunk, i) => (
+            <Box key={`row:${s}:${i}`} flexDirection={row} gap={1}>
+              {chunk.map(card)}
+            </Box>
+          ))}
+        </Box>
+      )
+    })
+
+    // --- empty states (PAGE emptyHTML) ---
+    const empty = order.length === 0 && (() => {
+      const kind = emptyKind(q, all.length, showDone)
+      const msg = kind === 'noactive' ? L.emptyNoActive : kind === 'nonewindow' ? L.emptyNoneInWindow : kind === 'nomatch' ? L.emptyNoMatch : L.emptyOffice
+      return (
+        <Box key="empty" flexDirection="column" alignItems="center" marginTop={1}>
+          <Text>🏢</Text>
+          <Box flexDirection="column" alignItems="center">
+            <Text bold wrap="wrap">{msg}</Text>
+            {kind === 'office' ? <Text dimColor wrap="wrap">{L.emptySub}</Text> : null}
+          </Box>
+          {kind === 'office' ? <Button key="watchDemo" variant="primary" label={L.watchDemo} onPress={() => void setDemo($, true)} /> : null}
+        </Box>
+      )
+    })()
+
+    // --- the arrow-key walk (PAGE moveCardFocus / roving tabstop) ---
+    const nav = order.length > 0 && (
+      <Box flexDirection={row} gap={1} marginTop={1}>
+        <Button key="prev" hotkey={hk('k')} plain dimColor label="↑" onPress={() => moveFocus(-1)} />
+        <Button key="next" hotkey={hk('j')} plain dimColor label="↓" onPress={() => moveFocus(1)} />
+        <Button key="openFocused" hotkey={hk('o')} plain dimColor label={compact ? '↵' : L.scOpen} onPress={openFocused} />
+        {focused ? <Text dimColor>{clip(`${focused.emoji} ${cardName(focused, lang)}`, width - (compact ? 12 : cellWidth(L.scOpen) + 14))}</Text> : null}
+      </Box>
+    )
+
+    // --- footer ---
+    const footerBits: string[] = []
+    if (office.oversized > 0) footerBits.push(L.oversizedN(office.oversized))
+    if (scanError !== null && scanError !== '') footerBits.push(scanError)
+    const footer = footerBits.length > 0 && <Text dimColor>{clip(footerBits.join(' · '), width)}</Text>
+    // --- THE CREDIT LINE (decision 27a): the pane's last line, a blank line above it — ONE Link to the site whose label is the
+    //     whole credit, `© Legal Mind` (an OSC 8 span on the terminal, its URL after it in dim where the terminal draws none; an
+    //     anchor elsewhere): the brand name itself is the link (the owner's wish, 23.10), in the surface's own link colour (a
+    //     Link has no colour prop, so no Text beside it); the same words in both languages (no i18n key), at the reading edge
+    //     (the row direction). No logo here (decision 28b): a Markdown image draws on the desktop alone, and these cards are the
+    //     other surfaces' (and the desktop's fallback) ---
+    const credit = (
+      <Box key="credit" flexDirection={row} marginTop={1}>
+        <Link href={CREDIT_URL} label={nb(CREDIT)} />
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column" width={width}>
+        {header}
+        {toolbar}
+        {search}
+        {help}
+        {drawer}
+        {roomBoxes}
+        {empty}
+        {nav}
+        {footer}
+        {credit}
+      </Box>
+    )
+  }).catch(($, e, next) => next(e))
+}

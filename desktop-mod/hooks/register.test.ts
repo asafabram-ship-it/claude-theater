@@ -71,7 +71,7 @@ async function propsOf(ui: Ui): Promise<OfficeProps> {
 
 /**
  * A click on the office's controls as the desktop does it (phase B, decision 26): the module's Button pressed by its key — a
- * row's who cell `agent:<id>:who`, a room head's pin `pin:<room>`, a room's more line `more:<room>` (the ✅ counts are no
+ * row's who cell `agent:<id>:who`, a room head's pin `pin:<room>`, a room's more line `more:<room>` (the ✓ counts are no
  * Button: read-only, live check 7 Q6); the kit presses a Client's Button by its key alone.
  */
 async function click(ui: Ui, kind: 'agent' | 'pin' | 'more', id: string): Promise<void> {

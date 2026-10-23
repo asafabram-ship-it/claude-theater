@@ -11,7 +11,7 @@
 // the rows, it never moves), a BLANK
 // line (no rule: it never stretched with the card), then the agents as a
 // COLUMN-MAJOR table of rigid columns (status
-// mark · who · [model] · activity emoji · [activity word] · [task]), each sized
+// mark · who · [model] · activity glyph · [activity word] · [task]), each sized
 // by the desktop to its widest value, every value one line tall. The desktop
 // draws its Text in a proportional font, so this module never pads by cell
 // and never cuts to a cell width: it only decides WHAT each cell says, by a
@@ -51,8 +51,9 @@
 // as data, so the model stays a pure function of (props, decor, the last mode's
 // rank).
 //
-// The strings are the probe's (`${emoji} ${name}`, `🤔` then `חושב`, a title
-// cut on a word with a trailing …): the desktop lays a Hebrew-first Text
+// The strings are the probe's (`${emoji} ${name}`, `⋯` then `חושב` — decision
+// 29's glyph where the probe drew 🤔 —, a title cut on a word with a trailing
+// …): the desktop lays a Hebrew-first Text
 // right-to-left, so nothing here reorders a string for the reader — but a
 // labelled control (the more / hide line, `עוד 2 שסיימו ◂`) goes through
 // iconLabel, which puts its mark where the reader meets it first.
@@ -100,12 +101,13 @@ export const PIN_OFF = '📌\uFE0E'
 /**
  * THE BRAND ACCENTS (decision 28a, 23.10 — after Asaf saw 0.5.0 on the desktop and brought the logo; decision 27b before it):
  * the frames of the cards, the drawer and the settings in the Legal Mind LOGO's light teal (BRAND_ACCENT, CARD_BORDER); the
- * office's header counts and THE CREDIT LINE in its dark teal (BRAND_ACCENT_DARK). The logo is teal — sampled from the file
- * (desktop-mod/assets/lm-logo.png): dark #206060-#207070, light #30A0B0 — so decision 27b's gold (#D4B97A / #C09A55) was the
- * palette of the brand's DOCUMENTS, not of its logo: the teal replaces it wherever the gold was. No background anywhere (the
- * desktop does not tell the module whether its theme is light or dark: live check 6) and no navy #1F3A5F (it vanishes on the
- * dark theme); the status marks keep their green / amber / grey (DOT_FG); a Button takes no colour on the desktop (decision
- * 26), so no Button is tinted.
+ * office's header counts and THE CREDIT LINE in its dark teal (BRAND_ACCENT_DARK). The logo is teal — sampled from its
+ * full-size PNG (no longer shipped: the mod carries assets/lm-logo-48.png alone): dark #206060-#207070, light #30A0B0 — so
+ * decision 27b's gold (#D4B97A / #C09A55) was the palette of the brand's DOCUMENTS, not of its logo: the teal replaces it
+ * wherever the gold was. No background anywhere (the desktop does not tell the module whether its theme is light or dark: live
+ * check 6) and no navy #1F3A5F (it vanishes on the dark theme); the status marks are monochrome symbols, the working one in the
+ * light teal (THE STATUS MARKS, decision 29, below); a Button takes no colour on the desktop (decision 26), so no Button is
+ * tinted.
  */
 export const BRAND_ACCENT = '#31A3AD'
 export const BRAND_ACCENT_DARK = '#1F7A82'
@@ -138,8 +140,24 @@ export const LOGO_ALT = 'Legal Mind'
 export function logoMarkdown(base64: string): string {
   return `![${LOGO_ALT}](data:image/png;base64,${base64})`
 }
-/** The status column's colours by status (the probe's dots): green running, amber stale, grey done. */
-export const DOT_FG: Readonly<Record<OfficeAgent['status'], string>> = { running: '#3fb950', stale: '#d29922', done: '#8b949e' }
+/**
+ * THE STATUS MARKS (decision 29, 23.10: monochrome marks in the brand colours instead of the colour emoji): a symbol of the
+ * font per status, one cell (glyphs), coloured by state — ● working in the logo's light teal, ◌ waiting in amber (the
+ * warning's colour, as before), ○ finished in grey — and the badges that ride the status column in the dot's place: ★ just
+ * finished in the light teal, ✕ failed in red, ⏱︎ long-running in the amber (VS15, escaped as NBSP is: the stopwatch's text
+ * presentation). The mark is the row's one coloured glyph: a Text — a Button would lose its colour (decision 26). The keyboard
+ * focus marker (FOCUS_MARK) is unchanged.
+ */
+export const MARK = { running: '●', stale: '◌', done: '○', star: '★', failed: '✕', long: '⏱\uFE0E' } as const
+/** The status column's colours by status: the logo's light teal working (decision 29; the probe's green #3fb950 before it), amber waiting, grey finished. */
+export const DOT_FG: Readonly<Record<OfficeAgent['status'], string>> = { running: BRAND_ACCENT, stale: '#d29922', done: '#8b949e' }
+/** The failed badge's red (decision 29: the ✕, where the ❌ was red of its own). */
+export const FAIL_FG = '#f85149'
+/**
+ * The counts' icons (decision 29) — a card title's `●3 ◌1 ✓2` and the header's narrow form: working, waiting (the status marks)
+ * and finished (the finished activity's ✓, i18n.ts ACT_GLYPH.done), drawn in the line's one colour.
+ */
+export const COUNT_ICON = { run: MARK.running, idle: MARK.stale, done: '✓' } as const
 /**
  * THE FIT: the share of a width in cells the desktop can be trusted to draw text into — its letters are wider than the
  * engine's cell (the probe's round 4 clipped `Sonnet` to `nnet` in a 6-cell box). From the probe: four columns of 32
@@ -179,6 +197,12 @@ export const LESS_MARK = '▾'
 export const FOCUS_MARK: Readonly<Record<'rtl' | 'ltr', string>> = { rtl: '‹', ltr: '›' }
 
 const EMOJI_RE = /^\p{Extended_Pictographic}/u
+/** A pictograph that has an emoji form: two cells. One without it (★ ✎ ☰ ☐: plain symbols in the pictographic ranges) is one. */
+const EMOJI_FORM_RE = /^\p{Emoji}/u
+/** An emoji presented as one by default: two cells even with VS15 (📌︎ stays wide). */
+const EMOJI_PRES_RE = /^\p{Emoji_Presentation}/u
+/** The text presentation selector (VS15). Escaped, as NBSP is. */
+const VS15 = '\uFE0E'
 /** Code points that take no cell of their own: combining marks (Hebrew points among them), the variation selectors, the ZWJ, the skin tones. */
 const JOIN_RE = /^[\p{M}‍︎️\u{1F3FB}-\u{1F3FF}]$/u
 const ZWJ = '‍'
@@ -190,18 +214,24 @@ export const NBSP = '\u00A0'
 
 export type Glyph = { ch: string; w: number }
 
-/** `text` as glyphs: a base code point with the marks, selectors and joined code points that ride on it, and its width in cells. */
+/**
+ * `text` as glyphs: a base code point with the marks, selectors and joined code points that ride on it, and its width in cells
+ * — two for an emoji (a pictograph with an emoji form), one for anything else; THE SYMBOLS' CELL (decision 29): a pictograph
+ * without an emoji form (★ ✎ ☰) is one cell, and so is a text-default emoji asked for its text presentation (VS15: ⚙︎ ⏱︎), so
+ * every status mark and activity glyph is one cell and the widest values never move with the glyph drawn.
+ */
 export function glyphs(text: string): Glyph[] {
   const out: Glyph[] = []
   let joined = false            // the previous code point was a ZWJ: the next one rides on the same glyph
   for (const cp of text) {
     const last = out[out.length - 1]
     if (last && (joined || JOIN_RE.test(cp))) {
+      if (cp === VS15 && [...last.ch].length === 1 && !EMOJI_PRES_RE.test(last.ch)) last.w = 1
       last.ch += cp
       joined = cp === ZWJ
       continue
     }
-    out.push({ ch: cp, w: EMOJI_RE.test(cp) ? EMOJI_CELLS : 1 })
+    out.push({ ch: cp, w: EMOJI_RE.test(cp) && EMOJI_FORM_RE.test(cp) ? EMOJI_CELLS : 1 })
     joined = false
   }
   return out
@@ -361,31 +391,40 @@ export function modelText(model: string, full = false): string {
   return cut(label || '?', PILL_MAX)
 }
 
-/** The first glyph of a text: an activity's emoji, its own column (the word beside it when the table has room). */
+/** The first glyph of a text: an activity's glyph (decision 29: a symbol, where it was an emoji), its own column (the word beside it when the table has room). */
 export function firstGlyph(text: string): string {
   return glyphs(text)[0]?.ch ?? ''
 }
 
-/** The text after its first glyph, trimmed: an activity's word (`חושב` of `🤔 חושב`). */
+/** The text after its first glyph, trimmed: an activity's word (`חושב` of `⋯ חושב`). */
 export function restWord(text: string): string {
   const g = glyphs(text)[0]?.ch ?? ''
   return text.slice(g.length).trim()
 }
 
-/** The room's counts as the title line draws them at its far edge: `🟢3 ⏳1 ✅2` (an idle or done count only when there is one). */
+/** The room's counts as the title line draws them at its far edge: `●3 ◌1 ✓2` (COUNT_ICON, decision 29; an idle or done count only when there is one). */
 export function countsText(room: Pick<OfficeRoom, 'run' | 'stale' | 'done'>): string {
-  return `🟢${room.run}${room.stale ? ` ⏳${room.stale}` : ''}${room.done ? ` ✅${room.done}` : ''}`
+  return `${COUNT_ICON.run}${room.run}${room.stale ? ` ${COUNT_ICON.idle}${room.stale}` : ''}${room.done ? ` ${COUNT_ICON.done}${room.done}` : ''}`
 }
 
 /**
- * The status mark of a row: the badges ride the status column — ⭐ inside the just-finished window, ❌ failed, ⏰ long-running
- * — else ● (running, stale) or ○ (done); its colour the status's. (The drawer's status line carries the same mark.)
+ * The status mark of a row (THE STATUS MARKS, decision 29): the badges ride the status column — ★ inside the just-finished
+ * window, ✕ failed, ⏱︎ long-running — else ● working, ◌ waiting, ○ finished; its colour markFg's. (The drawer's status line
+ * carries the same mark.)
  */
 export function markOf(a: Pick<OfficeAgent, 'status' | 'star' | 'failed' | 'longRunning'>): string {
-  if (a.star) return '⭐'
-  if (a.failed) return '❌'
-  if (a.longRunning) return '⏰'
-  return a.status === 'done' ? '○' : '●'
+  if (a.star) return MARK.star
+  if (a.failed) return MARK.failed
+  if (a.longRunning) return MARK.long
+  return MARK[a.status]
+}
+
+/** The colour of markOf's mark (decision 29): ★ the logo's light teal, ✕ red, ⏱︎ the waiting amber, else the status's (DOT_FG). */
+export function markFg(a: Pick<OfficeAgent, 'status' | 'star' | 'failed' | 'longRunning'>): string {
+  if (a.star) return BRAND_ACCENT
+  if (a.failed) return FAIL_FG
+  if (a.longRunning) return DOT_FG.stale
+  return DOT_FG[a.status]
 }
 
 // ---------------------------------------------------------------------------
@@ -415,8 +454,8 @@ function titleRoom(geo: Geo, counts: string, pinned: boolean): number {
 }
 
 /**
- * The room's counts, shrunk before the title is (round 8): the non-zero statuses (`🟢3 ⏳1 ✅2`), then without the ✅, then
- * the 🟢 alone — the first form that leaves the title TITLE_MIN fit cells (by FIT), else the shortest. `pinned` reserves the
+ * The room's counts, shrunk before the title is (round 8): the non-zero statuses (`●3 ◌1 ✓2`), then without the ✓, then
+ * the ● alone — the first form that leaves the title TITLE_MIN fit cells (by FIT), else the shortest. `pinned` reserves the
  * pin's cells beside the title (the model passes true: the pin Button is on every card since decision 26); every caller
  * states it — no default, so a test comparing with the drawn counts never takes the pin-less form by accident (phase B final
  * review).
@@ -488,7 +527,7 @@ export function widestName(w: Widest, nameMax: number): number {
 }
 
 export type ModelCol = 'full' | 'family' | 'none'
-/** What the office's tables draw: the activity word (else its emoji alone), the model column (with its version, the family, or none), the names' cap. `rank` is the mode's place on the ladder (0 the richest). */
+/** What the office's tables draw: the activity word (else its glyph alone), the model column (with its version, the family, or none), the names' cap. `rank` is the mode's place on the ladder (0 the richest). */
 export type TableMode = { rank: number; word: boolean; model: ModelCol; nameMax: number }
 /** The widths a table needs per column at a mode: the widest value plus the padding cell (the status cell carries the focus marker's cell too). */
 export type Need = { status: number; who: number; model: number; actEmoji: number; actWord: number; total: number }
@@ -504,7 +543,7 @@ export function needOf(w: Widest, word: boolean, model: ModelCol, nameMax: numbe
 
 /**
  * THE LADDER: the mode at `rank` when it fits `budget` cells, else null — (0) the word and the model (its version when `full`),
- * (1) the emoji alone, (2) the family word, (3) the names shrunk to what is left, down to NAME_MIN, (4) no model column,
+ * (1) the glyph alone, (2) the family word, (3) the names shrunk to what is left, down to NAME_MIN, (4) no model column,
  * (5) the names shrunk to the floor (never null: the office's last resort).
  */
 export function modeAt(w: Widest, rank: number, budget: number, full: boolean): TableMode | null {
@@ -527,8 +566,9 @@ export function modeAt(w: Widest, rank: number, budget: number, full: boolean): 
 /**
  * THE HYSTERESIS's token: the rank of the table mode last chosen and the widest values it was chosen from (`widestKey`), kept
  * by the caller between renders (the Client's instance), never in the props. The hysteresis is about the WIDTH: a rank kept
- * for the same widest values holds while the pane is dragged; once the content moved the office's widest values (a ⭐ or ❌
- * widened the marks, an agent with a long activity or model came or went, the names changed with the language) the mode is
+ * for the same widest values holds while the pane is dragged; once the content moved the office's widest values (an agent
+ * with a long activity or model came or went, the names changed with the language — a badge no longer widens the marks: every
+ * mark is one cell since decision 29) the mode is
  * chosen afresh, as a new instance would — a column dropped for a transient agent comes back the moment it leaves.
  */
 export type ModeToken = { rank: number; key: string }
@@ -591,15 +631,15 @@ export type RowView = {
   /** '' when the mode draws no model column. */
   model: string
   actEmoji: string
-  /** '' when the mode draws the emoji alone. */
+  /** '' when the mode draws the glyph alone. */
   actWord: string
   /** The task column's text (the row's short task cut to TASK_MAX): drawn from CENTRE_AT. */
   task: string
   /** Working: the who bold. */
   bold: boolean
-  /** Finished: the who (unless failed), the emoji and the task dim. (The model is always dim; the word dim unless working.) */
+  /** Finished: the who (unless failed), the glyph and the task dim. (The model is always dim; the word dim unless working.) */
   dim: boolean
-  /** ❌: the who keeps a regular weight. */
+  /** Failed (✕): the who keeps a regular weight. */
   failed: boolean
   focus: boolean
 }
@@ -640,7 +680,7 @@ export type OfficeModel = { rooms: RoomView[]; lines: Line[]; geo: Geo; mode: Ta
 /**
  * What the surface module lays on the model from its local state, by id:
  *   focus     the keyboard focus: a small marker beside the status mark.
- * (No hover: the desktop draws none inside a Client — paint probe 22.10; no finish pulse: the ⭐ is the whole finish —
+ * (No hover: the desktop draws none inside a Client — paint probe 22.10; no finish pulse: the ★ is the whole finish —
  * live check 6, where the row's tint flashed a near-black band on the light theme.)
  */
 export type OfficeDecor = { focus: string | null }
@@ -693,7 +733,7 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
   const base: RoomBase = {
     counts: nb(counts), title: nb(cutTitle(room.title, geo, counts, true)),
     rows: room.agents.map(a => ({
-      id: a.id, mark: markOf(a), color: DOT_FG[a.status], who: nb(`${a.emoji} ${cut(a.name, mode.nameMax)}`),
+      id: a.id, mark: markOf(a), color: markFg(a), who: nb(`${a.emoji} ${cut(a.name, mode.nameMax)}`),
       model: mode.model === 'none' ? '' : nb(modelText(a.model, mode.model === 'full')),
       actEmoji: firstGlyph(a.act), actWord: mode.word ? nb(restWord(a.act)) : '', task: nb(cutTask(a.task)),
       bold: a.status === 'running', dim: a.status === 'done', failed: a.failed,
@@ -711,7 +751,7 @@ function roomBase(room: OfficeRoom, geo: Geo, mode: TableMode, cache: RoomCache 
  * title (pin · title · counts — the pin on every card: `pinned` says which glyph), [the more / hide line — DIRECTLY UNDER
  * THE TITLE, live check 7 Q3: it never moves with the rows it reveals], the blank line, one line per agent, a padding line,
  * the bottom border, the gap. The line map is for windowing (office-client.tsx) and the keyboard walk; it carries no
- * pointer geometry — every click is a native Button (phase B, decision 26; the ✅ counts are read-only: Q6 — the more
+ * pointer geometry — every click is a native Button (phase B, decision 26; the ✓ counts are read-only: Q6 — the more
  * line is the room's one toggle). The decor changes only the focus marker — never a line. The table mode is chosen once for
  * the office (chooseMode) from `last`, the token the caller kept from its previous model (the hysteresis: its rank counts only while the widest values are the ones
  * it was chosen from — ModeToken; null on the first). With a `cache` (THE ROOM MEMO), a room whose props, width and mode did

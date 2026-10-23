@@ -15,8 +15,9 @@
 //
 // What it draws (spec "עובר כמו שהוא"), top to bottom — every line budgeted
 // from e.props.bodyColumns (gridFor / clip / cellWidth), nothing fixed-width:
-//   header   one line: title · "🟢 N working · ⏳ M idle · ✅ K finished" (PAGE
-//            #counts); under COMPACT_BELOW columns "🎭 · 🟢N ⏳M ✅K" alone; with a
+//   header   one line: title · "● N working · ◌ M idle · ✓ K finished" (PAGE
+//            #counts; decision 29's COUNT_ICON where PAGE drew 🟢 ⏳ ✅); under
+//            COMPACT_BELOW columns "🎭 · ●N ◌M ✓K" alone; with a
 //            five-hour reading (USAGE) it ends "· ⏳ 5h 42%" when that fits whole
 //   toolbar  one row: [f] show finished · [m] 🔔/🔕 · [l] language · [h] help ·
 //            [d] demo (+ exit); compact → icons only and no hotkey chips
@@ -67,15 +68,17 @@
 //   rooms    one per conversation (session_full): pinned first 📌, then rooms with
 //            a running agent, then by last activity (PAGE's sort). Room header,
 //            one line: 📌/○ · 💬 topic-or-project (clipped from its end) · small
-//            label/sid when it fits · 🟢N · ⏳N · ✅N (toggles that room's "show
+//            label/sid when it fits · ●N · ◌N · ✓N (toggles that room's "show
 //            finished"). Cards fill the row: 1 per row under COLS2_FROM, 2 to
 //            COLS3_FROM, 3 past it. A card is two lines, no frame:
-//              ● 💬 emoji name ⭐⏰❌              mm:ss   (💬 on the lead's name only)
+//              ● 💬 emoji name ✕★⏱︎              mm:ss   (💬 on the lead's name only)
 //                activity · 🧠 model · subagent_type     (a "·" only between two parts;
 //                                                         the model ALWAYS, "🧠 ?" when unknown)
 //            the name a plain Button (Enter/click opens the drawer); ● is the
-//            status colour (▸ focused, ◉ selected), ⏰ ≥ LONG_RUNNING_MS, ⭐
-//            within JUST_FINISHED_MS, ❌ failed/killed (from the live map).
+//            status colour (▸ focused, ◉ selected), ⏱︎ ≥ LONG_RUNNING_MS, ★
+//            within JUST_FINISHED_MS, ✕ failed/killed (from the live map) — the
+//            badges decision 29's monochrome marks in their colours
+//            (office-layout.ts MARK, markFg), where the colour emoji were.
 //   nav      [k] previous · [j] next · [o] open · [x] close — the arrow-key walk
 //   empty    office (with "▶ watch a demo") / no-active / none-in-window / no-match
 //   footer   the too-long conversations (oversizedN), scanError, dim (the desktop
@@ -148,14 +151,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
+import { ACT_GLYPH, I18N, activityLabel, dirOf, modelLabel, type Lang, type Strings } from './i18n'
 import { BRAND, DEFAULT_PREFS, DEFAULT_VIEW, DESKTOP, EMPTY_PAYLOAD, JUST_FINISHED_MS, LONG_RUNNING_MS, PANE_ID, STORE_PREFS_KEY, USAGE, personaIndex } from './model'
 import type { Agent, Payload, Prefs, TheaterStatus, View } from './model'
 import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
 // count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
-import { BRAND_ACCENT_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, LOGO_CELLS, cutWords, logoMarkdown, nb, rowCount } from './office-layout'
+import { BRAND_ACCENT, BRAND_ACCENT_DARK, COUNT_ICON, CREDIT, CREDIT_SITE, CREDIT_URL, DOT_FG, FAIL_FG, LOGO_CELLS, MARK, cutWords, logoMarkdown, nb, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaFeminine, personaName } from './personas'
@@ -456,7 +459,8 @@ export const FINISH_TOAST_MS = 1500
 export const TOAST_TITLE_MAX = 30
 
 /**
- * THE FINISH TOAST (live check 5): `✅ <persona> סיים · <room title>` / `✅ <persona> finished · <title>` — the persona's
+ * THE FINISH TOAST (live check 5): `✓ <persona> סיים · <room title>` / `✓ <persona> finished · <title>` (decision 29: the
+ * finished activity's ✓, where the ✅ was) — the persona's
  * name, as the row draws it (never the Agent call's description), the Hebrew verb agreeing with it (`הדבורה סיימה`: personas.ts
  * PERSONAS_HE_FEMININE, pre-check 6), then the conversation it finished in, its title (roomTitle)
  * cut on a word to TOAST_TITLE_MAX cells; without a title the name and the word alone. The poll toasts it for FINISH_TOAST_MS
@@ -464,7 +468,7 @@ export const TOAST_TITLE_MAX = 30
  */
 export function finishToast(a: Agent, title: string, lang: Lang): string {
   const L = I18N[lang]
-  const head = `✅ ${personaName(a.persona_id, lang)} ${personaFeminine(a.persona_id) ? L.finishedToastFem : L.finishedToast}`
+  const head = `${ACT_GLYPH.done} ${personaName(a.persona_id, lang)} ${personaFeminine(a.persona_id) ? L.finishedToastFem : L.finishedToast}`
   const t = title.trim()
   return t ? `${head} · ${cutWords(t, TOAST_TITLE_MAX)}` : head
 }
@@ -1008,8 +1012,8 @@ export function registerUi(on: On): void {
 
     // --- header: one line. Narrow → the counts alone as icons (the tab already says 🎭); wide → title + worded counts ---
     const countsText = compact
-      ? `🟢${counts.run}` + (counts.idle ? ` ⏳${counts.idle}` : '') + ` ✅${counts.done}`
-      : `🟢 ${counts.run} ${L.working}` + (counts.idle ? ` · ⏳ ${counts.idle} ${L.idleN}` : '') + ` · ✅ ${counts.done} ${L.finished}`
+      ? `${COUNT_ICON.run}${counts.run}` + (counts.idle ? ` ${COUNT_ICON.idle}${counts.idle}` : '') + ` ${COUNT_ICON.done}${counts.done}`
+      : `${COUNT_ICON.run} ${counts.run} ${L.working}` + (counts.idle ? ` · ${COUNT_ICON.idle} ${counts.idle} ${L.idleN}` : '') + ` · ${COUNT_ICON.done} ${counts.done} ${L.finished}`
     // the five-hour meter ends the counts (`· ⏳ 5h 42%`, usage.ts) when it fits whole: a percent cut in half is worse than none
     // (the footer line under the prompt carries the full label on this surface)
     const countsBudget = width - (compact ? 3 : cellWidth(L.appTitle) + 1)
@@ -1103,13 +1107,18 @@ export function registerUi(on: On): void {
     })()
 
     // --- one card (PAGE createWS/updateWS): two lines, the row's full width, no frame ---
-    //   ● 💬 emoji name ⭐⏰❌         mm:ss      (💬 on the lead only)
+    //   ● 💬 emoji name ✕★⏱︎         mm:ss      (💬 on the lead only)
     //     activity · 🧠 model · type   (the model always: "🧠 ?" when unknown)
     const card = (a: Agent) => {
       const name = cardName(a, lang)
       const failed = a.failed === true
       const star = a.status === 'done' && a.id in stars && now - (stars[a.id] ?? 0) < JUST_FINISHED_MS
-      const badges = [failed ? '❌' : '', star ? '⭐' : '', isLongRunning(a, now) ? '⏰' : ''].filter(Boolean).join('')
+      // the badges (decision 29): monochrome symbols, each in its colour (office-layout.ts MARK, markFg's), side by side
+      const badgeMarks: Array<[string, string]> = []
+      if (failed) badgeMarks.push([MARK.failed, FAIL_FG])
+      if (star) badgeMarks.push([MARK.star, BRAND_ACCENT])
+      if (isLongRunning(a, now)) badgeMarks.push([MARK.long, DOT_FG.stale])
+      const badges = badgeMarks.map(([g]) => g).join('')
       const sub = a.role ? (a.subagent_type || personaName(a.persona_id, lang)) : a.subagent_type
       // the model is ALWAYS on line 2, right after the activity ("🧠 ?" when unknown): which model runs each agent is never in doubt
       const modelTag = `🧠 ${modelLabel(a.model) || UNKNOWN_MODEL_PILL}`
@@ -1141,7 +1150,7 @@ export function registerUi(on: On): void {
             <Box flexDirection={row} gap={1}>
               <Text color={color} dimColor={done && !isSelected && !isFocused} bold={isFocused || isSelected} inverse={isSelected}>{mark}</Text>
               <Button key={`open:${a.id}`} plain label={nameLabel} onPress={() => openAgent(a.id)} />
-              {badges ? <Text>{badges}</Text> : null}
+              {badges ? <Box flexDirection={row}>{badgeMarks.map(([g, fg], i) => <Text key={`badge:${a.id}:${i}`} color={fg}>{g}</Text>)}</Box> : null}
             </Box>
             <Text key={`timer:${a.id}`} dimColor>{timer}</Text>
           </Box>
@@ -1169,7 +1178,8 @@ export function registerUi(on: On): void {
       const members = order.filter(a => a.session_full === s)
       const chunks: Agent[][] = []
       for (let i = 0; i < members.length; i += perRow) chunks.push(members.slice(i, i + perRow))
-      const countBits = [`🟢${st?.running ?? 0}`, st?.stale ? `⏳${st.stale}` : '', st?.done ? `✅${st.done}` : ''].filter(Boolean)
+      // (decision 29's icons: the ● drawn green as the card's running mark — the 🟢 it replaces carried its own colour)
+      const countBits = [`${COUNT_ICON.run}${st?.running ?? 0}`, st?.stale ? `${COUNT_ICON.idle}${st.stale}` : '', st?.done ? `${COUNT_ICON.done}${st.done}` : ''].filter(Boolean)
       const countsW = countBits.reduce((n, b) => n + cellWidth(b) + 1, 0)
       // the title is cut by cell count from its own end (never the engine's visual truncation,
       // which in an RTL row cuts an English title's beginning off)
@@ -1185,10 +1195,10 @@ export function registerUi(on: On): void {
               {smallText ? <Text dimColor>{smallText}</Text> : null}
             </Box>
             <Box flexDirection={row} gap={1}>
-              <Text>{countBits[0]}</Text>
-              {st?.stale ? <Text color="yellow">{`⏳${st.stale}`}</Text> : null}
+              <Text color="green">{countBits[0]}</Text>
+              {st?.stale ? <Text color="yellow">{`${COUNT_ICON.idle}${st.stale}`}</Text> : null}
               {st?.done
-                ? <Button key={`rdone:${s}`} plain dimColor={!showing} label={`✅${st.done}`} onPress={() => void toggleRoomDone(s)} />
+                ? <Button key={`rdone:${s}`} plain dimColor={!showing} label={`${COUNT_ICON.done}${st.done}`} onPress={() => void toggleRoomDone(s)} />
                 : null}
             </Box>
           </Box>

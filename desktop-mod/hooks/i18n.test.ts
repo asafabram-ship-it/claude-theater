@@ -3,7 +3,7 @@
 
 import { expect, test } from 'claude-code/testing'
 
-import { I18N, hebrewRuleOk, modelLabel } from './i18n'
+import { ACT_GLYPH, I18N, activityLabel, hebrewRuleOk, modelLabel } from './i18n'
 import { LABEL_KEYS } from './office-props'
 
 test('hebrewRuleOk: a string without Hebrew passes; one with Hebrew must hold no letter of another script and end with Hebrew or a digit (a trailing mark is drawn before the word, a leading one after it)', () => {
@@ -20,6 +20,9 @@ test('hebrewRuleOk: a string without Hebrew passes; one with Hebrew must hold no
   expect(hebrewRuleOk('4 תמלילים')).toBe(true)                     // a leading digit joins the left side: "תמלילים 4", never scrambled
   expect(hebrewRuleOk('📖 קורא')).toBe(true)
   expect(hebrewRuleOk('❌ נכשל')).toBe(true)
+  expect(hebrewRuleOk('▤ קורא')).toBe(true)                        // decision 29's symbols: neutrals, as the emoji were
+  expect(hebrewRuleOk('⚙\uFE0E פקודה')).toBe(true)
+  expect(hebrewRuleOk('קורא ▤')).toBe(false)                       // (trailing, a symbol is drawn before the word as a mark is)
   expect(hebrewRuleOk('הפעילו סוכן ב-Claude Code')).toBe(false)    // Latin inside
   expect(hebrewRuleOk('אין סוכנים שתואמים לחיפוש.')).toBe(false)   // a trailing period
   expect(hebrewRuleOk('מודל:')).toBe(false)
@@ -46,7 +49,7 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   check('dDuration chip', `${L.dDuration}7${L.dMinutes}`)
   check('dElapsed chip', `${L.dElapsed}12${L.dMinutes}`)
   check('note', `✂ ${L.resultTruncated}`)
-  check('model line', `${L.dAction} 🤔 חושב`)
+  check('model line', `${L.dAction} ${L.actThinking}`)
   // the labelled controls and chips — the toolbar's and the help's (Task 2.8b-3), the drawer's close, the search's glass, the
   // empty office's demo Button, the failed chip: the WORD passes on its own; the icon is laid after it in the string so the
   // reader meets it first (office-layout.ts iconLabel, proven by office-layout.test.ts visualRtlReading) — a trailing icon is
@@ -75,12 +78,49 @@ test('THE HEBREW RULE: every Hebrew string the office Client draws passes it —
   // the agent rows carry no clock (the cards design): the drawer's chip (dMinutes) is the one unit of minutes in the table
   expect('rowMinutes' in L).toBe(false)
   expect('rowMinutes' in I18N.en).toBe(false)
-  // the tool table: an emoji leads every entry (an activity cell may draw the emoji alone); the Hebrew after it must pass alone
+  // the tool table: a glyph leads every entry (decision 29's symbol; an activity cell may draw the glyph alone); the Hebrew after it must pass alone
   for (const [tool, label] of Object.entries(L.tools)) check(`tools.${tool}`, label.replace(/^\S+\s/, ''))
   for (const k of ['actDone', 'actStale', 'actThinking', 'actMcp'] as const) check(k, L[k].replace(/^\S+\s/, ''))
   expect(bad).toEqual([])
   // the English table holds no Hebrew but the language switch label (Hebrew alone: fine)
   expect(hebrewRuleOk(I18N.en.switchTo)).toBe(true)
+})
+
+test('THE ACTIVITY GLYPHS (decision 29, 23.10: monochrome symbols in place of the colour emoji, the table Asaf approved): one glyph per tool family, shared by both languages, each keeping its words — ⋯ thinking, ▤ reading, ✎ writing, ⚙︎ a command, ⌕ searching, ⌖ browsing, ⇄ a subagent, ◌ waiting, ✓ finished, · a tool the table does not name; and the table\'s own families: ⌨︎ a slash command, ☰ the todos and the plan, ✦ a skill, ⌁ an MCP tool', () => {
+  expect(ACT_GLYPH).toEqual({ thinking: '⋯', reading: '▤', writing: '✎', command: '⚙\uFE0E', searching: '⌕', browsing: '⌖', subagent: '⇄', waiting: '◌', done: '✓', other: '·', slash: '⌨\uFE0E', list: '☰', skill: '✦', mcp: '⌁' })
+  expect(ACT_GLYPH.thinking.codePointAt(0)).toBe(0x22ef)
+  const he = I18N.he
+  const en = I18N.en
+  const family: Record<string, string> = {
+    Read: ACT_GLYPH.reading, Edit: ACT_GLYPH.writing, MultiEdit: ACT_GLYPH.writing, Write: ACT_GLYPH.writing, NotebookEdit: ACT_GLYPH.writing, StructuredOutput: ACT_GLYPH.writing,
+    Bash: ACT_GLYPH.command, PowerShell: ACT_GLYPH.command, BashOutput: ACT_GLYPH.command, KillShell: ACT_GLYPH.command,
+    WebSearch: ACT_GLYPH.searching, Grep: ACT_GLYPH.searching, Glob: ACT_GLYPH.searching, WebFetch: ACT_GLYPH.browsing,
+    Task: ACT_GLYPH.subagent, Agent: ACT_GLYPH.subagent, SlashCommand: ACT_GLYPH.slash, TodoWrite: ACT_GLYPH.list, ExitPlanMode: ACT_GLYPH.list, Skill: ACT_GLYPH.skill,
+  }
+  expect(Object.keys(he.tools).sort()).toEqual(Object.keys(family).sort())
+  expect(Object.keys(en.tools).sort()).toEqual(Object.keys(family).sort())
+  for (const [tool, g] of Object.entries(family)) {
+    expect(he.tools[tool], tool).toMatch(new RegExp(`^${g} \\S`, 'u'))
+    expect(en.tools[tool], tool).toMatch(new RegExp(`^${g} \\S`, 'u'))
+  }
+  // the words kept
+  expect([he.tools.Read, he.tools.WebFetch, he.tools.Bash, he.tools.Grep, he.tools.Agent, he.tools.SlashCommand]).toEqual(['▤ קורא', '⌖ קורא דף', '⚙\uFE0E פקודה', '⌕ מחפש קוד', '⇄ סוכן', '⌨\uFE0E פקודת סלאש'])
+  expect([en.tools.Read, en.tools.Edit, en.tools.WebSearch, en.tools.TodoWrite, en.tools.Skill]).toEqual(['▤ Reading', '✎ Editing', '⌕ Searching', '☰ Todos', '✦ Skill'])
+  // activityLabel: done, waiting, thinking, an MCP tool (its server), a tool the table does not name, no tool
+  const act = (over: Partial<{ status: 'running' | 'stale' | 'done'; phase: string; tool: string }>, lang: 'he' | 'en' = 'he') => activityLabel({ status: 'running', phase: '', tool: '', ...over } as Parameters<typeof activityLabel>[0], lang)
+  expect(act({ status: 'done', tool: 'Read' })).toBe('✓ סיים')
+  expect(act({ status: 'stale', tool: 'Read' })).toBe('◌ ממתין')
+  expect(act({ phase: 'thinking', tool: 'Read' })).toBe('⋯ חושב')
+  expect(act({ tool: 'mcp__github__search_issues' })).toBe('⌁ github')
+  expect(act({ tool: 'Read' })).toBe('▤ קורא')
+  expect(act({ tool: 'SomeNewTool' })).toBe('· חושב')
+  expect(act({ tool: '' })).toBe('⋯ חושב')
+  expect(act({ status: 'done' }, 'en')).toBe('✓ Done')
+  expect(act({ tool: 'SomeNewTool' }, 'en')).toBe('· Thinking')
+  // no colour emoji left in any activity
+  for (const s of [...Object.values(he.tools), ...Object.values(en.tools), he.actDone, he.actStale, he.actThinking, he.actMcp, he.actOther, en.actDone, en.actStale, en.actThinking, en.actMcp, en.actOther]) {
+    expect(s, s).not.toMatch(/\p{Emoji_Presentation}|\u{FE0F}/u)
+  }
 })
 
 test('THE TOO-LONG CONVERSATIONS NOTE (live check 6: `דולגו 1 תמלילים גדולים מדי` was unclear and ungrammatical): one conversation, or n, too long to show — the Hebrew opening on a Hebrew letter (a leading count would be read last), no Latin, singular and plural agreeing', () => {

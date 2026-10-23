@@ -70,7 +70,7 @@ test('buildOfficeProps: slim, JSON-clean, task/result only in the drawer', () =>
   expect(p.rooms[0]?.agents.map(a => a.id)).toEqual(['a1', 'a2'])
   // the row's name is the persona's (persona 3), never the role — that is the drawer's subtitle (Asaf's cleanup, 2026-10-17); the row
   // is slim: what the cards draw and nothing else (no clock, no tool or model family, no lead flag, no first-seen stamp)
-  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', act: '📖 קורא', model: 'Opus 5.5', task: 'x', failed: false, longRunning: false, star: 0 })
+  expect(p.rooms[0]?.agents[0]).toEqual({ id: 'a1', emoji: PERSONA_EMOJI[3] ?? '', name: 'החוקר', status: 'running', act: '▤ קורא', model: 'Opus 5.5', task: 'x', failed: false, longRunning: false, star: 0 })
   expect(JSON.stringify(p)).not.toContain('xxxxxxxxxx')
   // the row's task (the dim task column from CENTRE_AT columns): the short task cut to TASK_MAX cells, whole glyphs
   expect(buildOfficeProps(input([agent({ id: 'a1', task_short: 'Read the spec and the plan, then report' })])).rooms[0]?.agents[0]?.task).toBe('Read the spec and the p…')

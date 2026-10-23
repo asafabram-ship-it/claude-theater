@@ -29,18 +29,37 @@ import { PERSONAS_EN, PERSONAS_HE } from './personas'
 
 export type Lang = 'he' | 'en'
 
+/**
+ * THE ACTIVITY GLYPHS (decision 29, 23.10: monochrome marks in the brand colours instead of the colour emoji): a symbol of the
+ * font, one cell (office-layout.ts glyphs), leads every activity — `⋯ חושב`, `▤ קורא`. The office draws it in a cell of its own,
+ * a plain Button, which takes no colour on the desktop (decision 26): the glyph keeps the row's weight alone — regular while
+ * working, dim once finished; the text cards draw the whole string. Both languages share the glyphs, each keeps its words. A
+ * symbol that has an emoji form carries VS15 (U+FE0E, escaped as office-layout.ts escapes every invisible): its text
+ * presentation. Like the emoji before them they are neutrals (bidi ON): a leading one is drawn after a Hebrew word, so THE
+ * HEBREW RULE below holds as it did. One glyph per tool family: thinking, reading, writing (an edit, a notebook, a summary),
+ * a command, searching (the web, the code, the files), browsing a page, a subagent, waiting, finished — and the families the
+ * table adds: a slash command, a list (the todos, the plan), a skill, an MCP tool; a tool the table does not name: `·`.
+ */
+export const ACT_GLYPH = {
+  thinking: '⋯', reading: '▤', writing: '✎', command: '⚙\uFE0E', searching: '⌕', browsing: '⌖', subagent: '⇄',
+  waiting: '◌', done: '✓', other: '·', slash: '⌨\uFE0E', list: '☰', skill: '✦', mcp: '⌁',
+} as const
+const G = ACT_GLYPH
+
 export const TOOLS_EN: Readonly<Record<string, string>> = {
-  WebSearch: '🔍 Searching', WebFetch: '🌐 Reading page', Read: '📖 Reading', Edit: '✏️ Editing', MultiEdit: '✏️ Editing',
-  Write: '✏️ Writing', NotebookEdit: '✏️ Notebook', Bash: '⚙️ Command', PowerShell: '⚙️ Command', BashOutput: '⚙️ Output',
-  KillShell: '⚙️ Command', SlashCommand: '⌨️ Slash command', Grep: '🔎 Searching code', Glob: '🔎 Files', Task: '👥 Subagent',
-  Agent: '👥 Subagent', TodoWrite: '📝 Todos', Skill: '🧩 Skill', ExitPlanMode: '📋 Plan', StructuredOutput: '🧾 Summarizing',
+  WebSearch: `${G.searching} Searching`, WebFetch: `${G.browsing} Reading page`, Read: `${G.reading} Reading`, Edit: `${G.writing} Editing`,
+  MultiEdit: `${G.writing} Editing`, Write: `${G.writing} Writing`, NotebookEdit: `${G.writing} Notebook`, Bash: `${G.command} Command`,
+  PowerShell: `${G.command} Command`, BashOutput: `${G.command} Output`, KillShell: `${G.command} Command`, SlashCommand: `${G.slash} Slash command`,
+  Grep: `${G.searching} Searching code`, Glob: `${G.searching} Files`, Task: `${G.subagent} Subagent`, Agent: `${G.subagent} Subagent`,
+  TodoWrite: `${G.list} Todos`, Skill: `${G.skill} Skill`, ExitPlanMode: `${G.list} Plan`, StructuredOutput: `${G.writing} Summarizing`,
 }
 
 export const TOOLS_HE: Readonly<Record<string, string>> = {
-  WebSearch: '🔍 מחפש', WebFetch: '🌐 קורא דף', Read: '📖 קורא', Edit: '✏️ עורך', MultiEdit: '✏️ עורך',
-  Write: '✏️ כותב', NotebookEdit: '✏️ מחברת', Bash: '⚙️ פקודה', PowerShell: '⚙️ פקודה', BashOutput: '⚙️ פלט',
-  KillShell: '⚙️ פקודה', SlashCommand: '⌨️ פקודת סלאש', Grep: '🔎 מחפש קוד', Glob: '🔎 קבצים', Task: '👥 סוכן',
-  Agent: '👥 סוכן', TodoWrite: '📝 משימות', Skill: '🧩 מיומנות', ExitPlanMode: '📋 תכנון', StructuredOutput: '🧾 מסכם',
+  WebSearch: `${G.searching} מחפש`, WebFetch: `${G.browsing} קורא דף`, Read: `${G.reading} קורא`, Edit: `${G.writing} עורך`,
+  MultiEdit: `${G.writing} עורך`, Write: `${G.writing} כותב`, NotebookEdit: `${G.writing} מחברת`, Bash: `${G.command} פקודה`,
+  PowerShell: `${G.command} פקודה`, BashOutput: `${G.command} פלט`, KillShell: `${G.command} פקודה`, SlashCommand: `${G.slash} פקודת סלאש`,
+  Grep: `${G.searching} מחפש קוד`, Glob: `${G.searching} קבצים`, Task: `${G.subagent} סוכן`, Agent: `${G.subagent} סוכן`,
+  TodoWrite: `${G.list} משימות`, Skill: `${G.skill} מיומנות`, ExitPlanMode: `${G.list} תכנון`, StructuredOutput: `${G.writing} מסכם`,
 }
 
 /** The string table of one language. Function-valued entries take a count. */
@@ -77,6 +96,8 @@ export type Strings = {
   dMinutes: string
   dAction: string; dTask: string; dResult: string; dModel: string; taskUnavailable: string
   actDone: string; actStale: string; actThinking: string; actMcp: string
+  /** The activity of a tool the table does not name (decision 29): the `·` and the thinking word it was drawn with before. */
+  actOther: string
   /**
    * THE TOO-LONG CONVERSATIONS NOTE (live check 6: `דולגו 1 תמלילים גדולים מדי` was unclear and ungrammatical): the
    * transcripts the scan skipped as too long to read — the desktop office's settings popover, the text cards' footer. The
@@ -121,7 +142,8 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     dDuration: 'Duration ', dElapsed: 'Elapsed ', dMinutes: '′',
     dAction: 'Activity', dTask: 'Task', dResult: 'Result', dModel: 'Model',
     taskUnavailable: 'working — details unavailable',
-    actDone: '✅ Done', actStale: '💤 Idle', actThinking: '🤔 Thinking', actMcp: '🔌 MCP tool',
+    actDone: `${G.done} Done`, actStale: `${G.waiting} Idle`, actThinking: `${G.thinking} Thinking`, actMcp: `${G.mcp} MCP tool`,
+    actOther: `${G.other} Thinking`,
     oversizedN: n => (n === 1 ? 'One conversation is too long to show' : `${n} conversations are too long to show`),
     moreAgentsN: n => `+${n} more agent${n === 1 ? '' : 's'} not shown`,
     moreDoneN: n => `${n} more finished`, hideDone: 'Hide finished',
@@ -155,7 +177,8 @@ export const I18N: Readonly<Record<Lang, Strings>> = {
     dDuration: 'משך ', dElapsed: 'זמן ', dMinutes: ' דק׳',
     dAction: 'פעולה', dTask: 'משימה', dResult: 'תוצאה', dModel: 'מודל',
     taskUnavailable: 'עובד — פרטים לא זמינים',
-    actDone: '✅ סיים', actStale: '💤 ממתין', actThinking: '🤔 חושב', actMcp: '🔌 כלי מחובר',
+    actDone: `${G.done} סיים`, actStale: `${G.waiting} ממתין`, actThinking: `${G.thinking} חושב`, actMcp: `${G.mcp} כלי מחובר`,
+    actOther: `${G.other} חושב`,
     oversizedN: n => (n === 1 ? 'שיחה אחת ארוכה מדי ולא מוצגת' : `יש ${n} שיחות ארוכות מדי ולא מוצגות`),
     moreAgentsN: n => `עוד ${n} סוכנים לא מוצגים`,
     moreDoneN: n => `עוד ${n} שסיימו`, hideDone: 'הסתר שסיימו',
@@ -170,8 +193,9 @@ export function t<K extends keyof Strings>(lang: Lang, key: K): Strings[K] {
 }
 
 /**
- * PAGE activityLabel(): done → ✅, stale → 💤, phase thinking → 🤔,
- * mcp__<server>__x → "🔌 <server>", else the tool table, else 🤔.
+ * PAGE activityLabel(), in decision 29's glyphs (ACT_GLYPH): done → ✓, stale → ◌, phase thinking → ⋯,
+ * mcp__<server>__x → "⌁ <server>", else the tool table; a tool the table does not name → `·` and the thinking word
+ * (actOther); no tool → ⋯.
  */
 export function activityLabel(a: Pick<Agent, 'status' | 'phase' | 'tool'>, lang: Lang): string {
   const L = I18N[lang]
@@ -180,9 +204,9 @@ export function activityLabel(a: Pick<Agent, 'status' | 'phase' | 'tool'>, lang:
   if (a.phase === 'thinking') return L.actThinking
   if (a.tool && a.tool.startsWith('mcp__')) {
     const s = mcpServer(a.tool)
-    return s ? `🔌 ${s}` : L.actMcp
+    return s ? `${G.mcp} ${s}` : L.actMcp
   }
-  return L.tools[a.tool] ?? L.actThinking
+  return L.tools[a.tool] ?? (a.tool ? L.actOther : L.actThinking)
 }
 
 /** Model families the label names (lower-case id token → display name). */

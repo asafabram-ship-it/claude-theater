@@ -4,7 +4,7 @@
 // fake-surface cases of office-client.test.ts cover the module alone; these
 // read what the mounted module shows — the chrome and the cards, the keyboard
 // focus a press or `j` lands on a row (its marker), the search Input keeping
-// its text across a publish, a finisher's row (the ⭐ alone: no tint, no
+// its text across a publish, a finisher's row (the ★ alone: no tint, no
 // clock), THE WINDOW WITH OVERSCAN and THE FLOATING OVERLAY — and the effects
 // of its posts through the plugin's own `ui.message` hook (ui.tsx);
 // register.test.ts covers every message kind, office-controls.test.ts every
@@ -165,7 +165,7 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   // one card, its rows the two agents: the status mark, `${emoji} ${name}`, the model word, the activity whole
   const cards = await cardsOf(ui)
   expect(cards).toHaveLength(1)
-  expect(rowsOf(cards[0]!)).toEqual([['●', whoOf(p0, 'lead'), 'Opus', '🤔', 'חושב'], ['●', whoOf(p0, 'a1'), 'Opus', '📖', 'קורא']])
+  expect(rowsOf(cards[0]!)).toEqual([['●', whoOf(p0, 'lead'), 'Opus', '⋯', 'חושב'], ['●', whoOf(p0, 'a1'), 'Opus', '▤', 'קורא']])   // (decision 29's glyphs)
   expect(await focused(ui, p0)).toEqual([])
   // the lead is the first row of the card (layout line 4), its value cells its Buttons; two agents shown: the chrome four rows (no search field)
   expect(fixedRows(p0)).toBe(4)
@@ -196,14 +196,14 @@ test('DESKTOP (2.4): the pane is one Client; it draws the chrome and a card per 
   expect(whoOf(p1, 'n1')).toBe(nb(`${PERSONA_EMOJI[3]} ${personaName(5, 'he')}`))   // (the payload's emoji, the persona's name, a no-break space between: nb)
   expect(await withBg(ui)).toBe(false)
   expect(await focused(ui, p1)).toEqual([whoOf(p1, 'lead')])      // the focus survived the publish
-  // a finisher: its row turns ○ and `✅ סיים`, dim; nothing is tinted and no clock runs — the ⭐ stamp is the poll's, stamped off
+  // a finisher: its row turns ○ and `✓ סיים`, dim; nothing is tinted and no clock runs — the ★ stamp is the poll's, stamped off
   // the scanner's own office (this harness rewrites the publish): ui.test.ts's finish test covers it
   agents = agents.map(a => (a.id === 'a1' ? { ...a, status: 'done' as const, end_ms: clock.now(), result: 'Done.' } : a))
   await clock.advance(POLL_MS)
   const p2 = await officeProps(ui)
   expect(p2.rooms[0]?.agents.find(a => a.id === 'a1')).toMatchObject({ status: 'done', star: 0 })
   const doneRow = rowsOf((await cardsOf(ui))[0]!).find(r => r[1] === whoOf(p2, 'a1'))
-  expect(doneRow).toEqual(['○', whoOf(p2, 'a1'), 'Opus', '✅', 'סיים'])
+  expect(doneRow).toEqual(['○', whoOf(p2, 'a1'), 'Opus', '✓', 'סיים'])
   expect(await withBg(ui)).toBe(false)
   await ui.advance(3000)   // no clock: nothing happens
   expect(await withBg(ui)).toBe(false)
@@ -310,7 +310,7 @@ test('DESKTOP (2.4): keys walk the rows drawn (the marker moves) — a short off
   await ui.input({ key: 'search', text: 'ab', kind: 'change' })
   agents = agents.map(a => (a.id === 'a1' ? { ...a, tool: 'Write' } : a))
   await clock.advance(POLL_MS * 2)
-  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a1')?.act).toBe('✏️ כותב')   // the publish redrew the Client
+  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a1')?.act).toBe('✎ כותב')   // the publish redrew the Client
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('ab')
   expect((await officeProps(ui)).search).toBe('a')          // not yet: the module waits SEARCH_DEBOUNCE_MS of quiet
   await ui.advance(SEARCH_DEBOUNCE_MS)                      // the search post goes out: the hook writes view.search, the pane redraws
@@ -323,7 +323,7 @@ test('DESKTOP (2.4): keys walk the rows drawn (the marker moves) — a short off
   expect((await officeProps(ui)).search).toBe('')
   agents = agents.map(a => (a.id === 'a2' ? { ...a, tool: 'Grep' } : a))
   await clock.advance(POLL_MS * 2)
-  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.act).toBe('🔎 מחפש קוד')
+  expect((await officeProps(ui)).rooms[0]?.agents.find(a => a.id === 'a2')?.act).toBe('⌕ מחפש קוד')
   expect((await ui.find({ in: OFFICE_KEY, type: 'Input', key: 'search' }))?.props.value).toBe('')
   // a newcomer: n1 is the fourteenth row (layout line 17); no fault, no loop, no tint
   agents = [...agents, agent({ id: 'n1', persona_id: 5 })]

@@ -55,8 +55,9 @@ separate install of the Python app.
 ![Claude Theater in the Claude desktop app](docs/screenshots/desktop-office.png)
 
 - **One framed card per open conversation**, titled by its subject, with **one row
-  per subagent**: its persona, its model, what it's doing right now — and ✅ when
-  it's finished (⭐ the moment it finishes, ❌ on a failure, ⏰ when it runs long).
+  per subagent**: its persona, its model, what it's doing right now — and ✓ when
+  it's finished (★ the moment it finishes, ✕ on a failure, ⏱︎ when it runs long) —
+  calm monochrome marks in the Legal Mind teal, the personas in colour.
 - **Click a row for its drawer** — the full task and the result, without leaving
   the chat.
 - **Pin a conversation** (📌 on its title) to keep it at the top.

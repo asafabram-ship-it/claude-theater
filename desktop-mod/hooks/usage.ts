@@ -47,7 +47,8 @@ function usageHead(roundedPct: number): string {
 
 /**
  * `⏳ 5h 42%` — the label without its bar and clock, for a narrow header (the office's under WIDE_FROM
- * columns, the text cards' counts line). It keeps `5h` so it is never taken for the idle count (`⏳ 2 idle`).
+ * columns, the text cards' counts line). It keeps `5h` so it is never taken for a count (the idle count's
+ * icon was a ⏳ until decision 29's ◌).
  */
 export function usageShort(u: FiveHour): string {
   const pct = Math.round(u.pct)

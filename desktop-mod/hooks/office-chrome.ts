@@ -18,7 +18,7 @@
 // engine, no clock, so both sides import it — the hooks never import the
 // surface module itself.
 
-import { DOT_FG, cut, fitCells, fitLine, geometry, markOf, textWidth } from './office-layout'
+import { cut, fitCells, fitLine, geometry, markFg, markOf, textWidth } from './office-layout'
 import type { OfficeDrawer, OfficeProps } from './office-props'
 
 /**
@@ -290,7 +290,7 @@ export function wrapLines(text: string, width: number, max: number): string[] {
 }
 
 /**
- * The drawer's ONE status line (the probe's round 8: `● עובד · זמן 12 דק׳ · general-purpose`): the status word (❌ נכשל
+ * The drawer's ONE status line (the probe's round 8: `● עובד · זמן 12 דק׳ · general-purpose`): the status word (✕ נכשל
  * for a failed agent), the clock (the duration once done — a failed or killed agent is done — else the elapsed time; none
  * when unknown) and the agent type, a ` · ` apart, the empty parts left out; cut to `max` cells. (The mark is the
  * Client's own Text before it: office-layout.ts markOf.)
@@ -329,8 +329,8 @@ export function drawerLines(d: OfficeDrawer, L: Record<string, string>, inner: n
   const lbl = (k: string) => L[k] ?? ''
   const lines: DrawerLine[] = [{ kind: 'name', text: cut(d.name, Math.max(1, inner - 10)) }]
   if (d.sub) lines.push({ kind: 'dim', text: cut(d.sub, inner) })
-  // the status line: the mark (the badge or the dot, in the status's colour) then the dim text, a gap cell between
-  lines.push({ kind: 'status', text: drawerStatus(d, L, Math.max(1, inner - 3)), mark: markOf(d), color: DOT_FG[d.status] })
+  // the status line: the mark (the badge or the dot, in its colour: office-layout.ts markFg, decision 29) then the dim text, a gap cell between
+  lines.push({ kind: 'status', text: drawerStatus(d, L, Math.max(1, inner - 3)), mark: markOf(d), color: markFg(d) })
   lines.push({ kind: 'blank', text: '' })
   // the model line and the ✂ note are one string each (a label, a value, a mark, a space apart), drawn as one Text the way the
   // probe writes its lines; no colon after a label — it would be drawn before the Hebrew word

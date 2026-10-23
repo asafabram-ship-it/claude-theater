@@ -18,7 +18,7 @@
 // beside the toolbar at 120; the reading column frozen at 100 cells and
 // centred by a margin of 10 at 120; the table mode poorer at 36 (the
 // activity's emoji alone) and richer at 120 (the model's version, the dim task
-// column); the room counts shrunk at 36 (the ✅ dropped before the title is cut). WIDTHS
+// column); the room counts shrunk at 36 (the ✓ dropped before the title is cut). WIDTHS
 // says what each width draws; the first test of each width pins it, and every
 // other test reads its labels and rows from there, so a control is proved at
 // the width's own forms, never at the reference width's.
@@ -51,7 +51,7 @@
 // (chromeRows counts the fixed chrome and the footer alone). Every office here
 // is short (at most WINDOW_ROWS lines), so THE WINDOW WITH OVERSCAN draws it
 // whole at any offset; the last section scrolls a tall one and presses the
-// card controls lower down — B's ✅ counts read-only (live check 7, Q6).
+// card controls lower down — B's ✓ counts read-only (live check 7, Q6).
 
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
@@ -62,7 +62,7 @@ import { PERSONA_EMOJI, POLL_MS } from './model'
 import type { Agent, Prefs } from './model'
 import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, CREDIT_ROWS, DEMO_ROWS, REFUSED_RE, SEARCH_FROM, WINDOW_ROWS, chromeRows, demoLine, drawerInner, drawerStatus, fixedRows, helpRows, overlayHeight, overscanOf } from './office-chrome'
 import { SEARCH_DEBOUNCE_MS } from './office-client'
-import { CARD_BORDER, FOCUS_MARK, NO_DECOR, PIN, PIN_OFF, countsFor, geometry, nb, officeModel, textWidth } from './office-layout'
+import { CARD_BORDER, FOCUS_MARK, NAME_MIN, NO_DECOR, PIN, PIN_OFF, countsFor, cut, geometry, nb, officeModel, textWidth } from './office-layout'
 import type { ModelCol, TableMode } from './office-layout'
 import { OFFICE_KEY } from './office-props'
 import type { OfficeProps } from './office-props'
@@ -106,7 +106,7 @@ const HIDE_LINE = nb(`${HIDE_LABEL} ▾`)   // (the arrow follows the state: liv
  *   model / word / task  the office's table mode on the fixture (Hebrew): the model column (the family word, its version from
  *                    MODEL_FULL_FROM, or none), the activity word beside its emoji, the dim task column from CENTRE_AT;
  *   countsA / tallA / tallB  the counts of room A (the fixture: 2 working, 4 finished), of the tall office's A (31 working)
- *                    and B (1 and 1): the ✅ dropped at 34 so the title keeps TITLE_MIN cells (office-layout.ts countsFor);
+ *                    and B (1 and 1): the ✓ dropped at 34 so the title keeps TITLE_MIN cells (office-layout.ts countsFor);
  *   titleA           room A's title as its card draws it: whole from 51 cells, cut on a word at 34 — every title leaves its
  *                    pin's cells (the pin on every card since decision 26: office-layout.ts cutTitle), so a pin never re-cuts it;
  *   drawerType       whether the drawer's status line has room for the agent type after the clock (`· Explore`): the line
@@ -140,9 +140,9 @@ const DEMO_ROOMS = ['demo-session-frontend-1111', DEMO_S2]
 const DEMO_DONE = ['demo-writer-ff', 'demo-survey-ii', 'demo-bench-jj', 'demo-dedupe-kk', 'demo-label-ll']
 const DEMO_HELD = DEMO_DONE.slice(RECENT_DONE)
 const WIDTHS: Record<36 | 53 | 120, Width> = {
-  36: { column: 34, margin: 1, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 14, model: 'family', word: false, task: false, countsA: '🟢2', tallA: '🟢31', tallB: '🟢1', titleA: 'תריץ 4 סוכני…', drawerType: false },
-  53: { column: 51, margin: 1, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 14, model: 'family', word: true, task: false, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', titleA: TITLE_A, drawerType: true },
-  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE, hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '🟢2 ✅4', tallA: '🟢31 ✅4', tallB: '🟢1 ✅1', titleA: TITLE_A, drawerType: true },
+  36: { column: 34, margin: 1, toolbar: ICONS, toolbarEn: ICONS, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE_MID, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 14, model: 'family', word: false, task: false, countsA: '●2', tallA: '●31', tallB: '●1', titleA: 'תריץ 4 סוכני…', drawerType: false },
+  53: { column: 51, margin: 1, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE, hotkeys: false, searchRows: CHROME_ROWS_SEARCH, helpRows: 14, model: 'family', word: true, task: false, countsA: '●2 ✓4', tallA: '●31 ✓4', tallB: '●1 ✓1', titleA: TITLE_A, drawerType: true },
+  120: { column: 100, margin: 10, toolbar: WORDS_HE, toolbarEn: WORDS_EN, settings: SETTINGS_HE, settingsEn: SETTINGS_EN, exitDemo: 'יציאה ✕ 🎬', demoNote: DEMO_NOTE, hotkeys: true, searchRows: CHROME_ROWS_MIN, helpRows: 11, model: 'full', word: true, task: true, countsA: '●2 ✓4', tallA: '●31 ✓4', tallB: '●1 ✓1', titleA: TITLE_A, drawerType: true },
 }
 type Columns = keyof typeof WIDTHS
 
@@ -170,7 +170,7 @@ const READERS = 30
 /**
  * The tall office: room A (its lead, READERS readers, the RECENT_DONE + 1 finished writers — the room draws the RECENT_DONE and
  * the "1 more finished" line) is a card of CARD_LINES + 1 + READERS + RECENT_DONE + MORE_LINES lines, past any 25-row window;
- * room B holds a working agent and a finished one (drawn: it is among the recent), so its title line has ✅ counts — read-only since live check 7 (Q6): a click on them changes nothing.
+ * room B holds a working agent and a finished one (drawn: it is among the recent), so its title line has ✓ counts — read-only since live check 7 (Q6): a click on them changes nothing.
  */
 function tallFixture(): Agent[] {
   const inB = { session: SB.slice(0, 8), session_full: SB, project: '/home/dev/research', cwd: '/home/dev/research' }
@@ -334,7 +334,7 @@ async function rowsOk(ui: Ui, p: OfficeProps): Promise<void> {
     expect(propsOf(pin).key).toBe(`pin:${String(propsOf(card).key).slice('room:'.length)}`)
     expect(propsOf(title).height).toBe(1)
     expect(textOf(title)).not.toMatch(REFUSED_RE)
-    expect(textOf(counts)).toMatch(/^🟢\d+/)
+    expect(textOf(counts)).toMatch(/^●\d+/)   // (decision 29: the counts' icons)
     for (const row of rowsOf(card)) {
       expect(row.length).toBeGreaterThanOrEqual(3)   // status, who, the emoji; the model, the word and the task when the mode and the width have them
       expect(row.length).toBeLessThanOrEqual(6)
@@ -378,9 +378,9 @@ function suite(COLUMNS: Columns): void {
   const GEO = geometry(COLUMNS)
   const PANE = paneAt(COLUMNS, { offset: 0, bodyRows: ROWS })
   const t = (name: string, fn: ($: Engine, on: On) => Promise<void>) => test(`${COLUMNS} columns · ${name}`, { timeoutMs: 30_000 }, fn)
-  /** The a1 row as a table mode draws it: the mark, the who, the model (its version when `full`), the emoji, the word when the mode has it, the task from CENTRE_AT. */
+  /** The a1 row as a table mode draws it: the mark, the who, the model (its version when `full`), the glyph (decision 29's ▤ for Read), the word when the mode has it, the task from CENTRE_AT. */
   const a1RowIn = (p: OfficeProps, mode: TableMode, word: string): string[] =>
-    ['●', whoOf(p, 'a1'), ...(mode.model === 'none' ? [] : [mode.model === 'full' ? nb('Opus 5.5') : 'Opus']), '📖', ...(mode.word ? [word] : []), ...(GEO.centred ? [nb('Task of a1.')] : [])]
+    ['●', whoOf(p, 'a1'), ...(mode.model === 'none' ? [] : [mode.model === 'full' ? nb('Opus 5.5') : 'Opus']), '▤', ...(mode.word ? [word] : []), ...(GEO.centred ? [nb('Task of a1.')] : [])]
 
   /** The pane mounted on the desktop over `agents` (the fixture unless given), the poll run once, the Client sized to this width; `scroll` the pane's window (the top of a 30-row body unless given). */
   async function mountOffice($: Engine, on: On, agents: () => Agent[] = fixture, scroll: { offset: number; bodyRows: number } = PANE.props.scroll) {
@@ -418,9 +418,9 @@ function suite(COLUMNS: Columns): void {
     const a1 = rowsOf(await cardOf(ui, SA)).find(r => r[1] === whoOf(p0, 'a1'))
     expect(a1).toEqual(a1RowIn(p0, m.mode, 'קורא'))
     expect(await rowKeys(ui, 'a1')).toEqual(['who', ...(W.model === 'none' ? [] : ['model']), 'emoji', ...(W.word ? ['word'] : []), ...(W.task ? ['task'] : [])].map(c => `agent:a1:${c}`))
-    // the room counts: A's ✅ dropped at 36 (the title keeps TITLE_MIN cells), B's 🟢 alone (no finished)
+    // the room counts: A's ✓ dropped at 36 (the title keeps TITLE_MIN cells), B's ● alone (no finished)
     expect((await headOf(ui, SA)).counts).toBe(nb(W.countsA))
-    expect((await headOf(ui, SB)).counts).toBe(nb('🟢1'))
+    expect((await headOf(ui, SB)).counts).toBe(nb('●1'))
     expect((await headOf(ui, SA)).title).toBe(nb(W.titleA))
     // THE PIN on every title (decision 26): the monochrome PIN_OFF while no room is pinned (the title's cells reserved for it)
     expect([await pinLabelOf(ui, SA), await pinLabelOf(ui, SB)]).toEqual([PIN_OFF, PIN_OFF])
@@ -655,11 +655,11 @@ function suite(COLUMNS: Columns): void {
     expect([await label(ui, 'showDone'), await label(ui, 'mute'), await label(ui, 'help')]).toEqual(W.toolbarEn)
     expect(p1.labels.settingsTitle).toBe('Settings')
     expect(roomOf(p1, SA).moreLabel).toBe('1 more finished')
-    expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.act).toBe('📖 Reading')
+    expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.act).toBe('▤ Reading')
     expect(roomOf(p1, SA).agents.find(a => a.id === 'a1')?.name).toBe(personaName(7, 'en'))
     expect(await titleOf()).toEqual(['row', 'Button', `pin:${SA}`])   // LTR: the pin Button first, at the left edge
-    // the row in the mode the English names leave the office (wider than the Hebrew ones: the word, then the model column, go
-    // before the names are cut — office-layout.ts chooseMode, chosen afresh: the names moved the widest values, so the Hebrew
+    // the row in the mode the English names leave the office (wider than the Hebrew ones: the word goes, then the names are cut
+    // down to NAME_MIN to keep the model column, then the column — office-layout.ts chooseMode, chosen afresh: the names moved the widest values, so the Hebrew
     // mode's token is no hysteresis here, ModeToken): the mark alone at the left edge, the who, the model (its version from
     // MODEL_FULL_FROM), the emoji, the word when the mode has it, the task from CENTRE_AT
     const m0 = officeModel(p0)
@@ -667,7 +667,11 @@ function suite(COLUMNS: Columns): void {
     const m1 = officeModel(p1, NO_DECOR, undefined, m0.token)
     expect(m1.mode).toEqual(officeModel(p1).mode)
     expect(rowsOf(await cardOf(ui, SA)).find(r => r[1] === whoOf(p1, 'a1'))).toEqual(a1RowIn(p1, m1.mode, 'Reading'))
-    expect(whoOf(p1, 'a1')).toBe(nb(`${PERSONA_EMOJI[3]} ${personaName(7, 'en')}`))   // (the fixture's agents all carry persona 3's emoji: `agent()`; the English name whole at every width — 11 cells, under the narrowest cap)
+    expect(whoOf(p1, 'a1')).toBe(nb(`${PERSONA_EMOJI[3]} ${cut(personaName(7, 'en'), m1.mode.nameMax)}`))   // (the fixture's agents all carry persona 3's emoji: `agent()`)
+    // the English name — 11 cells — whole from 53 columns; at 36 the names are cut to NAME_MIN and the model column kept (the
+    // ladder's rank 3): decision 29's one-cell activity glyph left the column the cell it lacked, where the emoji's two dropped it
+    if (COLUMNS === 36) expect(m1.mode).toMatchObject({ rank: 3, model: 'family', nameMax: NAME_MIN })
+    else expect(whoOf(p1, 'a1')).toBe(nb(`${PERSONA_EMOJI[3]} ${personaName(7, 'en')}`))
     expect(m1.mode.rank).toBeGreaterThanOrEqual(m0.mode.rank)   // never richer than the Hebrew office's
     expect((await headOf(ui, SA)).more).toBe(nb('▸ 1 more finished'))
     await rowsOk(ui, p1)
@@ -742,10 +746,10 @@ function suite(COLUMNS: Columns): void {
     await ui.unmount()
   })
 
-  t('room counts ✅ are READ-ONLY (live check 7, Q6: the more line under the title is the room\'s one toggle): the title line\'s one control is its pin — the counts a dim Text, no Button; the more line under the title the room\'s Button', async ($, on) => {
+  t('room counts ✓ are READ-ONLY (live check 7, Q6: the more line under the title is the room\'s one toggle): the title line\'s one control is its pin — the counts a dim Text, no Button; the more line under the title the room\'s Button', async ($, on) => {
     const { ui } = await mountOffice($, on)
     const p0 = await officeProps(ui)
-    expect((await headOf(ui, SA)).counts).toBe(nb(W.countsA))   // (the ✅ dropped at 36)
+    expect((await headOf(ui, SA)).counts).toBe(nb(W.countsA))   // (the ✓ dropped at 36)
     for (const room of [SA, SB]) {
       const { titleLine, counts } = partsOf(await cardOf(ui, room))
       expect(nodesOf(titleLine).filter(n => n.type === 'Button').map(n => propsOf(n).key), room).toEqual([`pin:${room}`])
@@ -1068,7 +1072,7 @@ function suite(COLUMNS: Columns): void {
   // the presses in a scrolled pane: THE FLOATING OVERLAY at the window's top, the card controls lower down
   // ---------------------------------------------------------------------------
 
-  t('SCROLLED: a press reaches its Button wherever the pane is scrolled — a row opens its drawer, which floats at the window\'s top (max(offset, chromeRows), on inverseText) while the cards do not move under it and nothing scrolls; the settings opened while scrolled take the same place, and a row press swaps them for its drawer; the card controls lower down answer and land under an open overlay too — A\'s more line above the window (the drawer stays open), B\'s pin at the office\'s end (the settings stay open; the colour 📌 at once, B to the top once the pointer leaves; unpinned at the top under a drawer, which stays) — B\'s ✅ counts read-only; a first j from no focus lands on the row at the viewport\'s top — the walk starts IN VIEW (a short office is drawn whole: a focus off the screen is a scroll away)', async ($, on) => {
+  t('SCROLLED: a press reaches its Button wherever the pane is scrolled — a row opens its drawer, which floats at the window\'s top (max(offset, chromeRows), on inverseText) while the cards do not move under it and nothing scrolls; the settings opened while scrolled take the same place, and a row press swaps them for its drawer; the card controls lower down answer and land under an open overlay too — A\'s more line above the window (the drawer stays open), B\'s pin at the office\'s end (the settings stay open; the colour 📌 at once, B to the top once the pointer leaves; unpinned at the top under a drawer, which stays) — B\'s ✓ counts read-only; a first j from no focus lands on the row at the viewport\'s top — the walk starts IN VIEW (a short office is drawn whole: a focus off the screen is a scroll away)', async ($, on) => {
     const { ui, captured } = await mountOffice($, on, tallFixture, { offset: 0, bodyRows: BODY })
     const p0 = await officeProps(ui)
     expect(p0.rooms.map(r => r.id)).toEqual([SA, SB])
@@ -1081,7 +1085,7 @@ function suite(COLUMNS: Columns): void {
     expect(chromeRows(p0)).toBe(FIXED)
     expect(lines.length).toBeGreaterThan(FIXED + BODY)   // taller than the window: the pane scrolls ...
     expect(overscanOf(lines.length, BODY)).toBe(lines.length)   // ... and short enough (WINDOW_ROWS) to be drawn whole at any offset
-    expect((await headOf(ui, SA)).counts).toBe(nb(W.tallA))   // (31 working; the ✅ dropped at 36)
+    expect((await headOf(ui, SA)).counts).toBe(nb(W.tallA))   // (31 working; the ✓ dropped at 36)
     const CHROME_KEYS = W.searchRows === CHROME_ROWS_SEARCH ? ['header', 'toolbar', 'searchLine'] : ['header', 'toolbar']
     const kinds = async () => (await kidsOf(ui)).map(k => (isCard(k) ? 'card' : propsOf(k).key))
     // scrolled 15 lines into A's rows (the engine's offset: the chrome and 15 layout lines): every card still drawn whole, no spacer
@@ -1148,7 +1152,7 @@ function suite(COLUMNS: Columns): void {
     expect((await officeProps(ui)).drawer?.id).toBe(other.agent)
     await ui.key({ in: OFFICE_KEY, key: 'x' })
     // the window at the office's end (the furthest the engine scrolls: the pane's content — the Client's height and THE CREDIT
-    // LINE's rows the hooks draw under it, decision 27a, paint probe round 6 — less the window): B whole — its ✅ counts read-only
+    // LINE's rows the hooks draw under it, decision 27a, paint probe round 6 — less the window): B whole — its ✓ counts read-only
     // (no Button on its title but the pin; one finished: no more line either)
     await scrollTo(ui, FIXED + lines.length + CREDIT_ROWS - BODY, BODY)
     const pe = await officeProps(ui)

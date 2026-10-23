@@ -158,22 +158,22 @@ test('starsOf (the finish beat\'s ⭐ stamps): fires once, never on first sight,
   expect(starsOf(prev2, [done], { a: T0 }, T0 + 1)).toEqual({ a: T0 })
 })
 
-test('THE FINISH TOAST (live check 5): `✅ <persona> סיים · <room title>` / `✅ <persona> finished · <title>` — the persona\'s name (never the Agent call\'s description), the room\'s title as the office draws it (roomTitle: the topic, else the project, else the session\'s head) cut on a word to TOAST_TITLE_MAX cells; no title, no separator; FINISH_TOAST_MS short', () => {
+test('THE FINISH TOAST (live check 5): `✓ <persona> סיים · <room title>` / `✓ <persona> finished · <title>` (decision 29: the finished glyph, where the ✅ was) — the persona\'s name (never the Agent call\'s description), the room\'s title as the office draws it (roomTitle: the topic, else the project, else the session\'s head) cut on a word to TOAST_TITLE_MAX cells; no title, no separator; FINISH_TOAST_MS short', () => {
   expect([FINISH_TOAST_MS, TOAST_TITLE_MAX]).toEqual([1500, 30])
   const a = agent({ id: 'x', persona_id: 0, role: 'summarize the security review' })
-  expect(finishToast(a, 'Ship the v2 config migration.', 'he')).toBe('✅ הבלש סיים · Ship the v2 config migration.')
-  expect(finishToast(a, 'Ship the v2 config migration.', 'en')).toBe('✅ The Detective finished · Ship the v2 config migration.')
-  expect(finishToast(a, 'Plan the static-registry move and the v2 config rollout', 'en')).toBe('✅ The Detective finished · Plan the static-registry move…')
-  expect(finishToast(a, 'בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 'he')).toBe('✅ הבלש סיים · בדיקת תיאטרון הסוכנים בשיחה…')
-  expect(finishToast(a, '', 'he')).toBe('✅ הבלש סיים')
-  expect(finishToast(a, '   ', 'en')).toBe('✅ The Detective finished')
+  expect(finishToast(a, 'Ship the v2 config migration.', 'he')).toBe('✓ הבלש סיים · Ship the v2 config migration.')
+  expect(finishToast(a, 'Ship the v2 config migration.', 'en')).toBe('✓ The Detective finished · Ship the v2 config migration.')
+  expect(finishToast(a, 'Plan the static-registry move and the v2 config rollout', 'en')).toBe('✓ The Detective finished · Plan the static-registry move…')
+  expect(finishToast(a, 'בדיקת תיאטרון הסוכנים בשיחה חדשה עם כמה סוכני משנה במקביל', 'he')).toBe('✓ הבלש סיים · בדיקת תיאטרון הסוכנים בשיחה…')
+  expect(finishToast(a, '', 'he')).toBe('✓ הבלש סיים')
+  expect(finishToast(a, '   ', 'en')).toBe('✓ The Detective finished')
   // the Hebrew verb agrees with the persona (pre-check 6): הדבורה and הנמלה — the cast's feminine names — סיימה; English has one form
   const bee = agent({ id: 'b', persona_id: 12 })
-  expect(finishToast(bee, 'Ship the v2 config migration.', 'he')).toBe('✅ הדבורה סיימה · Ship the v2 config migration.')
-  expect(finishToast(agent({ id: 'n', persona_id: 40 }), '', 'he')).toBe('✅ הנמלה סיימה')
-  expect(finishToast(bee, '', 'en')).toBe('✅ The Bee finished')
+  expect(finishToast(bee, 'Ship the v2 config migration.', 'he')).toBe('✓ הדבורה סיימה · Ship the v2 config migration.')
+  expect(finishToast(agent({ id: 'n', persona_id: 40 }), '', 'he')).toBe('✓ הנמלה סיימה')
+  expect(finishToast(bee, '', 'en')).toBe('✓ The Bee finished')
   // the generic name (no persona) is סוכן, masculine
-  expect(finishToast(agent({ id: 'g', persona_id: undefined as unknown as number }), '', 'he')).toBe('✅ סוכן סיים')
+  expect(finishToast(agent({ id: 'g', persona_id: undefined as unknown as number }), '', 'he')).toBe('✓ סוכן סיים')
   // the title as the card draws it: the lead's topic, else the project's folder, else the session id's head
   const stat = roomStats(fixture())
   expect(roomTitle(stat.get(SA), SA)).toBe('Ship the v2 config migration.')
@@ -192,7 +192,7 @@ test('the demo cast (scanner.demoPayload, the one the pane draws): the 12 s loop
   expect(fin?.status).toBe('done')
   expect(fin?.result).toMatch(/3 high/)
   expect(p6.agents.find(a => a.id === 'demo-mcp-dd')?.tool).toBe('mcp__github__search_issues')
-  expect(activityLabel(p6.agents.find(a => a.id === 'demo-mcp-dd')!, 'he')).toBe('🔌 github')
+  expect(activityLabel(p6.agents.find(a => a.id === 'demo-mcp-dd')!, 'he')).toBe('⌁ github')
   // Python's cast (7 agents + the newcomer + 2 leads, the MCP triager 63 s in, no ⏰ subject) and four earlier finishes in the
   // research room (pre-check 6): it holds RECENT_DONE + 2 finished, each finished at its own time and the writer the latest —
   // so a room that hides its finished holds two of them back, and "show finished" changes what the demo draws
@@ -425,15 +425,15 @@ test('the office draws rooms, cards and counts on every text surface (the footer
   for (const surface of ['terminal', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /משרד הסוכנים/ }))).toBeDefined()
-    expect((await ui.find({ type: 'Text', text: /🟢 3 עובדים/ }))?.text).toMatch(/✅ 1 סיימו/)
+    expect((await ui.find({ type: 'Text', text: /● 3 עובדים/ }))?.text).toMatch(/✓ 1 סיימו/)
     // rooms: A leads with its topic, B with its project; A first (newer activity)
     expect(await ui.find({ type: 'Text', text: /💬 Ship the v2 config migration\./ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /💬 research/ })).toBeDefined()
-    // cards: the Agent description is the name; MCP tool → 🔌 server; finished hidden
+    // cards: the Agent description is the name; MCP tool → ⌁ server (decision 29); finished hidden
     expect(await ui.find({ key: 'open:a1' })).toBeDefined()
     expect((await ui.find({ key: 'open:a1' }))?.text).toMatch(/map session-token validation/)
-    expect(await ui.find({ type: 'Text', text: /🔌 github/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /📖 קורא/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /⌁ github/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /▤ קורא/ })).toBeDefined()
     expect(await ui.findAll({ type: 'Svg' })).toHaveLength(0)
     expect(await ui.find({ key: 'open:a2' })).toBeUndefined()
     expect(await ui.find({ key: 'rdone:' + SA })).toBeDefined()
@@ -479,14 +479,14 @@ test('the pane fits narrow, medium and wide bodies: cards, keys, the compact hea
     expect(await ui.find({ type: 'Text', text: /^00:3\d$/ })).toBeDefined()
     if (bodyColumns < 60) {
       // compact: icon-only header and toolbar, no worded counts, no key-hint chips
-      expect(await ui.find({ type: 'Text', text: /🟢3 ✅1/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /●3 ✓1/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /עובדים/ })).toBeUndefined()
       expect((await ui.find({ key: 'showDone' }))?.text).toBe('☐')
       expect((await ui.find({ key: 'lang' }))?.text).toBe('EN')
       expect((await ui.find({ key: 'demo' }))?.text).toBe('🎬')
     } else {
       expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()
-      expect((await ui.find({ type: 'Text', text: /🟢 3 עובדים/ }))?.text).toMatch(/✅ 1 סיימו/)
+      expect((await ui.find({ type: 'Text', text: /● 3 עובדים/ }))?.text).toMatch(/✓ 1 סיימו/)
       expect((await ui.find({ key: 'showDone' }))?.text).toMatch(/הצג שהושלמו/)
     }
     // the name label is clipped to the card, never wider than it
@@ -536,8 +536,8 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
     // language: English strings, the pane retitled
     await ui.press({ key: 'lang' })
     expect(await ui.find({ type: 'Text', text: /Claude Theater/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /🔌 github/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /📖 Reading/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /⌁ github/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /▤ Reading/ })).toBeDefined()
     expect(captured.opens).toContain('🟢 3 · 🎭 Theater') // retitled with the working count (3 running)
     expect((captured.store.prefs as { lang: string }).lang).toBe('en')
     await ui.press({ key: 'lang' })
@@ -583,26 +583,26 @@ test('presses: show finished, mute, language (RTL→LTR, retitle), pin, room tog
 })
 
 // (several mounts and polls: a loaded machine stretches it past the 5 s default — it ran 5.1 s under a full suite with no code change)
-test('the finish beat (the poll\'s, over the scanned office): a shown agent that turns done gets ⭐, confetti, a toast and the chime (unless muted); a hidden finish is never celebrated', { timeoutMs: 30_000 }, async ($, on) => {
+test('the finish beat (the poll\'s, over the scanned office): a shown agent that turns done gets ★, confetti, a toast and the chime (unless muted); a hidden finish is never celebrated', { timeoutMs: 30_000 }, async ($, on) => {
   const files = quietOffice(T0)
   files.set(Q3, subagentMidTool('q3', 'Count the tests.', T0 - 9000)) // a third subagent, for the hidden finish
   const { captured, clock } = beneath(on, () => [], { prefs: { lang: 'he', muted: false, showDone: true, pins: [] } }, files)
   await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
   await clock.advance(POLL_MS)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /★/ })).toBeUndefined()
   // q1 finishes; a finish settles: it is published once SETTLE_MS passed since the previous publish (a burst = one redraw)
   finishIn(files, Q1, clock.now(), 'Found 12 TODOs; listed them in TODO.md.')
   await clock.advance(SETTLE_MS)
   const q1 = captured.payload?.agents.find(a => a.id === 'q1')
   expect(q1?.status).toBe('done')
   // THE FINISH TOAST (live check 5): the persona, the word, the room's title; a short stay (the ⭐ stays on the row)
-  expect(captured.toasts).toEqual(['✅ הבלש סיים · Quiet office test.']) // q1's persona (הבלש, persona 0), its room's title
+  expect(captured.toasts).toEqual(['✓ הבלש סיים · Quiet office test.']) // q1's persona (הבלש, persona 0), its room's title
   expect(captured.toastTimeouts).toEqual([FINISH_TOAST_MS])
   expect(FINISH_TOAST_MS).toBe(1500)
   expect(captured.plays).toBe(1)
   expect(captured.payload?.stars).toEqual({ q1: clock.now() }) // the ⭐ rides the payload, stamped by the poll's clock
-  expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /★/ })).toBeDefined()
   const burst = await ui.find({ type: 'Client' })
   expect(burst?.key).toBe('confetti:q1')
   await ui.advance(90 * 12 + 10)
@@ -612,16 +612,16 @@ test('the finish beat (the poll\'s, over the scanned office): a shown agent that
   expect(captured.plays).toBe(1)
   expect(captured.toasts).toHaveLength(1)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /★/ })).toBeDefined()
   await clock.advance(JUST_FINISHED_MS + POLL_MS)
-  expect(await ui.find({ type: 'Text', text: /⭐/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /★/ })).toBeUndefined()
   expect(captured.payload?.stars).toEqual({})
   // muted: toast but no chime
   await ui.press({ key: 'mute' })
   finishIn(files, Q2, clock.now(), 'All green.')
   await clock.advance(SETTLE_MS)
   expect(captured.toasts).toHaveLength(2)
-  expect(captured.toasts[1]).toMatch(/^✅ \S+ סיים · Quiet office test\.$/)
+  expect(captured.toasts[1]).toMatch(/^✓ \S+ סיים · Quiet office test\.$/)
   expect(captured.toastTimeouts).toEqual([FINISH_TOAST_MS, FINISH_TOAST_MS])
   expect(captured.plays).toBe(1)
   const starQ2 = clock.now()
@@ -692,8 +692,8 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(p.rooms.map(r => r.title)).toEqual(['Ship the v2 config migration.', 'research'])
     expect(p.rooms.map(r => r.agents.map(a => a.id))).toEqual([['lead-a', 'a1', 'a2'], ['b1']])
     expect(p.rooms[0]).toMatchObject({ moreDone: 0, moreLabel: '' })
-    expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'הבנאי', act: '📖 קורא', model: 'Opus 5.5', status: 'running' }) // the row's name is the persona's (persona 7); the role stays in the drawer
-    expect(await cardOf(ui, 'b1')).toMatchObject({ act: '🔌 github', model: '?' })
+    expect(await cardOf(ui, 'a1')).toMatchObject({ name: 'הבנאי', act: '▤ קורא', model: 'Opus 5.5', status: 'running' }) // the row's name is the persona's (persona 7); the role stays in the drawer
+    expect(await cardOf(ui, 'b1')).toMatchObject({ act: '⌁ github', model: '?' })
     expect((await cardOf(ui, 'lead-a'))?.status).toBe('running')
     // the slim row: what the cards draw and nothing else (no clock, no tool or model family, no lead flag, no first-seen stamp)
     expect(Object.keys((await cardOf(ui, 'a1'))!).sort()).toEqual(['act', 'emoji', 'failed', 'id', 'longRunning', 'model', 'name', 'star', 'status', 'task'])   // (`task`: the short task, the dim task column from 100 columns)
@@ -897,7 +897,7 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   // the office as scanned, in the office Client's props: the lead on Fable (its model read from the conversation's tail), q2 on Opus, q1 unknown
   expect(await cardOf(ui, QSESS)).toMatchObject({ model: 'Fable 5.1' })
   expect(await cardOf(ui, 'q2')).toMatchObject({ model: 'Opus 5.5' })
-  expect(await cardOf(ui, 'q1')).toMatchObject({ model: '?', status: 'running', act: '📖 קורא' })
+  expect(await cardOf(ui, 'q1')).toMatchObject({ model: '?', status: 'running', act: '▤ קורא' })
   // (the desktop pane is the one Client: a redraw that changes nothing hands the module the same JSON)
   const propsJson = async () => JSON.stringify((await ui.find({ type: 'Client' }))?.props.props)
   const before = await propsJson()
@@ -955,13 +955,13 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 1)
   expect(renders()).toBe(desktop1 + 1)
-  expect(await cardOf(ui, 'q1')).toMatchObject({ status: 'running', act: '✏️ כותב' })
+  expect(await cardOf(ui, 'q1')).toMatchObject({ status: 'running', act: '✎ כותב' })
   expect(await propsJson()).not.toBe(before)
   // quiet again: still nothing
   for (let i = 0; i < 3; i++) await clock.advance(POLL_MS)
   expect(captured.writes.payload).toBe(writes0.payload + 1)
   expect(renders()).toBe(desktop1 + 1)
-  // RUNNING_STALE_SEC after its last activity the lead falls idle: a visible change (💤, grey) → one publish
+  // RUNNING_STALE_SEC after its last activity the lead falls idle: a visible change (◌, amber) → one publish
   const idleAt = leadMtime + RUNNING_STALE_SEC * 1000
   expect(idleAt).toBeGreaterThan(clock.now())
   await clock.advance(idleAt - clock.now() + POLL_MS)
@@ -998,10 +998,10 @@ test('THE FLICKER GUARD: polls with no visible change write NO payload / scanErr
   expect(renders()).toBe(desktop2 + 1) // one redraw (the beat's prefs read is the retitle's)
   expect(captured.toasts).toHaveLength(1)
   expect(captured.plays).toBe(1)
-  // the tile: ⭐ (the stamp rides the props) on the status column + done — and that is the whole finish: nothing tinted, no
+  // the tile: ★ (the stamp rides the props; decision 29's symbol) on the status column + done — and that is the whole finish: nothing tinted, no
   // clock (live check 6), no redraw of the pane; no confetti Client on the desktop (the office Client is the only one)
   expect(await cardOf(ui, 'q1')).toMatchObject({ status: 'done', star: clock.now() })
-  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^⭐$/ })).toBeDefined()
+  expect(await ui.find({ in: OFFICE_KEY, type: 'Text', text: /^★$/ })).toBeDefined()
   expect(await tintShown(ui)).toBe(false)
   await ui.advance(2000)
   expect(await tintShown(ui)).toBe(false)
@@ -1383,7 +1383,7 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
     expect(await ui.findAll({ type: 'Svg' })).toHaveLength(0)
     expect(await ui.find({ key: 'tile:a1' })).toBeUndefined()
     expect((await ui.find({ key: 'open:a1' }))?.text).toMatch(/map session-token validation/)
-    expect(await ui.find({ type: 'Text', text: /📖 קורא/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /▤ קורא/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^00:3\d$/ })).toBeDefined()
     await ui.unmount()
   }

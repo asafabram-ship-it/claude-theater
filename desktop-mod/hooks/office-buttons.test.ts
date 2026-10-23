@@ -293,7 +293,7 @@ test('R5 · the card one finished line sits DIRECTLY UNDER ITS TITLE (Q3): `עו
   await ui.unmount()
 })
 
-test('R8 · the line only where it hides or shows something (Q6): the demo frontend room with its one finisher draws none, ☐ or ☑; the title ✅ counts are read-only (the title line\'s one Button its pin; the counts a dim Text)', { timeoutMs: 30_000 }, async ($, on) => {
+test('R8 · the line only where it hides or shows something (Q6): the demo frontend room with its one finisher draws none, ☐ or ☑; the title ✓ counts are read-only (the title line\'s one Button its pin; the counts a dim Text)', { timeoutMs: 30_000 }, async ($, on) => {
   const { ui, clock } = await demoAt($, on, 1)
   await clock.advance(POLL_MS)              // phase 6: the poll publishes the finisher done
   const p0 = await officeProps(ui)
@@ -397,7 +397,7 @@ test('R10 · the status column is floored at every width: the keyboard focus mar
   const { ui } = await demoAt($, on, 1)
   const statusMin = async () => {
     const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
-    return allNodes(root).filter(n => n.type === 'Box' && n.props?.flexDirection === 'column' && (n.children ?? []).some(c => isDrawn(c) && c.type === 'Text' && /^[‹›]?[●○⭐❌⏰][‹›]?$/u.test(drawnText(c)))).map(c => c.props?.minWidth)
+    return allNodes(root).filter(n => n.type === 'Box' && n.props?.flexDirection === 'column' && (n.children ?? []).some(c => isDrawn(c) && c.type === 'Text' && STATUS_CELL_RE.test(drawnText(c)))).map(c => c.props?.minWidth)
   }
   const before = await statusMin()
   expect(before.length).toBeGreaterThan(0)
@@ -558,10 +558,12 @@ const storedPrefs = (captured: Captured) => captured.store.prefs as { muted: boo
 async function drawnMute(ui: Ui): Promise<string> {
   return String((await ui.find({ in: OFFICE_KEY, type: 'Button', key: 'mute' }))?.props.label ?? '')
 }
-/** The agent rows the module drew: their status cells (the mark, the focus marker beside it). */
+/** A status cell: the mark (decision 29's ● ◌ ○ or a badge ★ ✕ ⏱︎ — office-layout.ts MARK), the focus marker beside it. */
+const STATUS_CELL_RE = /^[‹›]?(?:[●◌○★✕]|⏱\u{FE0E})[‹›]?$/u
+/** The agent rows the module drew: their status cells (the mark, the focus marker beside it) — the one coloured Text of a row (a waiting row's activity glyph is a ◌ too, in a Button's uncoloured Text). */
 async function drawnRows(ui: Ui): Promise<number> {
   const root = (await ui.drawn({ in: OFFICE_KEY })) as unknown as DrawnNode
-  return allNodes(root).filter(n => n.type === 'Text' && /^[‹›]?[●○⭐❌⏰][‹›]?$/u.test(drawnText(n))).length
+  return allNodes(root).filter(n => n.type === 'Text' && n.props?.color !== undefined && STATUS_CELL_RE.test(drawnText(n))).length
 }
 
 test('THE OUTBOX applies an action ONCE when posts overlap: a post of two actions still applying its first (its $.store write held) when the next frame\'s post carries them again — the later post applies the second, and the first then skips it (mute pressed once: the office ends muted, one prefs write)', { timeoutMs: 30_000 }, async ($, on) => {

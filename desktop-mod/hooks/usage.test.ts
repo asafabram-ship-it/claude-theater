@@ -417,9 +417,9 @@ async function officeMeter(ui: Mounted): Promise<string> {
   return meters[0]?.trim() ?? ''
 }
 
-/** The text-card header's counts line (`🟢 0 … · ✅ 0 …`, or `🟢0 ✅0` when narrow). */
+/** The text-card header's counts line (`● 0 … · ✓ 0 …`, or `●0 ✓0` when narrow: decision 29's icons). */
 async function cardHeader(ui: Mounted): Promise<string> {
-  return (await ui.find({ type: 'Text', text: /^🟢/ }))?.text ?? ''
+  return (await ui.find({ type: 'Text', text: /^●/ }))?.text ?? ''
 }
 
 /** Any Text on the pane that names the five-hour window. */
@@ -473,10 +473,10 @@ test('terminal header: the card header ends with the short meter (wide and narro
   const R = local(17, 5)
   const TERMINAL = { ...PANE, surface: 'terminal' } as const
   const wide = await $.ui.mount(TERMINAL) // bodyColumns 90
-  expect(await cardHeader(wide)).toMatch(/^🟢 0 /)
+  expect(await cardHeader(wide)).toMatch(/^● 0 /)
   expect(await names5h(wide)).toBeUndefined()
   await measure($, limits(42, R))
-  expect(await cardHeader(wide)).toMatch(/^🟢 0 .* · ⏳ 5h 42%$/)
+  expect(await cardHeader(wide)).toMatch(/^● 0 .* · ⏳ 5h 42%$/)
   await measure($, limits(85, R))
   expect(await cardHeader(wide)).toMatch(/ · ⚠ 5h 85%$/)
   expect(await cardHeader(wide)).not.toMatch(NO_BIDI)
@@ -485,10 +485,10 @@ test('terminal header: the card header ends with the short meter (wide and narro
   expect(await cardHeader(wide)).not.toContain('5h')
   await wide.unmount()
   const narrow = await $.ui.mount({ ...TERMINAL, props: { ...PANE.props, bodyColumns: 45 } })
-  expect(await cardHeader(narrow)).toMatch(/^🟢0 /)
+  expect(await cardHeader(narrow)).toMatch(/^●0 /)
   expect(await names5h(narrow)).toBeUndefined()
   await measure($, limits(42, R))
-  expect(await cardHeader(narrow)).toMatch(/^🟢0 .* · ⏳ 5h 42%$/)
+  expect(await cardHeader(narrow)).toMatch(/^●0 .* · ⏳ 5h 42%$/)
   await measure($, limits(91, R))
   expect(await cardHeader(narrow)).toMatch(/ · ⚠ 5h 91%$/)
   await measure($, [])
@@ -515,15 +515,15 @@ test('terminal header: the meter is drawn whole or not at all — a narrow pane 
   const TERMINAL = { ...PANE, surface: 'terminal' } as const
   // 24 columns (the narrowest the pane lays out for): the compact counts are 11 cells, the meter would make 23 of the 21 there are
   const tight = await $.ui.mount({ ...TERMINAL, props: { ...PANE.props, bodyColumns: 24 } })
-  expect(await cardHeader(tight)).toBe('🟢1 ⏳1 ✅1')
+  expect(await cardHeader(tight)).toBe('●1 ◌1 ✓1')
   await measure($, limits(42, local(21, 10)))
-  expect(await cardHeader(tight)).toBe('🟢1 ⏳1 ✅1') // (no `· ⏳ 5…`, no `5h`: the percent is never cut in half)
+  expect(await cardHeader(tight)).toBe('●1 ◌1 ✓1') // (no `· ⏳ 5…`, no `5h`: the percent is never cut in half)
   expect(await names5h(tight)).toBeUndefined()
   await tight.unmount()
   // room for it (a wider pane, same reading): the idle `⏳1` and the meter's `⏳ 5h 42%` are both there, told apart by `5h`
   const roomy = await $.ui.mount({ ...TERMINAL, props: { ...PANE.props, bodyColumns: 45 } })
-  expect(await cardHeader(roomy)).toBe('🟢1 ⏳1 ✅1 · ⏳ 5h 42%')
+  expect(await cardHeader(roomy)).toBe('●1 ◌1 ✓1 · ⏳ 5h 42%')
   await measure($, [])
-  expect(await cardHeader(roomy)).toBe('🟢1 ⏳1 ✅1')
+  expect(await cardHeader(roomy)).toBe('●1 ◌1 ✓1')
   await roomy.unmount()
 })

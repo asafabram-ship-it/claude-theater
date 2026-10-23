@@ -26,7 +26,7 @@
 // MORE_MARK, iconLabel — only past RECENT_DONE finished: live check 7, Q3 + Q6;
 // a plain Button of regular weight), a BLANK line (no rule), and the agents as
 // a COLUMN-MAJOR table — rigid column Boxes (status mark · who · [model] ·
-// activity emoji · [activity word] · [task]), the padding cell on the column's
+// activity glyph · [activity word] · [task]), the padding cell on the column's
 // reading side, every value ONE line with no plain space in it
 // (office-layout.ts nb: a value a little too long is clipped at the card's
 // edge, never wrapped onto a second line — the desktop does not enforce
@@ -55,12 +55,20 @@
 // meter → no meter (under 25 cells); so the header's words go before the
 // short meter does, and a meter is drawn whole or not at all. Hierarchy by
 // weight, not colour: working = a bold
-// name; waiting = a regular name, a dim activity word; finished = all dim; a ❌
-// row keeps a regular name; the status mark is the one coloured glyph. No
+// name; waiting = a regular name, a dim activity word; finished = all dim; a
+// failed row keeps a regular name; the status mark is the one coloured glyph.
+// THE MONOCHROME MARKS (decision 29, 23.10 — a calmer, brand-coloured office):
+// the status marks and the activity glyphs are symbols of the font in place
+// of the colour emoji (the personas' emoji, the toolbar's and the settings'
+// icons kept) — the mark ● ◌ ○ coloured by state (the logo's light teal
+// working, amber waiting, grey finished: office-layout.ts MARK, DOT_FG), the
+// activity glyph (`⋯ ▤ ✎ ⚙︎ ⌕ ⌖ ⇄ ◌ ✓`, i18n.ts ACT_GLYPH) in the row's weight
+// alone: its cell is a Button, which keeps bold and dim and no colour. No
 // selection band: the open drawer says which agent is selected; the keyboard
 // focus is a small marker on the inner side of the status mark (the mark stays
-// at the reading edge); ⭐ ❌ ⏰ ride the status column (office-layout.ts
-// markOf) — the ⭐ is the whole finish: no tint on the row (live check 6: the
+// at the reading edge); ★ ✕ ⏱︎ ride the status column (office-layout.ts
+// markOf, markFg: the light teal, red, amber) — the ★ is the whole finish: no
+// tint on the row (live check 6: the
 // tint flashed a near-black band on the light theme), so the module lays no
 // background on anything of the column (the floating overlay's is the theme's,
 // below). The drawer is a card
@@ -82,8 +90,8 @@
 // frames of the cards, the drawer and the settings in the logo's light teal
 // (office-layout.ts CARD_BORDER = BRAND_ACCENT), the header's counts in its
 // dark teal (BRAND_ACCENT_DARK, still bold) — nothing else gains a colour: no
-// background, no navy, the status marks as they were, no Button (a Button
-// takes none on the desktop: decision 26).
+// background, no navy, no Button (a Button takes none on the desktop:
+// decision 26); the status marks are decision 29's (above).
 //
 // THE CREDIT LINE (decision 27a) is NOT this module's: the page cannot draw a
 // `Link` inside a Client (paint probe round 6, 23.10: with the credit's Link in
@@ -188,7 +196,7 @@ import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
 import { COMPACT_BELOW, CREDIT_ROWS, DRAWER_FRAME_ROWS, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overscanOf, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { BRAND_ACCENT_DARK, CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import { BRAND_ACCENT_DARK, CARD_BORDER, COUNT_ICON, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeBatch, OfficeItem, OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
@@ -528,7 +536,8 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
 
     // --- THE LABEL LADDER (by LINE_FIT, the line's L cells) — what gives way as the pane narrows, in order: the full meter (bar and
     //     reset clock, usage.ts; from WIDE_FROM) → the header's words (`🎭 עובדים 4 · ממתינים 1 · סיימו 3`, else the icons with the
-    //     counts, the probe's `🎭 🟢4 ⏳1 ✅3`) → the toolbar's words (below) → the short meter `⏳ 5h 42%` (in the header; under
+    //     counts, `🎭 ●4 ◌1 ✓3` — decision 29's COUNT_ICON, where the probe drew 🟢 ⏳ ✅) → the toolbar's words (below) → the
+    //     short meter `⏳ 5h 42%` (in the header; under
     //     ONE_LINE_FROM with the field drawn, at the search line's far edge when it fits beside the placeholder) → the tiny `⏳ 42%`
     //     → no meter. So the meter keeps its place before the words do: the richest pair of (counts, meter) that fits — the words
     //     with the full, the short, or the short on the search line; else the icons with one of those; else the words, else the
@@ -536,7 +545,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     const c = props.counts
     const fit = geo.L
     const part = (icon: string, n: number, label: string, words: boolean): string => (words ? (rtl ? `${label} ${n}` : `${n} ${label}`) : `${icon}${n}`)
-    const countsOf = (words: boolean) => `🎭 ${[part('🟢', c.run, lbl('working'), words), ...(c.idle ? [part('⏳', c.idle, lbl('idleN'), words)] : []), part('✅', c.done, lbl('finished'), words)].join(words ? ' · ' : ' ')}`
+    const countsOf = (words: boolean) => `🎭 ${[part(COUNT_ICON.run, c.run, lbl('working'), words), ...(c.idle ? [part(COUNT_ICON.idle, c.idle, lbl('idleN'), words)] : []), part(COUNT_ICON.done, c.done, lbl('finished'), words)].join(words ? ' · ' : ' ')}`
     const wordsHdr = countsOf(true)
     const iconsHdr = countsOf(false)
     const fits = (counts: string, meter: string) => textWidth(counts) + (meter ? 1 + textWidth(meter) : 0) <= fit
@@ -803,9 +812,9 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       const moreLine = (room: RoomView): RenderElement => Box({ flexDirection: row, paddingX: 1, height: 1, overflow: 'hidden', children: [Button({ key: `more:${room.id}`, plain: true, label: room.more, onPress: () => pressMore(surface, room.id) })] })
       /**
        * The table of a card: the window's rows as cells in the column Boxes the mode draws — the status mark, the who, the model
-       * (unless the mode dropped it), the activity's emoji, its word (when the mode has it), the dim task from CENTRE_AT (the last
+       * (unless the mode dropped it), the activity's glyph, its word (when the mode has it), the dim task from CENTRE_AT (the last
        * column grows) — the rows above and below the window ONE spacer each, around the table in a column Box; no row in the
-       * window: one spacer of the rows it stands for. The weights: working = a bold who; finished = a dim who (unless ❌), emoji
+       * window: one spacer of the rows it stands for. The weights: working = a bold who; finished = a dim who (unless failed), glyph
        * and task; the model always dim; the word dim unless working.
        */
       const table = (room: RoomView): RenderElement => {

@@ -40,8 +40,11 @@ Requires Claude Code 2.1.304 or newer.
   working count in its title.
 - **Cards.** One framed card per open conversation, titled by its subject, with one
   row per subagent: persona (a cast of 48), model, what it is doing
-  right now, and ✅ when finished; ⭐ marks a fresh finish, ❌ a failure, ⏰ a
-  long-running agent.
+  right now, and ✓ when finished; ★ marks a fresh finish, ✕ a failure, ⏱︎ a
+  long-running agent. The status and activity marks are monochrome symbols in the
+  brand's colours (● working in teal, ◌ waiting in amber, ○ finished in grey, the
+  activity's glyph — ⋯ thinking, ▤ reading, ✎ writing, ⚙︎ a command, ⌕ searching —
+  beside its word); the personas keep their emoji.
 - **The drawer.** Click any row to open its drawer with the full task and result
   (and a status line with its state, elapsed time and role); click it again to close.
 - **Pin.** A 📌 on every conversation title pins that conversation to the top.

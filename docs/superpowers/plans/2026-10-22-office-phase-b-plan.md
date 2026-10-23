@@ -36,7 +36,7 @@
 | `desktop-mod/hooks/office-client.test.ts` | Its fake-surface tests: presses through the drawn Buttons' `onPress`; the overlay's props; the overscan window; the render cost. | 2 (pure chrome tests), 3 |
 | `desktop-mod/hooks/office-buttons.test.ts`, `office-controls.test.ts`, `office-client.mounted.test.ts`, `register.test.ts`, `ui.test.ts` | Kit tests: clicks by `ui.press` with the Buttons' keys; the overlay and height assertions by the new rules. | 4 |
 | `desktop-mod/hooks/ui.tsx` | Unchanged code; its header comment names phase B (the Client's height has no overlay rows). | 5 |
-| `docs/superpowers/specs/2026-10-19-office-cards-design.md`, `desktop-mod/HANDOFF.md`, `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` | "Phase B, built" notes; the engine path in the old plan's constraints. | 5 |
+| `docs/superpowers/specs/2026-10-19-office-cards-design.md`, `docs/desktop-mod/HANDOFF.md`, `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` | "Phase B, built" notes; the engine path in the old plan's constraints. | 5 |
 
 **Button keys (the addresses the kit presses; stable across redraws):**
 - a row's cells: `agent:<id>:who`, `agent:<id>:model`, `agent:<id>:emoji`, `agent:<id>:word`, `agent:<id>:task` (each drawn only when its column is);
@@ -644,7 +644,7 @@ git push origin feat/desktop-mod
 ### Task 5: docs — ui.tsx's header, the specs, the handoff, the old plan's engine path
 
 **Files:**
-- Modify: `desktop-mod/hooks/ui.tsx` (header comment lines 27-49 only), `docs/superpowers/specs/2026-10-19-office-cards-design.md` (after "Phase B, decided"), `desktop-mod/HANDOFF.md` (the top checkpoint), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` (Global Constraints line 26: the engine path → `C:/Users/asafa/AppData/Roaming/Claude/claude-code/2.1.304/aed62990b91e/claude.exe`, and the Co-Authored-By line 33 → `Claude Fable 5.1`), `desktop-mod/README.md` if it describes clicking the office (search "hover" / "📌").
+- Modify: `desktop-mod/hooks/ui.tsx` (header comment lines 27-49 only), `docs/superpowers/specs/2026-10-19-office-cards-design.md` (after "Phase B, decided"), `docs/desktop-mod/HANDOFF.md` (the top checkpoint), `docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md` (Global Constraints line 26: the engine path → `C:/Users/asafa/AppData/Roaming/Claude/claude-code/2.1.304/aed62990b91e/claude.exe`, and the Co-Authored-By line 33 → `Claude Fable 5.1`), `desktop-mod/README.md` if it describes clicking the office (search "hover" / "📌").
 
 - [ ] **Step 1: ui.tsx header** — lines 31-37: the Client is sized to its content WITHOUT the overlay (it floats: office-client.tsx); no head hover; every click a Button whose press posts THE OUTBOX.
 - [ ] **Step 2: cards spec** — add under "Phase B, decided": `**Built (22.10, commits <sha1>..<sha4>):** as decided; the kit presses by key (the keys listed in the plan 2026-10-22-office-phase-b-plan.md); the pin reserves its cells on every title (countsFor/cutTitle with pinned = true); the overlay's top is max(offset, chromeRows) so at the pane's top it sits under the toolbar and never covers the header.`
@@ -652,7 +652,7 @@ git push origin feat/desktop-mod
 - [ ] **Step 4: Run validate / test / tsc once more; commit and push**
 
 ```bash
-git add desktop-mod/hooks/ui.tsx docs/superpowers/specs/2026-10-19-office-cards-design.md desktop-mod/HANDOFF.md docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md desktop-mod/README.md
+git add desktop-mod/hooks/ui.tsx docs/superpowers/specs/2026-10-19-office-cards-design.md docs/desktop-mod/HANDOFF.md docs/superpowers/plans/2026-10-10-client-office-and-usage-plan.md desktop-mod/README.md
 git commit -m "docs(mod): phase B 5/5 - the office's clicks are Buttons, the overlay floats; ui.tsx header, the cards spec's built note, the handoff for live check 8, the engine path in the plan
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"

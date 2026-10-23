@@ -10,9 +10,10 @@
 // THE CARDS (docs/superpowers/specs/2026-10-19-office-cards-design.md; the
 // approved probe docs/research/2026-10-19-cards-probe/register.tsx, round 9;
 // phase B: its "Paint probe" and "Phase B, decided" sections — decision 26 of
-// the client-office spec): the header line (bold counts at the reading edge,
-// the dim 5h meter at the other), the toolbar (`הצג שסיימו ☐` · `צליל 🔔` ·
-// `הגדרות ⚙️`, gap 2) — the search field beside it on the same line from
+// the client-office spec): the header line (bold counts at the reading edge, in
+// the logo's dark gold — decision 27b — the dim 5h meter at the other), the
+// toolbar (`הצג שסיימו ☐` · `צליל 🔔` · `הגדרות ⚙️`, gap 2) — the search field
+// beside it on the same line from
 // ONE_LINE_FROM columns, under it on a line of its own below that, and only
 // while the office holds more than SEARCH_FROM agents or a search is active —
 // then a framed card per room: the title line (THE PIN: a plain Button on
@@ -75,6 +76,19 @@
 // the header — `🎬 זו הדגמה - הסוכנים לא אמיתיים` and its exit Button — so the
 // demo's cast is never taken for the office (the chrome a row taller:
 // office-chrome.ts DEMO_ROWS).
+//
+// THE GOLD ACCENTS and THE CREDIT LINE (decision 27, 23.10 — before the public
+// release): the frames of the cards, the drawer and the settings in the Legal
+// Mind logo's gold (office-layout.ts CARD_BORDER = BRAND_GOLD), the header's
+// counts in its dark gold (BRAND_GOLD_DARK, still bold) — nothing else gains a
+// colour: no background, no navy, the status marks as they were, no Button (a
+// Button takes none on the desktop: decision 26). And the office's LAST line,
+// after the cards, the empty office's block and the demo's cast alike: a blank
+// line, then `© Legal Mind · legalmind.co.il` in the dark gold at the reading
+// edge, the address a Link to the site (office-layout.ts CREDIT; the same words
+// in both languages, so no i18n key) — counted in the Client's height
+// (office-chrome.ts CREDIT_ROWS) and drawn while the window reaches the last
+// card, so it is never drawn in the middle of the office.
 //
 // Geometry (spec §2 item 11, Phase 0; phase B, decision 26): the engine
 // scrolls natively over a Client as tall as the content (`officeHeight`);
@@ -165,9 +179,9 @@
 
 import type { ClientModule, ClientSurface, RenderElement } from 'claude-code'
 
-import { COMPACT_BELOW, DRAWER_FRAME_ROWS, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overscanOf, searchShown, windowOf } from './office-chrome'
+import { COMPACT_BELOW, CREDIT_ROWS, DRAWER_FRAME_ROWS, WINDOW_ROWS, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerPad, emptyLines, fixedRows, helpPairs, helpRows, labelsFit, overscanOf, searchShown, windowOf } from './office-chrome'
 import type { DrawerLine } from './office-chrome'
-import { CARD_BORDER, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
+import { BRAND_GOLD_DARK, CARD_BORDER, CREDIT, CREDIT_SITE, CREDIT_URL, FIT, NBSP, NO_DECOR, PIN, PIN_OFF, TITLE_GAP, cut, fitCells, fitLine, geometry, iconLabel, nb, officeModel, roomCache, textWidth, trimWindow } from './office-layout'
 import type { Floors, Geo, ModeToken, OfficeDecor, OfficeModel, RoomCache, RoomView, RowView } from './office-layout'
 import type { OfficeBatch, OfficeItem, OfficeMessage, OfficeProps } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
@@ -442,7 +456,7 @@ export function inputWidth(geo: Geo, toolbarWords: readonly string[]): number {
 }
 
 const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
-  const { Box, Text, Button, Input } = surface.elements
+  const { Box, Text, Button, Input, Link } = surface.elements
   try {
     // --- the instance: once ---
     let s = surface.state
@@ -544,8 +558,10 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       else if (fits(iconsHdr, tiny)) { counts = iconsHdr; meterHeader = tiny }
     }
     // (while the demo runs the header's blank line moves under the demo line: the demo line is the first under the header)
+    // (THE GOLD ACCENTS, decision 27b: the counts bold in the logo's dark gold — a Text keeps its colour on the desktop, where a
+    // Button would lose it; the meter stays dim and uncoloured)
     kids.push(Box({ key: 'header', flexDirection: row, justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: props.demo ? 0 : 1, children: [
-      Text({ bold: true, children: [counts] }),
+      Text({ bold: true, color: BRAND_GOLD_DARK, children: [counts] }),
       ...(meterHeader ? [Text({ dimColor: true, children: [meterHeader] })] : []),
     ] }))
 
@@ -691,6 +707,16 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
     let offset = props.offset
     /** The pane's body rows (30 while the props carry none: the first render's). */
     const body = props.rows > 0 ? props.rows : 30
+    /**
+     * THE CREDIT LINE (decision 27a): the office's last line — a blank line (its top margin), then ONE height-1 line at the
+     * reading edge: one Text in the logo's dark gold (BRAND_GOLD_DARK) holding `© Legal Mind · ` — no-break (nb: the line never
+     * wraps; a narrow pane clips it at the edge) — and, inline, a Link to the site (`legalmind.co.il` → CREDIT_URL: an anchor on
+     * the desktop). The same words in both languages; one Latin run, so the Text reads left to right in either pane and the row
+     * direction alone puts it at the reading edge. Its CREDIT_ROWS are in the Client's height (office-chrome.ts officeHeight).
+     */
+    const creditLine = (): RenderElement => Box({ key: 'credit', flexDirection: row, height: 1, marginTop: 1, overflow: 'hidden', children: [
+      Text({ color: BRAND_GOLD_DARK, children: [nb(CREDIT), Link({ href: CREDIT_URL, children: [CREDIT_SITE] })] }),
+    ] })
     if (props.empty) {
       // --- the empty office: 🏢, the message, the sub's sentences, the demo Button; no cards, so no row to press; the overlay (if
       //     any) still floats, at the offset handed ---
@@ -702,6 +728,7 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         ...e.sub.map(t => Text({ dimColor: true, children: [t] })),
         ...(props.empty.kind === 'office' ? [Button({ key: 'watchDemo', variant: 'primary', label: iconLabel('▶', lbl('watchDemo').replace(/^▶ /, ''), rtl), onPress: () => pressChrome(surface, { t: 'demo', on: true }) })] : []),
       ] }))
+      kids.push(creditLine())
     } else {
       // --- the cards: a spacer, then every card the window (with its overscan) touches, its rows windowed by line. A window past
       //     the content (an offset the engine never hands a Client of this height: windowOf clamps its `from` to the content) draws
@@ -713,11 +740,12 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
       // handed. The taller height is kept WHILE the offset stays stale — the redraws that follow with it (the press's own focus
       // setState, the next {props} answer) clamp alike — and dropped once the engine hands an offset of the content. THE
       // OVERLAY'S ROOM (phase B final review): the content is measured as the hooks size the Client — the chrome and the taller
-      // of the layout and the overlay (office-chrome.ts officeHeight) — so on a short office under the open settings or the
-      // drawer the engine's own end, chrome + overlayH - rows, is no stale offset: drawn as handed, the whole short office under
+      // of the layout (with THE CREDIT LINE's rows under it, decision 27a) and the overlay (office-chrome.ts officeHeight) — so
+      // on a short office under the open settings or the drawer the engine's own end, chrome + overlayH - rows, is no stale
+      // offset: drawn as handed, the whole short office under
       // the overlay at the viewport's top (a height of the layout alone clamped it, and put the popover's title and close above
       // the viewport); the overlay closed, that offset IS stale and is clamped like any other
-      const height = inst.chrome + Math.max(model.lines.length, overlayH)
+      const height = inst.chrome + Math.max(model.lines.length + CREDIT_ROWS, overlayH)
       const stale = props.offset > height - body && props.offset <= Math.max(height, inst.height) - body
       offset = stale ? Math.max(0, height - body) : props.offset
       inst.height = stale ? inst.height : height
@@ -805,6 +833,11 @@ const Office: ClientModule<OfficeProps, OfficeState> = (props, surface) => {
         table(room),
       ] })
       drawn.forEach(room => kids.push(card(room)))
+      // THE CREDIT LINE at the layout's end — only while the window's cards reach it: every card is drawn whole, so the column
+      // after the last card drawn sits at that card's end in the layout; a window short of the last card leaves the credit's
+      // rows to the Client's height, below the viewport (never a credit drawn in the middle of the office)
+      const last = drawn[drawn.length - 1]
+      if ((last ? last.top + last.height : spacer) === model.lines.length) kids.push(creditLine())
     }
     inst.offset = offset
     inst.body = body

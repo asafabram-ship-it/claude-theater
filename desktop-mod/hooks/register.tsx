@@ -789,8 +789,9 @@ export const register: Register = on => {
           })
         }
         if (first) {
-          // TEMPORARY (live check 4, 18.10): to the transcript, so the reason is readable without the debug log
-          $.ui.log(`office Client failed (${e.phase}): ${e.reason} [${e.component} ${e.module}]`, { to: 'transcript' })
+          // (the reason to the debug log alone: the transcript carried it for live check 4 only, 18.10 — gone with the release,
+          // decision 27c; the toast below is what the person sees)
+          $.ui.log(`office Client failed (${e.phase}): ${e.reason} [${e.component} ${e.module}]`, { to: 'debug' })
           const prefs = await read($, prefsAtom)
           $.ui.toast(`🎭 ${I18N[prefs.lang].officeFailed}`)
         }

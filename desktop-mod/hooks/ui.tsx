@@ -79,6 +79,11 @@
 //   footer   the too-long conversations (oversizedN), scanError, dim (the desktop
 //            office: scanError alone — the too-long conversations are the
 //            settings popover's note, office-props.ts `oversized`)
+//   credit   THE CREDIT LINE (decision 27a), the pane's last line, a blank line
+//            above it: `© Legal Mind · ` in the logo's dark gold and, inline, a
+//            Link to legalmind.co.il (office-layout.ts CREDIT) — the same words
+//            in both languages, at the reading edge; the office Client draws its
+//            own (office-client.tsx), last in its column
 //
 // Rules:
 // - A render hook never writes state; presses/inputs write with update($, ...)
@@ -139,7 +144,7 @@ import { UNKNOWN_MODEL_PILL } from './office-svg'
 // the pure chrome maths (the Client's full content height, the search text's cap) and the pure layout's row
 // count: never the surface module itself (office-client.tsx is reached only through the literal `module` path below)
 import { COMPACT_BELOW, cleanSearch, officeHeight } from './office-chrome'
-import { cutWords, rowCount } from './office-layout'
+import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, cutWords, rowCount } from './office-layout'
 import { OFFICE_KEY, buildOfficeProps } from './office-props'
 import type { OfficeProps } from './office-props'
 import { personaFeminine, personaName } from './personas'
@@ -868,7 +873,7 @@ export function registerUi(on: On): void {
 
   on('ui.render', { component: 'Pane', requestId: 'agent-theater' }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text, Button } = els
+    const { Box, Text, Button, Link } = els
     // the desktop draws the office Client (office-client.tsx); every other surface the text cards
     const desktop = e.surface === 'desktop'
     // (counted before its reads: a post's hook that began before them answers no more — THE NEWEST ANSWER)
@@ -1181,6 +1186,15 @@ export function registerUi(on: On): void {
     if (office.oversized > 0) footerBits.push(L.oversizedN(office.oversized))
     if (scanError !== null && scanError !== '') footerBits.push(scanError)
     const footer = footerBits.length > 0 && <Text dimColor>{clip(footerBits.join(' · '), width)}</Text>
+    // --- THE CREDIT LINE (decision 27a): the pane's last line, a blank line above it — `© Legal Mind · ` in the logo's dark gold
+    //     (BRAND_GOLD_DARK) and, inline, a Link to the site (an OSC 8 span on the terminal, its URL after it in dim where the
+    //     terminal draws none; an anchor elsewhere); the same words in both languages (no i18n key), at the reading edge (the
+    //     row direction: one Latin run, read left to right in either pane) ---
+    const credit = (
+      <Box key="credit" flexDirection={row} marginTop={1}>
+        <Text color={BRAND_GOLD_DARK}>{CREDIT}<Link href={CREDIT_URL}>{CREDIT_SITE}</Link></Text>
+      </Box>
+    )
 
     return (
       <Box flexDirection="column" width={width}>
@@ -1193,6 +1207,7 @@ export function registerUi(on: On): void {
         {empty}
         {nav}
         {footer}
+        {credit}
       </Box>
     )
   }).catch(($, e, next) => next(e))

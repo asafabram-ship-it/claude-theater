@@ -119,3 +119,8 @@ test('modelLabel: the engine aliases, unknown ids and the empty string', () => {
   expect(modelLabel('  ')).toBe('')
   expect(modelLabel('')).toBe('')
 })
+
+test('officeFailed (decision 27): the first-fault toast says the office fell back to the cards and is tried again by itself, and that /theater reopens it at once; the Hebrew one run', () => {
+  expect(I18N.he.officeFailed).toBe('המשרד נפל לכרטיסים; מנסה שוב בעוד רגע (/theater פותח מיד)')
+  expect(I18N.en.officeFailed).toBe('The office fell back to cards; trying again in a moment (/theater reopens it now)')
+})

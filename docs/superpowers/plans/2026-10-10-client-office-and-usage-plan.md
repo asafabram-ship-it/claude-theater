@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**סטטוס:** כל הקוד של התוכנית כתוב, נסקר, ועבר סקירה כוללת + גל תיקון 2026-10-12 13:20 (`85093f6`, 156 בדיקות על מנועים 2.1.293 ו-2.1.295). נשארו: Task 2.8 + 1.5 עם אסף, Task 4.1, החלטת מיזוג. ראו HANDOFF 2026-10-12 13:20. פרומפט ההמשך: `desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
+**סטטוס:** כל הקוד של התוכנית כתוב, נסקר, ועבר סקירה כוללת + גל תיקון 2026-10-12 13:20 (`85093f6`, 156 בדיקות על מנועים 2.1.293 ו-2.1.295). נשארו: Task 2.8 + 1.5 עם אסף, Task 4.1, החלטת מיזוג. ראו HANDOFF 2026-10-12 13:20. פרומפט ההמשך: `docs/desktop-mod/פרומפט להמשך - בניית המשרד על Client.md`.
 
 **Goal:** On the Claude Desktop app, draw the Theater office inside ONE `Client` surface module so that data updates and scrolling never blink, characters are clickable, the scan stops slowing the machine, and the prompt footer shows the five-hour rate-limit meter.
 
@@ -51,7 +51,7 @@ Spec: `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` (Heb
 | `desktop-mod/hooks/usage.ts` (new) | Pure: pick `five_hour`, format the label and the bar | 3 |
 | `desktop-mod/types/index.d.ts` | Contract: drop `live`, add `stars` to the payload | 1, 2 |
 | `desktop-mod/hooks/*.test.ts` | Tests per task | all |
-| `desktop-mod/HANDOFF.md` | Probe results, CPU numbers, state of the work | 0, 1, 2 |
+| `docs/desktop-mod/HANDOFF.md` | Probe results, CPU numbers, state of the work | 0, 1, 2 |
 
 ---
 
@@ -323,7 +323,7 @@ The probe is loaded via the desktop app's hot-reload folder: tell the user (Hebr
 ### Task 0.2: Run the checklist and record the verdict
 
 **Files:**
-- Modify: `desktop-mod/HANDOFF.md` (new section "שלב 0 — תוצאות הבדיקה החיה")
+- Modify: `docs/desktop-mod/HANDOFF.md` (new section "שלב 0 — תוצאות הבדיקה החיה")
 
 - [ ] **Step 1: Ask the user to run, in a new conversation, `/theater-probe`, and then (one at a time, Hebrew instructions):**
   1. Watch 30 s: the tick counter climbs every 250 ms while the hot tile moves every 2 s. PASS = no blink, counter never resets.
@@ -333,12 +333,12 @@ The probe is loaded via the desktop app's hot-reload folder: tell the user (Hebr
   5. Screenshot of the pane for cell metrics (emoji = 1 or 2 cells? colour backgrounds? `▀` two-tone? Hebrew line order?).
   6. Task Manager, 60 s: CPU of `claude.exe` and of the Claude app with the pane open.
   7. Look at the footer under the prompt: where did `⏳ 5h …` land (between Auto and Fable? at the right?).
-- [ ] **Step 2: Write the results into `desktop-mod/HANDOFF.md`** under a new heading `## שלב 0 — תוצאות הבדיקה החיה (תאריך)`: one line per item, PASS/FAIL, the CPU numbers, the emoji width, the SessionMode placement.
+- [ ] **Step 2: Write the results into `docs/desktop-mod/HANDOFF.md`** under a new heading `## שלב 0 — תוצאות הבדיקה החיה (תאריך)`: one line per item, PASS/FAIL, the CPU numbers, the emoji width, the SessionMode placement.
 - [ ] **Step 3: Decide.** 1–3 PASS → continue with Phase 1 and 2. Item 1 FAIL but 4 PASS → Phase 2 switches to the pull channel (spec §6.6; Task 2.5 Step 7). 1 and 4 FAIL → stop; report to the user; Approach C (non-interactive Svg + `settled()`) is re-opened as a new brainstorm.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd C:/Users/asafa/agent-theater && git add desktop-mod/HANDOFF.md && git commit -m "docs(mod): phase 0 probe results
+cd C:/Users/asafa/agent-theater && git add docs/desktop-mod/HANDOFF.md && git commit -m "docs(mod): phase 0 probe results
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/desktop-mod
 ```
@@ -1407,7 +1407,7 @@ Added 2026-10-12 after Task 2.7's review (risk confirmed real). Agent text comes
 ### Task 2.8: Re-enable the mod, verify by eye, update docs
 
 **Files:**
-- Modify: `~/.claude/settings.json` (`env.CLAUDE_CODE_PLUGIN_DIRS`), `desktop-mod/HANDOFF.md`, `README.md` (desktop section), `CHANGELOG.md`
+- Modify: `~/.claude/settings.json` (`env.CLAUDE_CODE_PLUGIN_DIRS`), `docs/desktop-mod/HANDOFF.md`, `README.md` (desktop section), `CHANGELOG.md`
 
 - [ ] **Step 1:** Add `"CLAUDE_CODE_PLUGIN_DIRS": "C:\\Users\\asafa\\agent-theater\\desktop-mod"` back under `env` in `~/.claude/settings.json`; ask the user (Hebrew) to open a new conversation and type `/theater`, then run a task with several subagents.
 - [ ] **Step 2: Checklist with the user:** no blink while agents come and go for 2 minutes; wheel-scroll smooth; click on a character opens the drawer; ☑ 🔔 EN work; Hebrew names readable; CPU numbers (Task Manager) within Phase 1's targets. Screenshot into `docs/screenshots/desktop-client-office.png`.

@@ -10,11 +10,11 @@ import type { ClientKeyEvent, ClientPointerEvent, ClientSurface } from 'claude-c
 import { expect, test } from 'claude-code/testing'
 
 import { I18N, hebrewRuleOk } from './i18n'
-import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, officeAgents, overlayHeight, overscanOf, searchShown, windowOf } from './office-chrome'
+import { CHROME_ROWS_MIN, CHROME_ROWS_SEARCH, COMPACT_BELOW, CREDIT_ROWS, DEMO_GAP, DEMO_ROWS, DRAWER_FRAME_ROWS, DRAWER_NARROW_BELOW, HELP, HELP_PAIR_ROWS, REFUSED_RE, RESULT_LINES, RESULT_LINES_NARROW, ROW_CHARS, SEARCH_FROM, SEARCH_MAX, TASK_LINES, TASK_LINES_NARROW, WINDOW_ROWS, chromeRows, cleanAgentText, cleanSearch, demoLine, drawerInner, drawerLimits, drawerLines, drawerMax, drawerStatus, fixedRows, helpPairs, helpRows, labelsFit, officeHeight, officeAgents, overlayHeight, overscanOf, searchShown, windowOf } from './office-chrome'
 import * as OfficeClient from './office-client'
 import Office, { DEMO_FG, INPUT_MAX, INPUT_MIN, OUTBOX_FLUSH_MS, OUTBOX_MAX, PAIRS_GAP, SEARCH_DEBOUNCE_MS, TOOLBAR_GAP, inputWidth } from './office-client'
 import type { OfficeState } from './office-client'
-import { CARD_BORDER, CENTRE_AT, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, PIN, PIN_OFF, TASK_UNITS, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth, trimWindow } from './office-layout'
+import { BRAND_GOLD_DARK, CARD_BORDER, CENTRE_AT, CREDIT, CREDIT_SITE, CREDIT_URL, DOT_FG, FIT, FOCUS_MARK, NBSP, NO_DECOR, ONE_LINE_FROM, PANE_GUTTER, PIN, PIN_OFF, TASK_UNITS, TITLE_GAP, WIDE_FROM, chooseMode, cut, fitCells, fitLine, floorsOf, geometry, nb, officeModel, officeWidest, rowCount, textWidth, trimWindow } from './office-layout'
 import type { OfficeAgent, OfficeDrawer, OfficeMessage, OfficeProps, OfficeRoom } from './office-props'
 import { usageLabel, usageShort, usageTiny } from './usage'
 
@@ -351,10 +351,11 @@ test('fixedRows / searchShown / chromeRows (spec 2026-10-10 §2 item 22, probe r
   expect(drawerStatus(drawer({ type: 'general-purpose', elapsedMin: 12 }), LABELS, 100)).toBe('עובד · זמן 12 דק׳ · general-purpose')
   expect(drawerStatus(drawer({ type: 'general-purpose', elapsedMin: 12 }), LABELS, 13)).toBe('עובד · זמן 1…')
   expect(drawerLines(drawer(), LABELS, inner)[3]).toEqual({ kind: 'blank', text: '' })
-  // the full height = chrome + the cards' lines; the empty office = chrome + its block — or the floating overlay's bottom when
-  // that lies lower (THE OVERLAY'S ROOM: a 9-row office under a 19-row drawer; the office's rows do not move)
-  expect(officeHeight(p, rowCount(p))).toBe(CHROME_ROWS_MIN + 9)
-  expect(officeHeight(thirteen, rowCount(thirteen))).toBe(CHROME_ROWS_SEARCH + 7 + 13)
+  // the full height = chrome + the cards' lines + THE CREDIT LINE's rows (decision 27a); the empty office = chrome + its block +
+  // the credit's — or the floating overlay's bottom when that lies lower (THE OVERLAY'S ROOM: a 9-row office and its credit under
+  // a 19-row drawer; the office's rows do not move)
+  expect(officeHeight(p, rowCount(p))).toBe(CHROME_ROWS_MIN + 9 + CREDIT_ROWS)
+  expect(officeHeight(thirteen, rowCount(thirteen))).toBe(CHROME_ROWS_SEARCH + 7 + 13 + CREDIT_ROWS)
   const withD = { ...p, selected: 'lead', drawer: drawer() }
   expect(officeHeight(withD, rowCount(withD))).toBe(CHROME_ROWS_MIN + overlayHeight(withD))
   expect(overlayHeight(withD)).toBe(DRAWER_FRAME_ROWS + 15)
@@ -395,8 +396,9 @@ test('render: the chrome (header with the words and a blank line, the toolbar wi
   expect(all.filter(n => n.type === 'Button').every(n => n.props.hotkey === undefined)).toBe(true)
   const wide = nodes(Office({ ...p, columns: pane(COMPACT_BELOW) }, fake(pane(COMPACT_BELOW)).surface))
   expect(wide.filter(n => n.type === 'Button' && n.props.hotkey !== undefined).map(n => n.props.hotkey)).toEqual(['f', 'm', 'h'])
-  // the root's children: header, toolbar, then the one card — no spacer at the top, nothing after the card; the chrome four rows
-  expect(kidsOf(tree).map(kindOf)).toEqual(['header', 'toolbar', 'round'])
+  // the root's children: header, toolbar, then the one card — no spacer at the top; after the card THE CREDIT LINE alone
+  // (decision 27a); the chrome four rows
+  expect(kidsOf(tree).map(kindOf)).toEqual(['header', 'toolbar', 'round', 'credit'])
   expect(chromeOf(tree)).toBe(CHROME_ROWS_MIN)
   expect(chromeOf(tree)).toBe(chromeRows(p))
   const [card] = cards(tree)
@@ -471,7 +473,7 @@ test('render: the chrome (header with the words and a blank line, the toolbar wi
   // line, cut to the line by LINE_FIT with an ellipsis (its 48 cells to 35 at 45 columns, the column 43; whole at 70)
   const note = 'עוד 400 סוכנים לא מוצגים · scan: env.get refused'
   const t3 = Office({ ...p, footer: note }, fake(45, 0).surface)
-  expect(kidsOf(t3).map(kindOf)).toEqual(['header', 'toolbar', 'footer', 'round'])
+  expect(kidsOf(t3).map(kindOf)).toEqual(['header', 'toolbar', 'footer', 'round', 'credit'])
   expect(chromeOf(t3)).toBe(chromeRows({ ...p, footer: note }))
   expect(textWidth(note)).toBe(48)
   expect(texts(byKey(t3, 'footer'))).toBe(cut(note, geometry(45).L))
@@ -661,8 +663,8 @@ test('THE DEMO LINE (live check 5): while the demo runs, the first line under th
   const f = fake(51, 0)
   const p = props({ demo: true, columns: 51 })
   const tree = Office(p, f.surface)
-  // the order: the header (its blank line now under the demo line), the demo line, the toolbar, the card
-  expect(kidsOf(tree).map(kindOf)).toEqual(['header', 'demoLine', 'toolbar', 'round'])
+  // the order: the header (its blank line now under the demo line), the demo line, the toolbar, the card (and THE CREDIT LINE)
+  expect(kidsOf(tree).map(kindOf)).toEqual(['header', 'demoLine', 'toolbar', 'round', 'credit'])
   expect(byKey(tree, 'header')!.props.marginBottom ?? 0).toBe(0)
   const line = byKey(tree, 'demoLine')!
   expect(line).toMatchObject({ type: 'Box', props: { flexDirection: 'row-reverse', justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1 } })
@@ -702,8 +704,65 @@ test('THE DEMO LINE (live check 5): while the demo runs, the first line under th
   expect(byKey(plain, 'header')!.props.marginBottom).toBe(1)
   // the empty office of a search with no match in the demo: the line stays (the chrome counts it either way)
   const nomatch = props({ demo: true, columns: 80, rooms: [], search: 'zzz', empty: { kind: 'nomatch', msg: LABELS.emptyNoMatch ?? '', sub: '' } })
-  expect(kidsOf(Office(nomatch, fake(80).surface)).map(k => k.props.key)).toEqual(['header', 'demoLine', 'toolbar', 'empty'])
+  expect(kidsOf(Office(nomatch, fake(80).surface)).map(k => k.props.key)).toEqual(['header', 'demoLine', 'toolbar', 'empty', 'credit'])
   expect(chromeRows(nomatch)).toBe(CHROME_ROWS_MIN + DEMO_ROWS)
+})
+
+test('THE CREDIT LINE (decision 27a): the office\'s last line — after the cards, after the empty office\'s block, in the demo too — a blank line, then ONE height-1 line at the reading edge: a Text in the logo\'s dark gold (BRAND_GOLD_DARK) of `© Legal Mind · ` (no-break) and a Link to the site (`legalmind.co.il`), the same words in both languages; at the layout\'s end (the Client\'s last row: officeHeight counts its CREDIT_ROWS), so it is drawn only while the window reaches the last card', () => {
+  expect(CREDIT_ROWS).toBe(2)
+  const p = props()
+  const tree = Office(p, fake(45).surface)
+  // the column's last child, directly after the last card (whose gap line is its own margin)
+  expect(kidsOf(tree).map(kindOf)).toEqual(['header', 'toolbar', 'round', 'credit'])
+  const credit = byKey(tree, 'credit')!
+  expect(credit).toMatchObject({ type: 'Box', props: { key: 'credit', flexDirection: 'row-reverse', height: 1, marginTop: 1, overflow: 'hidden' } })
+  expect(credit.children).toHaveLength(1)
+  const text = (credit.children as Node[])[0]!
+  expect(text).toMatchObject({ type: 'Text', props: { color: BRAND_GOLD_DARK } })
+  expect(text.children).toHaveLength(2)
+  const [words, link] = text.children as [string, Node]
+  expect(words).toBe(nb(CREDIT))
+  expect(link).toMatchObject({ type: 'Link', props: { href: CREDIT_URL }, children: [CREDIT_SITE] })
+  expect(texts(credit)).toBe(`${nb(CREDIT)}\n${CREDIT_SITE}`)   // (the Text's string, then the Link's: texts() parts elements by a line)
+  expect(texts(credit)).not.toMatch(REFUSED_RE)
+  expect(texts(credit)).not.toMatch(/ /)   // (one line: no plain space to break at)
+  // its row: the chrome, the cards' lines, its blank line — the Client's last row as the hooks size it
+  expect(chromeRows(p) + rowCount(p) + CREDIT_ROWS).toBe(officeHeight(p, rowCount(p)))
+  // English: the same words, at the left (the reading edge)
+  const en = Office(props({ columns: 80, rtl: false, lang: 'en', labels: LABELS_EN }), fake(80).surface)
+  expect(byKey(en, 'credit')!.props.flexDirection).toBe('row')
+  expect(texts(byKey(en, 'credit'))).toBe(texts(credit))
+  expect(kidsOf(en).map(kindOf).at(-1)).toBe('credit')
+  // the empty office: after its block; the demo: after the cards
+  const empty = Office(props({ rooms: [], counts: { run: 0, idle: 0, done: 0 }, empty: { kind: 'office', msg: LABELS.emptyOffice ?? '', sub: LABELS.emptySub ?? '' } }), fake(45).surface)
+  expect(kidsOf(empty).map(kindOf)).toEqual(['header', 'toolbar', 'empty', 'credit'])
+  expect(kidsOf(Office(props({ demo: true, columns: 51 }), fake(51).surface)).map(kindOf)).toEqual(['header', 'demoLine', 'toolbar', 'round', 'credit'])
+  // a long office (past WINDOW_ROWS lines): at the top the window does not reach the last card — no credit (it lies below the
+  // window, where the Client's height keeps its row); scrolled to the end, it is the column's last child again
+  const long = propsAt(45, { agents: 120 })
+  const top = Office(long, fake(45).surface)
+  expect(cards(top).map(c => c.props.key)).toEqual(['room:A'])
+  expect(byKey(top, 'credit')).toBeUndefined()
+  const end = Office({ ...long, offset: officeHeight(long, rowCount(long)) - long.rows }, fake(45).surface)
+  expect(cards(end).map(c => c.props.key).at(-1)).toBe('room:B')
+  expect(kidsOf(end).map(kindOf).at(-1)).toBe('credit')
+})
+
+test('THE GOLD ACCENTS (decision 27b): the header\'s counts bold in the logo\'s dark gold (BRAND_GOLD_DARK), the meter dim and uncoloured; every frame — the cards, the drawer, the settings — the logo\'s gold (CARD_BORDER); nothing else of the office coloured but the status marks and the credit — no navy, no background in the column', () => {
+  const u = { pct: 42.4, resetsAt: '2026-10-10T14:30:00Z' }
+  const p = props({ columns: pane(WIDE_FROM), usage: u })
+  const tree = Office(p, fake(pane(WIDE_FROM)).surface)
+  const header = byKey(tree, 'header')!
+  expect((header.children[0] as Node).props).toMatchObject({ bold: true, color: BRAND_GOLD_DARK })
+  for (const t of (header.children as Node[]).slice(1)) expect(t.props.color).toBeUndefined()
+  const all = nodes(columnOf(tree))
+  expect([...new Set(all.map(n => n.props.color).filter(c => c !== undefined))].sort()).toEqual([BRAND_GOLD_DARK, DOT_FG.running].sort())
+  expect([...new Set(all.map(n => n.props.borderColor).filter(c => c !== undefined))]).toEqual([CARD_BORDER])
+  expect(all.some(n => n.props.backgroundColor !== undefined)).toBe(false)
+  expect(JSON.stringify(columnOf(tree)).toLowerCase()).not.toContain('#1f3a5f')
+  // the overlays: the drawer and the settings framed in the same gold
+  expect(overlayOf(Office({ ...p, selected: 'lead', drawer: drawerFor(p, 'lead') }, fake(pane(WIDE_FROM)).surface))!.props.borderColor).toBe(CARD_BORDER)
+  expect(overlayOf(Office({ ...p, helpOpen: true }, fake(pane(WIDE_FROM)).surface))!.props.borderColor).toBe(CARD_BORDER)
 })
 
 test('THE DEMO LINE\'s ladder (demoLine): the longest note that fits beside the exit Button by LINE_FIT — the whole sentence, then `הדגמה - לא אמיתיים`, then `זו הדגמה` (EN: `Demo - not real`, `Demo`) — the 🎬 leading, the Button\'s word whenever a note fits beside it, else its ✕; never a cut word; a wider pane never shows a shorter note', () => {
@@ -966,7 +1025,7 @@ test('THE PRE-EMPTS (live check 7, R14 and J9): every card keyed by its room (`r
   expect(labels(props({ columns: pane(40), prefs: { showDone: true, muted: false } }))).toEqual(['הצג שסיימו ☑', 'צליל 🔔', 'הגדרות ⚙️'])
 })
 
-test('THE STALE OFFSET (live check 7, R13): a press that shortens the office while the pane is scrolled to its end hands the module the old offset until the engine asks again — the module clamps it to the content (offset ≤ chrome + lines - rows), so the window it draws (and the top the overlay rides) is the one the engine shows: no blank rows, the last rows pressable', () => {
+test('THE STALE OFFSET (live check 7, R13): a press that shortens the office while the pane is scrolled to its end hands the module the old offset until the engine asks again — the module clamps it to the content (offset ≤ chrome + lines + the credit\'s rows - rows), so the window it draws (and the top the overlay rides) is the one the engine shows: no blank rows, the last rows pressable', () => {
   const rows = (n: number) => Array.from({ length: n }, (_, i) => ag(`g${i}`))
   // (a long office — past WINDOW_ROWS lines — so the overscan is capped, not the whole office, and the window moves with the offset)
   const tall = props({ rows: 25, rooms: [room('A', rows(140), { moreDone: 30, moreLabel: 'עוד 30 שסיימו' })] })
@@ -976,8 +1035,9 @@ test('THE STALE OFFSET (live check 7, R13): a press that shortens the office whi
   const linesTall = officeModel(tall).lines.length
   const linesShort = mShort.lines.length
   expect(linesShort).toBeGreaterThan(WINDOW_ROWS)
-  const endTall = C + linesTall - 25          // the engine's offset at the tall office's end
-  const endShort = C + linesShort - 25        // ... and the most it can be once the office is short
+  // (the content ends with THE CREDIT LINE's rows, decision 27a: the engine scrolls to them)
+  const endTall = C + linesTall + CREDIT_ROWS - 25          // the engine's offset at the tall office's end
+  const endShort = C + linesShort + CREDIT_ROWS - 25        // ... and the most it can be once the office is short
   expect(endTall).toBeGreaterThan(endShort)
   /** The window the module draws of the short office at `offset`: windowOf with the overscan, trimmed to the row budget. */
   const win = (offset: number) => { const w = windowOf(C, offset, 25, linesShort, overscanOf(linesShort, 25)); return trimWindow(mShort, w.from, w.count, WINDOW_ROWS) }
@@ -1013,7 +1073,7 @@ test('THE STALE OFFSET sizes the office WITH its overlay (phase B final review):
   // a long office first: the module remembers its height (the stale clamp's memory, inst.height)
   const tall = props({ rows: 10, rooms: [room('A', Array.from({ length: 140 }, (_, i) => ag(`g${i}`)))] })
   Office(tall, f.surface)
-  expect(f.surface.state!.inst.height).toBe(chromeRows(tall) + officeModel(tall).lines.length)
+  expect(f.surface.state!.inst.height).toBe(chromeRows(tall) + officeModel(tall).lines.length + CREDIT_ROWS)
   // then a short one (two agents: nine layout lines, fewer than the 10-row body) with the settings open — a popover taller than
   // the content: the Client is chrome + helpRows tall, so the engine's offset reaches chrome + helpRows - rows
   const short = props({ rows: 10, helpOpen: true })
@@ -1021,10 +1081,10 @@ test('THE STALE OFFSET sizes the office WITH its overlay (phase B final review):
   const len = officeModel(short).lines.length
   const helpH = helpRows(45)
   expect(len).toBeLessThan(10)
-  expect(helpH).toBeGreaterThan(len)
+  expect(helpH).toBeGreaterThan(len + CREDIT_ROWS)   // (the content: its lines and THE CREDIT LINE's rows, decision 27a)
   expect(officeHeight(short, len)).toBe(C + helpH)
-  const end = C + helpH - 10                  // the engine's own end for the grown Client ...
-  expect(end).toBeGreaterThan(C + len - 10)   // ... past the content's end: a clamp sized to the content alone took it for stale
+  const end = C + helpH - 10                                // the engine's own end for the grown Client ...
+  expect(end).toBeGreaterThan(C + len + CREDIT_ROWS - 10)   // ... past the content's end: a clamp sized to the content alone took it for stale
   const tree = Office({ ...short, offset: end }, f.surface)
   expect(overlayOf(tree)!.props.top).toBe(end)
   expect(f.surface.state!.inst.offset).toBe(end)
@@ -1039,12 +1099,12 @@ test('THE STALE OFFSET sizes the office WITH its overlay (phase B final review):
   // the settings closed with the engine's old offset (it hands it until it asks again): the content alone is shorter, so the
   // offset is stale now — clamped to the content's end, the grown height kept while it stays stale
   Office({ ...short, helpOpen: false, offset: end }, f.surface)
-  expect(f.surface.state!.inst.offset).toBe(Math.max(0, C + len - 10))
+  expect(f.surface.state!.inst.offset).toBe(Math.max(0, C + len + CREDIT_ROWS - 10))
   expect(f.surface.state!.inst.height).toBe(C + helpH)
   // the engine asks again with an offset of the content: drawn as handed, the memory the content's
   Office({ ...short, helpOpen: false, offset: 0 }, f.surface)
   expect(f.surface.state!.inst.offset).toBe(0)
-  expect(f.surface.state!.inst.height).toBe(C + len)
+  expect(f.surface.state!.inst.height).toBe(C + len + CREDIT_ROWS)
 })
 
 test('window (with overscan): a long office draws the cards the window and its overscan touch whole, their rows only where they lie in it (ONE spacer above and one below the table for the rest, not one per column); the cards above are one spacer; the row budget leaves the lowest rows blank, with no Button for them', () => {
@@ -1054,7 +1114,8 @@ test('window (with overscan): a long office draws the cards the window and its o
   expect(chromeRows(many)).toBe(CHROME_ROWS_SEARCH)
   // a 10-row body at offset 30: the window lines 24..33 (the offset less the chrome), a body of 10 on each side — 14..43: a10..a39
   const t2 = Office({ ...many, offset: 30, rows: 10 }, fake(45, 0).surface)
-  expect(kidsOf(t2).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  // (the one card is drawn whole — its rows outside the window spacers — so the column after it is the layout's end: THE CREDIT LINE)
+  expect(kidsOf(t2).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
   const card = cards(t2)[0]!
   const block = partsOf(card).table
   expect(block).toBe(blockOf(card))
@@ -1075,7 +1136,7 @@ test('window (with overscan): a long office draws the cards the window and its o
   const two = props({ rooms: [room('A', sixty('a')), room('B', sixty('b'))], offset: 6 + 90, rows: 10 })
   expect(rowCount(two)).toBe(134)
   const t3 = Office(two, fake(45, 0).surface)
-  expect(kidsOf(t3).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'round'])
+  expect(kidsOf(t3).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'spacer', 'round', 'credit'])
   expect(byKey(t3, 'spacer')!.props.height).toBe(67)   // room A's card: 7 + 60 lines
   expect(cards(t3)).toHaveLength(1)
   expect(rowsOf(cards(t3)[0]!).map(r => r[1])).toEqual(Array.from({ length: 30 }, (_, i) => `🦉${NBSP}b${i + 9}`))   // lines 80..109
@@ -2187,7 +2248,7 @@ test('the toolbar and the search (probe round 8): under ONE_LINE_FROM the toolba
   // so it rides the search line's far edge (15 + 2 + 9 ≤ 33); the toolbar then has no margin of its own (the search line's blank is the gap)
   const crowded = { run: 1200, idle: 3000, done: 12000 }
   const t40 = Office({ ...p, columns: pane(40), counts: crowded }, fake(pane(40)).surface)
-  expect(kidsOf(t40).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'round'])
+  expect(kidsOf(t40).map(kindOf)).toEqual(['header', 'toolbar', 'searchLine', 'round', 'credit'])
   expect((byKey(t40, 'header')!.children as Node[]).length).toBe(1)
   const sl = byKey(t40, 'searchLine')!
   expect(sl).toMatchObject({ props: { flexDirection: 'row-reverse', columnGap: 2, marginTop: 1, marginBottom: 1, height: 1, overflow: 'hidden' } })
@@ -2205,7 +2266,7 @@ test('the toolbar and the search (probe round 8): under ONE_LINE_FROM the toolba
   // no field (an office of two — the field is the office's agents' to decide, never its header's width): the toolbar alone with
   // its blank line as a margin, the short meter in the header beside the icons (the tiny form is the probe ladder's, above)
   const t40b = Office(props({ columns: pane(40), usage: u }), fake(pane(40)).surface)
-  expect(kidsOf(t40b).map(kindOf)).toEqual(['header', 'toolbar', 'round'])
+  expect(kidsOf(t40b).map(kindOf)).toEqual(['header', 'toolbar', 'round', 'credit'])
   expect(byKey(t40b, 'toolbar')!.props.marginBottom).toBe(1)
   expect(texts(byKey(t40b, 'header'))).toContain(usageShort(u))
   expect(chromeOf(t40b)).toBe(CHROME_ROWS_MIN)
@@ -2214,7 +2275,7 @@ test('the toolbar and the search (probe round 8): under ONE_LINE_FROM the toolba
   for (const columns of [ONE_LINE_FROM, 70, 79, 80, 99, 100, 140, 200]) {
     const t = Office({ ...p, columns: pane(columns) }, fake(pane(columns)).surface)
     const at = `${columns}`
-    expect(kidsOf(t).map(kindOf), at).toEqual(['header', 'toolbar', 'round'])
+    expect(kidsOf(t).map(kindOf), at).toEqual(['header', 'toolbar', 'round', 'credit'])
     const tb = byKey(t, 'toolbar')!
     expect(tb, at).toMatchObject({ props: { flexDirection: 'row-reverse', justifyContent: 'space-between', width: '100%', height: 1, overflow: 'hidden', marginBottom: 1 } })
     const [buttons, field] = tb.children as Node[]

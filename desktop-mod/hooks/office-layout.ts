@@ -97,8 +97,26 @@ export const HYSTERESIS = 2
 export const PIN = '📌'
 /** The unpinned pin on every card's title (decision 26): the same glyph in its TEXT presentation (VS15), which the desktop draws monochrome beside the colour 📌 of a pinned room — `dimColor` does not dim a colour emoji, and no hover reveals anything inside a Client. */
 export const PIN_OFF = '📌\uFE0E'
-/** The card's frame colour (the probe's). */
-export const CARD_BORDER = '#56607a'
+/**
+ * THE GOLD ACCENTS (decision 27b, 23.10 — the Legal Mind logo's colours, before the public release): the frames of the cards,
+ * the drawer and the settings in the logo's gold (BRAND_GOLD, CARD_BORDER); the office's header counts and THE CREDIT LINE in
+ * its dark gold (BRAND_GOLD_DARK). No background anywhere (the desktop does not tell the module whether its theme is light or
+ * dark: live check 6) and no navy #1F3A5F (it vanishes on the dark theme); the status marks keep their green / amber / grey
+ * (DOT_FG); a Button takes no colour on the desktop (decision 26), so no Button is gilded.
+ */
+export const BRAND_GOLD = '#D4B97A'
+export const BRAND_GOLD_DARK = '#C09A55'
+/** The card's frame colour — the drawer's and the settings' too: the logo's gold (decision 27b; the probe's slate #56607a before it). */
+export const CARD_BORDER = BRAND_GOLD
+/**
+ * THE CREDIT LINE (decision 27a, 23.10): the office's last line — after the cards, after the empty office's block, in the demo
+ * too — `© Legal Mind · legalmind.co.il`, the address a link to CREDIT_URL; the same words in both languages (no "all rights
+ * reserved": the repo is MIT), so no i18n key; drawn in BRAND_GOLD_DARK at the reading edge. CREDIT is the Text's own string,
+ * CREDIT_SITE the Link's text inside it. No Hebrew in it: one Latin run in either pane, never reordered.
+ */
+export const CREDIT = '© Legal Mind · '
+export const CREDIT_SITE = 'legalmind.co.il'
+export const CREDIT_URL = 'https://legalmind.co.il'
 /** The status column's colours by status (the probe's dots): green running, amber stale, grey done. */
 export const DOT_FG: Readonly<Record<OfficeAgent['status'], string>> = { running: '#3fb950', stale: '#d29922', done: '#8b949e' }
 /**

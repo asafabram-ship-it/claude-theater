@@ -21,8 +21,8 @@ import {
   headerCounts, isLongRunning, joinParts, matchesSearch, officeView, paneTitle, roomShowsDone, roomStats, toggledRoomDone, workingCount,
   minuteClock, renderKey, starsOf, FINISH_TOAST_MS, RECENT_DONE, TOAST_TITLE_MAX, finishToast, roomTitle,
 } from './ui'
-import { REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
-import { rowCount } from './office-layout'
+import { CREDIT_ROWS, REFUSED_RE, chromeRows, emptyLines, fixedRows, helpRows, officeHeight, overlayHeight } from './office-chrome'
+import { BRAND_GOLD_DARK, CREDIT, CREDIT_SITE, CREDIT_URL, rowCount } from './office-layout'
 import { OFFICE_KEY, assertJson } from './office-props'
 import type { OfficeAgent, OfficeProps } from './office-props'
 import { T0, beneath, type MemFiles } from './test-kit'
@@ -732,9 +732,13 @@ test('DESKTOP: the pane is ONE Client (key office, the literal module, JSON prop
     expect(chromeRows(po)).toBe(chromeRows(pw))
     expect(open?.props.height).toBe(officeHeight(po, rowCount(po)))
     expect(open?.props.height).toBe(Math.max(closedH, chromeRows(po) + overlayHeight(po)))
-    expect(rowCount(po)).toBeLessThan(overlayHeight(po))   // (this office is shorter than the drawer: the Client grows to its bottom)
-    expect(open?.props.height).toBe(chromeRows(po) + overlayHeight(po))
-    expect(open?.props.height as number).toBeGreaterThan(closedH)
+    // (this office's lines are fewer than the drawer's rows, but THE CREDIT LINE's rows under them — decision 27a — reach past
+    // the drawer's bottom: the Client keeps the content's height; an office shorter than the drawer with its credit grows to the
+    // drawer's bottom — office-chrome.test.ts, office-client.mounted.test.ts)
+    expect(rowCount(po)).toBeLessThan(overlayHeight(po))
+    expect(rowCount(po) + CREDIT_ROWS).toBeGreaterThan(overlayHeight(po))
+    expect(open?.props.height).toBe(chromeRows(po) + rowCount(po) + CREDIT_ROWS)
+    expect(open?.props.height).toBe(closedH)
     await ui.press({ key: 'close' })
     expect((await ui.find({ type: 'Client' }))?.props.height).toBe(closedH)
   } finally {
@@ -1247,6 +1251,37 @@ test('TERMINAL / VSCODE / MOBILE: no SVG tile anywhere; the text cards stay', as
     expect(await ui.find({ type: 'Text', text: /^00:3\d$/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+// (mounts at three widths through the kit: the budget is load headroom, as above)
+test('THE CREDIT LINE (decision 27a) on the text cards: their last line — under the footer, after the cards or the empty office — `© Legal Mind · ` in the logo\'s dark gold with a Link to the site (`legalmind.co.il`), the same words in both languages, on every text surface', { timeoutMs: 30_000 }, async ($, on) => {
+  let agents = fixture()
+  const { clock } = beneath(on, () => agents, { prefs: { lang: 'he', muted: false, showDone: false, pins: [] } })
+  await $.session.start({ cwd: 'C:/x', surface: 'terminal', isInteractive: true })
+  await clock.advance(POLL_MS)
+  for (const surface of ['terminal', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const credit = await ui.find({ key: 'credit' })
+    expect(credit, surface).toBeDefined()
+    const text = await ui.find({ type: 'Text', text: /^© Legal Mind · / })
+    expect(text?.props.color, surface).toBe(BRAND_GOLD_DARK)
+    const link = await ui.find({ type: 'Link' })
+    expect(link?.props.href, surface).toBe(CREDIT_URL)
+    expect(link?.children, surface).toEqual([CREDIT_SITE])
+    // the last line of the pane: the root column's last child
+    const root = (await ui.drawn()) as { children?: unknown[] }
+    const kids = (root.children ?? []).filter((k): k is { props?: Record<string, unknown> } => typeof k === 'object' && k !== null)
+    expect(kids.at(-1)?.props?.key, surface).toBe('credit')
+    await ui.unmount()
+  }
+  // the empty office: after its block
+  agents = []
+  await clock.advance(POLL_MS)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /🏢/ })).toBeDefined()
+  expect((await ui.find({ type: 'Link' }))?.props.href).toBe(CREDIT_URL)
+  expect((await ui.find({ type: 'Text', text: /^© Legal Mind · / }))?.text).toMatch(new RegExp(`^${CREDIT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+  await ui.unmount()
 })
 
 // (mounts and polls through the kit: past the 5 s default under a full suite on a loaded machine with no code change — the budget is load headroom)

@@ -252,9 +252,10 @@ const FAULT_OFFSET = 20_000
 
 // (mounts, faults and redraws through the kit: past the 5 s default under a full suite on a loaded machine with no code change —
 // 5.14 s on 20.10 — the budget is load headroom)
-test('ui.fault on the office: the desktop falls back to the text cards and toasts once; /theater tries the Client again; a second fault toasts again', { timeoutMs: 30_000 }, async ($, on) => {
+test('ui.fault on the office: the desktop falls back to the text cards and toasts once (the reason to the debug log); /theater tries the Client again; a second fault toasts again', { timeoutMs: 30_000 }, async ($, on) => {
   const logs: string[] = []
-  on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
+  const sinks: Array<string | undefined> = []
+  on('ui.log', ($, e) => { logs.push(e.text); sinks.push(e.to); return { value: undefined } })
   const { captured, clock } = beneath(on, () => fixture(), PREFS())
   await $.session.start({ cwd: 'C:/x', surface: 'desktop', isInteractive: true })
   await clock.advance(POLL_MS)
@@ -277,6 +278,8 @@ test('ui.fault on the office: the desktop falls back to the text cards and toast
   expect(captured.toastTimeouts).toEqual([undefined]) // its stay the engine's default (live check 5 shortened the finish toast alone)
   expect(logs.filter(l => l.startsWith('office Client failed'))).toHaveLength(1)
   expect(logs.find(l => l.startsWith('office Client failed'))).toMatch(/^office Client failed \(render\): .*"top"/)
+  // the fault line goes to the debug log alone, never the transcript (it was the transcript's for live check 4 only: decision 27)
+  expect(sinks[logs.findIndex(l => l.startsWith('office Client failed'))]).toBe('debug')
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect(await ui.find({ key: 'open:a1' })).toBeDefined() // the text cards (their help card drawn above them: the view kept)
   expect(await ui.find({ type: 'Text', text: /משרד הסוכנים/ })).toBeDefined()

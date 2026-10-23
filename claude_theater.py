@@ -25,7 +25,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 def _default_port():
     """Port from $CLAUDE_THEATER_PORT, else 7333. The --port flag overrides this."""

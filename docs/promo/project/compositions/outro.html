@@ -1,0 +1,108 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Regular.ttf") format("truetype");
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Medium.ttf") format("truetype");
+      font-weight: 500;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-SemiBold.ttf") format("truetype");
+      font-weight: 600;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Bold.ttf") format("truetype");
+      font-weight: 700 900;
+    }
+    @font-face {
+      font-family: "Frank Ruhl Libre";
+      src: url("assets/fonts/FrankRuhlLibre.ttf") format("truetype");
+      font-weight: 300 900;
+    }
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #f3f8f8;
+      font-family: "Plex Hebrew";
+      color: #142430;
+      direction: rtl;
+    }
+    #ou-stack {
+      position: absolute;
+      left: 60px;
+      right: 60px;
+      top: 170px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #ou-label { font-size: 34px; font-weight: 700; color: #1f7a82; margin-bottom: 18px; }
+    #ou-cmd {
+      direction: ltr;
+      background: #ffffff;
+      border: 2px solid #31a3ad;
+      border-radius: 18px;
+      padding: 22px 26px;
+      font-family: "IBM Plex Mono";
+      font-size: 25px;
+      white-space: nowrap;
+      box-shadow: 0 14px 30px rgba(20, 36, 48, 0.08);
+    }
+    #ou-cmd .p { color: #1f7a82; font-weight: 700; }
+    #ou-claims {
+      display: flex;
+      gap: 26px;
+      margin-top: 64px;
+      font-family: "Frank Ruhl Libre";
+      font-size: 52px;
+      font-weight: 700;
+    }
+    .ou-claim { display: inline-block; }
+    .ou-sep { color: #1f7a82; }
+    #ou-logo-wrap { margin-top: 120px; width: 600px; height: 114px; }
+    #ou-logo { width: 600px; height: 114px; display: block; }
+    #ou-url {
+      margin-top: 26px;
+      direction: ltr;
+      font-size: 36px;
+      font-weight: 500;
+      color: #1f7a82;
+      letter-spacing: 0.01em;
+    }
+  </style>
+  <div id="root" data-composition-id="outro" data-width="1080" data-height="1080">
+    <div id="ou-stack" class="clip" data-start="0" data-duration="5.6">
+      <div id="ou-label">התקנה בפקודה אחת</div>
+      <div id="ou-cmd"><span class="p">&gt;</span> <span id="ou-typed">/plugin marketplace add legalmindcode/claude-theater</span></div>
+      <div id="ou-claims">
+        <span class="ou-claim" id="ou-c1">חינם</span><span class="ou-claim ou-sep" id="ou-s1">·</span>
+        <span class="ou-claim" id="ou-c2">קוד פתוח</span><span class="ou-claim ou-sep" id="ou-s2">·</span>
+        <span class="ou-claim" id="ou-c3">לא יוצא לרשת</span>
+      </div>
+      <div id="ou-logo-wrap"><img id="ou-logo" src="assets/logo.png" alt="Legal Mind" /></div>
+      <div id="ou-url">legalmind.co.il</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#ou-label", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 0);
+    tl.fromTo("#ou-cmd", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 0.05);
+    tl.fromTo("#ou-typed", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 1.1, ease: "steps(26)" }, 0.3);
+    // the three claims land on the words that say them
+    tl.fromTo("#ou-c1", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.3, ease: "back.out(1.8)" }, 0.14);
+    tl.fromTo("#ou-s1", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 0.8);
+    tl.fromTo("#ou-c2", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.3, ease: "back.out(1.8)" }, 0.9);
+    tl.fromTo("#ou-s2", { opacity: 0 }, { opacity: 1, duration: 0.2 }, 1.65);
+    tl.fromTo("#ou-c3", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.3, ease: "back.out(1.8)" }, 1.75);
+    // "מבית Legal Mind": the mark lands
+    tl.fromTo("#ou-logo", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.7, ease: "power3.out" }, 3.15);
+    tl.fromTo("#ou-url", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 3.4);
+    window.__timelines["outro"] = tl;
+  </script>
+</template>

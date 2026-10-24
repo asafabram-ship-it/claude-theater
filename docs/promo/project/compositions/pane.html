@@ -1,0 +1,281 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Regular.ttf") format("truetype");
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Medium.ttf") format("truetype");
+      font-weight: 500;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-SemiBold.ttf") format("truetype");
+      font-weight: 600;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Bold.ttf") format("truetype");
+      font-weight: 700 900;
+    }
+    @font-face {
+      font-family: "Frank Ruhl Libre";
+      src: url("assets/fonts/FrankRuhlLibre.ttf") format("truetype");
+      font-weight: 300 900;
+    }
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #f3f8f8;
+      font-family: "Plex Hebrew";
+      color: #142430;
+      direction: rtl;
+    }
+    #pn-clip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 880px;
+      overflow: hidden;
+    }
+    #pn-cam {
+      position: absolute;
+      inset: 0;
+      transform-origin: 0 0;
+    }
+    #pn-frame {
+      position: absolute;
+      left: -800px;
+      top: 18px;
+      width: 1842px;
+      height: 880px;
+      border-radius: 28px;
+      background: #e9eef0;
+      box-shadow: 0 24px 50px rgba(20, 36, 48, 0.16);
+    }
+    #pn-chat {
+      position: absolute;
+      left: -780px;
+      top: 40px;
+      width: 760px;
+      height: 836px;
+      border-radius: 26px;
+      background: #ffffff;
+      padding: 30px 34px;
+      direction: rtl;
+      overflow: hidden;
+    }
+    .pc-user { display: flex; margin-bottom: 18px; }
+    .pc-user span { background: #e8f3f4; border-radius: 18px; padding: 12px 20px; font-size: 30px; font-weight: 500; }
+    .pc-tool { border: 1px solid #e1e8ea; border-radius: 14px; padding: 10px 18px; margin: 12px 0; background: #fbfcfc; font-size: 28px; display: flex; gap: 12px; align-items: center; }
+    .pc-pill { direction: ltr; font-family: "IBM Plex Mono"; font-size: 22px; color: #3a4a52; background: #edf1f2; border-radius: 6px; padding: 0 8px; }
+    .pc-spin { color: #1f7a82; }
+    #pn-panel {
+      position: absolute;
+      left: 60px;
+      right: 60px;
+      top: 40px;
+      height: 836px;
+      background: #ffffff;
+      border-radius: 26px;
+      box-shadow: 0 18px 40px rgba(20, 36, 48, 0.1);
+      padding: 26px 34px;
+    }
+    .pn-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 48px;
+    }
+    #pn-head { font-size: 32px; color: #3a4a52; }
+    #pn-expand { font-size: 30px; color: #3a4a52; direction: ltr; }
+    #pn-counts { font-size: 33px; font-weight: 700; color: #1f7a82; justify-content: flex-start; gap: 12px; }
+    #pn-tools { font-size: 28px; color: #3a4a52; justify-content: flex-start; gap: 44px; }
+    #pn-search-line { font-size: 28px; color: #5f7077; margin-top: 4px; }
+    #pn-meter {
+      direction: ltr;
+      font-size: 29px;
+      color: #5f7077;
+      white-space: nowrap;
+    }
+    .pn-cell { color: #7a8a90; }
+    .pn-cell.on { color: #3a4a52; }
+    .pn-card {
+      border: 2px solid #31a3ad;
+      border-radius: 22px;
+      padding: 18px 28px 20px;
+      margin-top: 16px;
+    }
+    .pn-card-top { display: flex; justify-content: space-between; align-items: center; }
+    .pn-card-title { font-size: 31px; font-weight: 700; }
+    .pn-card-title .pin { margin-left: 12px; }
+    .pn-card-n { font-size: 28px; color: #3a4a52; direction: ltr; }
+    .pn-more { font-size: 28px; color: #3a4a52; margin: 2px 0 6px; }
+    .pn-row {
+      display: flex;
+      align-items: center;
+      font-size: 30px;
+      height: 46px;
+    }
+    .pn-dot { width: 40px; font-size: 28px; color: #5f7077; }
+    .pn-dot.live { color: #1f7a82; }
+    .pn-name { width: 150px; font-weight: 500; position: relative; }
+    .pn-emoji { width: 56px; }
+    .pn-model { width: 120px; direction: ltr; text-align: right; }
+    .pn-mark { width: 54px; text-align: center; color: #3a4a52; }
+    .pn-word { width: 120px; }
+    .pn-star { color: #1f7a82; font-size: 28px; margin-right: 8px; }
+    #pn-foot {
+      position: absolute;
+      left: 34px;
+      bottom: 22px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      direction: ltr;
+      font-size: 28px;
+      color: #1f7a82;
+    }
+    #pn-foot img { width: 46px; height: 46px; }
+    #pn-drawer {
+      position: absolute;
+      left: 34px;
+      right: 34px;
+      bottom: 18px;
+      background: #ffffff;
+      border: 6px double #31a3ad;
+      border-radius: 18px;
+      padding: 16px 26px 18px;
+      font-size: 28px;
+      line-height: 1.45;
+      box-shadow: 0 16px 34px rgba(20, 36, 48, 0.14);
+    }
+    .pn-d-top { display: flex; justify-content: space-between; font-weight: 700; font-size: 31px; }
+    .pn-d-close { font-weight: 400; color: #3a4a52; font-size: 28px; }
+    .pn-chips { display: flex; gap: 12px; margin: 8px 0 6px; }
+    .pn-chip { background: #142430; color: #fff; border-radius: 6px; padding: 0 12px; font-size: 28px; }
+    .pn-d-h { font-weight: 700; }
+    .pn-d-res { color: #1f7a82; font-weight: 500; }
+    #pn-cursor {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 52px;
+      height: 52px;
+      z-index: 5;
+    }
+  </style>
+  <div id="root" data-composition-id="pane" data-width="1080" data-height="1080">
+    <div id="pn-clip" class="clip" data-start="0" data-duration="7.3" data-layout-allow-overflow>
+    <div id="pn-cam">
+      <div id="pn-frame"></div>
+      <div id="pn-chat" data-layout-ignore>
+        <div class="pc-user"><span>תריץ 5 סוכנים במקביל על התיק</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>חקירת פסיקה בתיקייה</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>סיכום פסקי דין</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>בדיקת מועדים בחוזה</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>ניתוח שאלון אפיון</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>עדכון README</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>חקירת פסיקה בתיקייה</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>סיכום פסקי דין</span><span class="pc-pill">Agent</span></div>
+        <div class="pc-tool"><span class="pc-spin">◐</span><span>בדיקת מועדים בחוזה</span><span class="pc-pill">Agent</span></div>
+      </div>
+      <div id="pn-panel">
+        <div id="pn-head" class="pn-line">
+          <span>🎭 התיאטרון · 2</span>
+          <span id="pn-expand">⤢</span>
+        </div>
+        <div id="pn-counts" class="pn-line">
+          <span>🎭</span>
+          <span>עובדים <b id="pn-c-work">2</b> · ממתינים 3 · סיימו <b id="pn-c-done">14</b></span>
+        </div>
+        <div id="pn-tools" class="pn-line">
+          <span>☐ הצג שסיימו</span><span>🔔 צליל</span><span>⚙️ הגדרות</span>
+        </div>
+        <div id="pn-search-line" class="pn-line">
+          <span>🔍 חיפוש סוכנים</span>
+          <span id="pn-meter">⏳ 5h <span class="pn-cell on" id="pn-c1">▰</span><span class="pn-cell on" id="pn-c2">▰</span><span class="pn-cell on" id="pn-c3">▰</span><span class="pn-cell on" id="pn-c4">▰</span><span class="pn-cell" id="pn-c5">▰</span><span class="pn-cell" id="pn-c6">▰</span><span class="pn-cell" id="pn-c7">▰</span><span class="pn-cell" id="pn-c8">▱</span><span class="pn-cell" id="pn-c9">▱</span><span class="pn-cell" id="pn-c10">▱</span> <span id="pn-pct">42</span>% · 14:30</span>
+        </div>
+
+        <div id="pn-card1" class="pn-card">
+          <div class="pn-card-top">
+            <span class="pn-card-title"><span class="pin">📌</span>חקירה מקבילה בתיקייה</span>
+            <span class="pn-card-n" id="pn-card1-n">●2 ✓2</span>
+          </div>
+          <div class="pn-more">◂ עוד 1 שסיימו</div>
+          <div class="pn-row"><span class="pn-dot live">●</span><span class="pn-name">השועל</span><span class="pn-emoji">🦊</span><span class="pn-model">Opus</span><span class="pn-mark" id="pn-r1-mark">⋯</span><span class="pn-word">חושב</span></div>
+          <div class="pn-row"><span class="pn-dot live" id="pn-r2-dot">●</span><span class="pn-name" id="pn-r2-name">הסופר<span class="pn-star" id="pn-r2-star">★</span></span><span class="pn-emoji">✍️</span><span class="pn-model">Haiku</span><span class="pn-mark" id="pn-r2-mark">⋯</span><span class="pn-word" id="pn-r2-word">חושב</span></div>
+          <div class="pn-row"><span class="pn-dot">○</span><span class="pn-name">המכונאי</span><span class="pn-emoji">🔧</span><span class="pn-model">Haiku</span><span class="pn-mark">✓</span><span class="pn-word">סיים</span></div>
+          <div class="pn-row"><span class="pn-dot">○</span><span class="pn-name">הנווט</span><span class="pn-emoji">🧭</span><span class="pn-model">Haiku</span><span class="pn-mark">✓</span><span class="pn-word">סיים</span></div>
+        </div>
+
+        <div id="pn-card2" class="pn-card">
+          <div class="pn-card-top">
+            <span class="pn-card-title"><span class="pin">📌</span>ניתוח שאלון אפיון</span>
+            <span class="pn-card-n">●0 ◌1</span>
+          </div>
+          <div class="pn-row" style="margin-top: 8px"><span class="pn-dot">◌</span><span class="pn-name">הרופא</span><span class="pn-emoji">🩺</span><span class="pn-model">Opus</span><span class="pn-mark">◌</span><span class="pn-word">ממתין</span></div>
+        </div>
+
+        <div id="pn-drawer">
+          <div class="pn-d-top"><span>✍️ הסופר</span><span class="pn-d-close">✕ סגירה</span></div>
+          <div class="pn-chips"><span class="pn-chip">סיים</span><span class="pn-chip">משך 2 דק׳</span></div>
+          <div><span class="pn-d-h">מודל</span> · 🧠 Haiku</div>
+          <div><span class="pn-d-h">משימה</span> · לסכם את פסקי הדין שנמצאו</div>
+          <div><span class="pn-d-h">תוצאה</span> · <span class="pn-d-res">3 פסקי דין רלוונטיים, הסיכום ב-notes/summary.md</span></div>
+        </div>
+
+        <div id="pn-foot"><img src="assets/lm-mark.png" alt="" /><span>© Legal Mind</span></div>
+      </div>
+      <svg id="pn-cursor" viewBox="0 0 24 24"><path d="M3 2l7 19 2.6-7.4L20 11z" fill="#142430" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round" /></svg>
+    </div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // the pane arrives where the terminal folded
+    // the whole app: the chat on one side, the pane opens beside it
+    tl.fromTo("#pn-cam", { scale: 0.58, x: 471, y: 262 }, { scale: 0.58, x: 471, y: 262, duration: 0.01 }, 0);
+    tl.fromTo("#pn-frame", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0);
+    tl.fromTo("#pn-chat", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0);
+    tl.fromTo("#pn-panel", { x: 320, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 0.3);
+    tl.fromTo(["#pn-card1", "#pn-card2"], { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out", stagger: 0.1 }, 0.55);
+    tl.fromTo("#pn-r2-star", { opacity: 0, scale: 0.4 }, { opacity: 0, scale: 0.4, duration: 0.01 }, 0);
+    tl.fromTo("#pn-drawer", { opacity: 0, y: 40 }, { opacity: 0, y: 40, duration: 0.01 }, 0);
+    tl.to(".pc-spin", { rotation: 360, duration: 0.6, ease: "none", repeat: 2 }, 0.1);
+    // into the pane
+    tl.to("#pn-cam", { scale: 1, x: 0, y: 0, duration: 0.55, ease: "power2.inOut" }, 1.25);
+
+    // the five-hour meter: push in, the bar fills 42% → 67%, pull back
+    tl.to("#pn-cam", { scale: 1.75, x: 5, y: 29, duration: 0.45, ease: "power2.inOut" }, 1.9);
+    const meter = { v: 42 };
+    tl.to(meter, { v: 67, duration: 0.65, ease: "none", onUpdate: () => { document.querySelector("#pn-pct").textContent = Math.round(meter.v); } }, 2.25);
+    tl.set("#pn-c5", { color: "#3a4a52" }, 2.33);
+    tl.set("#pn-c6", { color: "#3a4a52" }, 2.58);
+    tl.set("#pn-c7", { color: "#3a4a52" }, 2.84);
+    tl.to("#pn-cam", { scale: 1, x: 0, y: 0, duration: 0.45, ease: "power2.inOut" }, 3.0);
+
+    // who is thinking: Opus's dots breathe; then הסופר finishes (★, ✓, סיים)
+    tl.fromTo("#pn-r1-mark", { opacity: 1 }, { opacity: 0.35, duration: 0.4, ease: "sine.inOut", yoyo: true, repeat: 5 }, 3.35);
+    tl.set("#pn-r2-mark", { textContent: "✓" }, 4.3);
+    tl.set("#pn-r2-word", { textContent: "סיים" }, 4.3);
+    tl.set("#pn-r2-dot", { textContent: "○", color: "#5f7077" }, 4.3);
+    tl.set("#pn-c-work", { textContent: "1" }, 4.3);
+    tl.set("#pn-c-done", { textContent: "15" }, 4.3);
+    tl.set("#pn-card1-n", { textContent: "●1 ✓3" }, 4.3);
+    tl.to("#pn-r2-star", { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 4.3);
+
+    // a click on the name opens the drawer with the result
+    tl.fromTo("#pn-cursor", { x: 300, y: 1120 }, { x: 760, y: 486, duration: 0.5, ease: "power3.out" }, 4.45);
+    tl.to("#pn-cursor", { scale: 0.82, duration: 0.07, ease: "power2.in" }, 4.95);
+    tl.to("#pn-cursor", { scale: 1, duration: 0.1, ease: "power2.out" }, 5.02);
+    tl.to(["#pn-card2", "#pn-foot"], { opacity: 0, duration: 0.2, ease: "power2.in" }, 4.98);
+    tl.to("#pn-drawer", { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 5.0);
+    tl.to("#pn-cursor", { x: 300, y: 1150, duration: 0.45, ease: "power2.in" }, 6.0);
+    tl.to("#pn-clip", { opacity: 0, y: -60, duration: 0.3, ease: "power2.in" }, 6.95);
+    window.__timelines["pane"] = tl;
+  </script>
+</template>

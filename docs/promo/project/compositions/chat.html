@@ -1,0 +1,172 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Regular.ttf") format("truetype");
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Medium.ttf") format("truetype");
+      font-weight: 500;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-SemiBold.ttf") format("truetype");
+      font-weight: 600;
+    }
+    @font-face {
+      font-family: "Plex Hebrew";
+      src: url("assets/fonts/IBMPlexSansHebrew-Bold.ttf") format("truetype");
+      font-weight: 700 900;
+    }
+    @font-face {
+      font-family: "Frank Ruhl Libre";
+      src: url("assets/fonts/FrankRuhlLibre.ttf") format("truetype");
+      font-weight: 300 900;
+    }
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #f3f8f8;
+      font-family: "Plex Hebrew";
+      color: #142430;
+    }
+    #ch-win {
+      position: absolute;
+      left: 50px;
+      top: 70px;
+      width: 980px;
+      height: 760px;
+      border-radius: 22px;
+      background: #ffffff;
+      box-shadow: 0 24px 50px rgba(20, 36, 48, 0.16);
+      overflow: hidden;
+    }
+    #ch-bar {
+      height: 46px;
+      background: #eef2f3;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 20px;
+      direction: ltr;
+    }
+    .ch-dot { width: 14px; height: 14px; border-radius: 7px; background: #c9d3d6; }
+    #ch-side {
+      position: absolute;
+      left: 0;
+      top: 46px;
+      bottom: 0;
+      width: 200px;
+      background: #f6f8f8;
+      border-right: 1px solid #e3e9ea;
+      padding: 26px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .ch-side-item { height: 14px; border-radius: 7px; background: #dde5e7; }
+    #ch-main {
+      position: absolute;
+      left: 200px;
+      right: 0;
+      top: 46px;
+      bottom: 0;
+      overflow: hidden;
+      direction: rtl;
+    }
+    #ch-scroll {
+      position: absolute;
+      left: 34px;
+      right: 34px;
+      top: 0;
+    }
+    #ch-user {
+      margin: 26px 0 18px;
+      display: flex;
+      justify-content: flex-start;
+    }
+    #ch-user span {
+      background: #e8f3f4;
+      border-radius: 18px;
+      padding: 12px 20px;
+      font-size: 30px;
+      font-weight: 500;
+    }
+    .ch-say { font-size: 28px; margin: 12px 0; color: #142430; }
+    .ch-tool {
+      border: 1px solid #e1e8ea;
+      border-radius: 14px;
+      padding: 10px 18px 12px;
+      margin: 10px 0;
+      background: #fbfcfc;
+    }
+    .ch-tool-top { display: flex; align-items: center; gap: 12px; font-size: 28px; }
+    .ch-pill {
+      direction: ltr;
+      font-family: "IBM Plex Mono";
+      font-size: 22px;
+      color: #3a4a52;
+      background: #edf1f2;
+      border-radius: 6px;
+      padding: 0 8px;
+    }
+    .ch-name { font-weight: 500; }
+    .ch-spin { color: #1f7a82; }
+    .ch-sub {
+      direction: ltr;
+      text-align: right;
+      font-family: "IBM Plex Mono";
+      font-size: 22px;
+      line-height: 32px;
+      color: #6a7b82;
+    }
+    #ch-input {
+      position: absolute;
+      left: 230px;
+      right: 30px;
+      bottom: 22px;
+      height: 64px;
+      border: 1px solid #d5dee0;
+      border-radius: 18px;
+      background: #ffffff;
+      box-shadow: 0 6px 16px rgba(20, 36, 48, 0.06);
+    }
+  </style>
+  <div id="root" data-composition-id="chat" data-width="1080" data-height="1080">
+    <div id="ch-win" class="clip" data-start="0" data-duration="4.4" data-layout-allow-overflow>
+      <div id="ch-bar"><div class="ch-dot"></div><div class="ch-dot"></div><div class="ch-dot"></div></div>
+      <div id="ch-side" data-layout-ignore><div class="ch-side-item" style="width:130px"></div><div class="ch-side-item" style="width:110px"></div><div class="ch-side-item" style="width:150px"></div><div class="ch-side-item" style="width:96px"></div><div class="ch-side-item" style="width:140px"></div><div class="ch-side-item" style="width:120px"></div><div class="ch-side-item" style="width:104px"></div></div>
+      <div id="ch-main">
+      <div id="ch-scroll" data-layout-ignore>
+        <div id="ch-user"><span>תריץ 5 סוכנים במקביל על התיק</span></div>
+        <div class="ch-say">מפעיל 5 סוכנים במקביל.</div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">חקירת פסיקה בתיקייה</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read contracts/clause.pdf</div><div class="ch-sub">⎿ Grep "indemnity" in docs/</div><div class="ch-sub">⎿ Read src/case/parser.ts</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">סיכום פסקי דין</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read notes/ruling-14.md</div><div class="ch-sub">⎿ Write notes/summary.md</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">בדיקת מועדים בחוזה</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read contracts/lease.pdf</div><div class="ch-sub">⎿ Grep "within 30 days"</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">ניתוח שאלון אפיון</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read intake/form.docx</div><div class="ch-sub">⎿ Edit memo.md (+12 −3)</div></div>
+        <div class="ch-say">ממשיך לעקוב אחרי הסוכנים…</div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">עדכון README</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read README.md</div><div class="ch-sub">⎿ Edit README.md (+4 −1)</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">חקירת פסיקה בתיקייה</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Bash npm test</div><div class="ch-sub">⎿ ✓ 38 passed</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">סיכום פסקי דין</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read notes/ruling-15.md</div><div class="ch-sub">⎿ Read notes/ruling-16.md</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">בדיקת מועדים בחוזה</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read contracts/annex-b.pdf</div><div class="ch-sub">⎿ Write timeline.md</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">ניתוח שאלון אפיון</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ WebFetch nevo.co.il/…</div><div class="ch-sub">⎿ Read intake/answers.md</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">חקירת פסיקה בתיקייה</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Grep "liquidated damages"</div><div class="ch-sub">⎿ Read docs/precedents.md</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">עדכון README</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Edit CHANGELOG.md (+9)</div><div class="ch-sub">⎿ Bash git diff --stat</div></div>
+        <div class="ch-tool"><div class="ch-tool-top"><span class="ch-spin">◐</span><span class="ch-name">סיכום פסקי דין</span><span class="ch-pill">Agent</span></div><div class="ch-sub">⎿ Read notes/ruling-17.md</div><div class="ch-sub">⎿ Edit notes/summary.md (+6)</div></div>
+      </div>
+      </div>
+      <div id="ch-input"></div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#ch-win", { y: 110, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 0);
+    // the agent blocks pile up faster and faster
+    tl.fromTo("#ch-scroll", { y: 0 }, { y: -1500, duration: 3.6, ease: "power2.in" }, 0.35);
+    tl.to(".ch-spin", { rotation: 360, duration: 0.6, ease: "none", repeat: 6 }, 0.2);
+    tl.to("#ch-win", { scale: 0.9, opacity: 0, duration: 0.35, ease: "power2.in" }, 4.0);
+    window.__timelines["chat"] = tl;
+  </script>
+</template>

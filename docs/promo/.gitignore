@@ -1,0 +1,7 @@
+# working files: voice/music samples, review stills, HyperFrames caches
+samples/
+stills/
+stills*/
+project/.hyperframes/
+project/renders/
+project/node_modules/

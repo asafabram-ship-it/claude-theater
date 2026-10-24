@@ -3,7 +3,7 @@
   "name": "claude-theater",
   "description": "Claude Theater: a live office of your Claude Code subagents, as a mod for the Claude desktop app's Code tab.",
   "owner": {
-    "name": "Asaf Abramzon",
+    "name": "Asaf Abramzon / Legal Mind",
     "email": "asaf@legalmind.co.il"
   },
   "plugins": [
@@ -11,7 +11,7 @@
       "name": "agent-theater",
       "description": "Claude Theater as a mod: a live office of your Claude Code subagents, one room per open conversation, 48 personas, Hebrew/English, inside the Code tab.",
       "author": {
-        "name": "Asaf Abramzon",
+        "name": "Asaf Abramzon / Legal Mind",
         "email": "asaf@legalmind.co.il"
       },
       "category": "productivity",

@@ -1359,7 +1359,7 @@ PAGE = """<!DOCTYPE html>
 
 <script>
 const POLL_MS=1500;
-const DRIFT_URL="https://github.com/asafabram-ship-it/claude-theater/issues/new?template=format-drift.yml";
+const DRIFT_URL="https://github.com/legalmindcode/claude-theater/issues/new?template=format-drift.yml";
 // "" in a normal browser (same-origin). The VS Code extension injects an
 // absolute http://127.0.0.1:<port> base so the embedded webview can reach the API.
 const API_BASE=(typeof window!=="undefined"&&window.__CT_API_BASE__)||"";

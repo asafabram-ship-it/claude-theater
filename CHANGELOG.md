@@ -72,7 +72,7 @@ Requires Claude Code 2.1.304 or newer.
   its own settings, and makes no network calls.
 - **Install through this repository.** `.claude-plugin/marketplace.json` makes the
   repository a plugin marketplace:
-  `/plugin marketplace add asafabram-ship-it/claude-theater`, then
+  `/plugin marketplace add legalmindcode/claude-theater`, then
   `/plugin install agent-theater@claude-theater` (in the desktop app: **+** next to
   the prompt box → Plugins → Add marketplace).
 
@@ -286,10 +286,10 @@ Requires Claude Code 2.1.304 or newer.
   release): the office in an interactive WebviewPanel, with background auto-start
   and a status-bar toggle.
 
-[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...v0.3.0
-[0.1.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/asafabram-ship-it/claude-theater/releases/tag/v0.1.0
+[Unreleased]: https://github.com/legalmindcode/claude-theater/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/legalmindcode/claude-theater/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/legalmindcode/claude-theater/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/legalmindcode/claude-theater/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/legalmindcode/claude-theater/compare/v0.1.1...v0.3.0
+[0.1.1]: https://github.com/legalmindcode/claude-theater/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/legalmindcode/claude-theater/releases/tag/v0.1.0

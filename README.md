@@ -5,13 +5,13 @@
 
 **Watch your Claude Code conversations and subagents work — a live office, in real time.**
 
-[![CI](https://github.com/asafabram-ship-it/claude-theater/actions/workflows/ci.yml/badge.svg)](https://github.com/asafabram-ship-it/claude-theater/actions/workflows/ci.yml)
+[![CI](https://github.com/legalmindcode/claude-theater/actions/workflows/ci.yml/badge.svg)](https://github.com/legalmindcode/claude-theater/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/claude-theater.svg)](https://pypi.org/project/claude-theater/)
 [![Python](https://img.shields.io/pypi/pyversions/claude-theater.svg)](https://pypi.org/project/claude-theater/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 <!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
-<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/hero.gif" alt="Claude Theater — a live office of Claude Code subagents at work: agents walk in, type, and finish with confetti" width="820">
+<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/hero.gif" alt="Claude Theater — a live office of Claude Code subagents at work: agents walk in, type, and finish with confetti" width="820">
 
 <sub>The demo office (`claude-theater --demo`): conversations and subagents at work, each agent walks in, sits, head-bobs while it types, then confetti on finish. A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
 
@@ -79,20 +79,20 @@ separate install of the Python app.
 ### Install
 
 In the Claude desktop app, where `/plugin` doesn't run: click **+** next to the
-prompt box → **Plugins** → **Add marketplace** → `asafabram-ship-it/claude-theater`
+prompt box → **Plugins** → **Add marketplace** → `legalmindcode/claude-theater`
 → **Add plugin** → `agent-theater`.
 
 Or in a terminal Claude Code session:
 
 ```text
-/plugin marketplace add asafabram-ship-it/claude-theater
+/plugin marketplace add legalmindcode/claude-theater
 /plugin install agent-theater@claude-theater
 ```
 
 (The marketplace is this repository's own `.claude-plugin/marketplace.json`.
 `/plugin install` opens the plugin's details; pick the user scope and it loads in
 the desktop app's local sessions too. From a plain shell the same two steps are
-`claude plugin marketplace add asafabram-ship-it/claude-theater` and
+`claude plugin marketplace add legalmindcode/claude-theater` and
 `claude plugin install agent-theater@claude-theater`.)
 
 **Requires** the Claude desktop app's Code tab and **Claude Code 2.1.304 or newer**.
@@ -114,20 +114,20 @@ read-only helpers (`head`/`tail`/`ps`, or PowerShell and `tasklist` on Windows).
 **Your real sessions** — every conversation is a room; the conversation itself and
 each subagent is a character at a desk (avatar, name, the tool it's using now, a timer).
 
-<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/sessions-view.png" alt="Claude Theater showing real Claude Code conversations as rooms, one agent thinking and a room of finished subagents" width="820">
+<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/sessions-view.png" alt="Claude Theater showing real Claude Code conversations as rooms, one agent thinking and a room of finished subagents" width="820">
 
-<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/real-rooms.png" alt="A real conversation fanning out many subagents, each shown as a character with its status" width="820">
+<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/real-rooms.png" alt="A real conversation fanning out many subagents, each shown as a character with its status" width="820">
 
 **Bilingual — English ⇄ Hebrew (RTL).** One click flips the whole office; the choice
 is remembered and the layout switches to RTL.
 
 | English | Hebrew (RTL) |
 | :--: | :--: |
-| <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/phase1-en.png" alt="The demo office in English (left-to-right)" width="410"> | <img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/phase1-he.png" alt="The same office in Hebrew, flipped to right-to-left" width="410"> |
+| <img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/phase1-en.png" alt="The demo office in English (left-to-right)" width="410"> | <img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/phase1-he.png" alt="The same office in Hebrew, flipped to right-to-left" width="410"> |
 
 **Try it with no session — `claude-theater --demo`** spins up the office with synthetic agents.
 
-<img src="https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/phase0-demo.png" alt="The demo office with synthetic agents working across two rooms" width="820">
+<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/phase0-demo.png" alt="The demo office with synthetic agents working across two rooms" width="820">
 
 ## Quick start
 
@@ -170,7 +170,7 @@ a separate install, and it auto-starts when VS Code launches.
 
 **Install the prebuilt `.vsix`** (easiest) — download
 `claude-theater-<version>.vsix` from the
-[latest release](https://github.com/asafabram-ship-it/claude-theater/releases/latest),
+[latest release](https://github.com/legalmindcode/claude-theater/releases/latest),
 then in VS Code run **Extensions: Install from VSIX…**, or from a terminal:
 
 ```bash
@@ -180,7 +180,7 @@ code --install-extension claude-theater-<version>.vsix
 **Or build it from source** (needs Node.js):
 
 ```bash
-git clone https://github.com/asafabram-ship-it/claude-theater
+git clone https://github.com/legalmindcode/claude-theater
 cd claude-theater/vscode-extension
 npx @vscode/vsce package        # produces claude-theater-<version>.vsix
 code --install-extension claude-theater-*.vsix

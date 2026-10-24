@@ -15,7 +15,7 @@ built-in Simple Browser, which doesn't forward those).
 The server is **bundled into the extension** — no separate install needed.
 
 - **Prebuilt:** download `claude-theater-<version>.vsix` from the
-  [latest release](https://github.com/asafabram-ship-it/claude-theater/releases/latest),
+  [latest release](https://github.com/legalmindcode/claude-theater/releases/latest),
   then run **Extensions: Install from VSIX…** (or `code --install-extension <file>.vsix`).
 - **From source:** `cd vscode-extension && npx @vscode/vsce package`, then install the `.vsix`.
 

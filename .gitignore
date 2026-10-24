@@ -26,3 +26,11 @@ vscode-extension/*.vsix
 
 # Local marketing / post assets (screenshots for social posts, not shipped)
 post-assets/
+
+# Internal dev notes (handoffs, plans, specs, probes) and promo material —
+# kept local, not published.
+docs/desktop-mod/
+docs/superpowers/
+docs/research/
+docs/promo/
+docs/screenshot.png

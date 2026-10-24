@@ -1,6 +1,6 @@
 # LinkedIn post - Claude Theater 0.5.0
 
-Attach: `claude-theater-0.5.0-square.mp4` (1080×1080, 20 s, Hebrew narration and captions).
+Attach: `claude-theater-0.5.0-square.mp4` (1080×1080, 24 s, Hebrew narration and captions).
 
 ---
 
@@ -12,7 +12,7 @@ Attach: `claude-theater-0.5.0-square.mp4` (1080×1080, 20 s, Hebrew narration an
 
 🎭 כרטיס לכל שיחה, ובו שורה לכל סוכן: מי חושב, מי ממתין ומי סיים
 ★ סימון וצליל ברגע שסוכן מסיים
-⏳ מד מכסת 5 השעות מול העיניים
+⏳ מגבלת 5 השעות, בזמן אמת, מול העיניים
 📌 הצמדת שיחות, ולחיצה על שם פותחת את המשימה ואת התוצאה
 
 חינם, קוד פתוח, ולא יוצא לרשת. עברית ואנגלית.
@@ -39,7 +39,7 @@ So we built Claude Theater: a pane beside the conversation in the Claude desktop
 
 🎭 A card per conversation, a row per agent: who's thinking, who's waiting, who's done
 ★ A mark and a sound the moment an agent finishes
-⏳ The 5-hour usage meter in plain view
+⏳ Your 5-hour usage limit, live, in plain view
 📌 Pin conversations; click a name to see its task and result
 
 Free, open source, nothing leaves your machine. Hebrew and English.

@@ -169,7 +169,7 @@
     }
   </style>
   <div id="root" data-composition-id="pane" data-width="1080" data-height="1080">
-    <div id="pn-clip" class="clip" data-start="0" data-duration="7.3" data-layout-allow-overflow>
+    <div id="pn-clip" class="clip" data-start="0" data-duration="10.52" data-layout-allow-overflow>
     <div id="pn-cam">
       <div id="pn-frame"></div>
       <div id="pn-chat" data-layout-ignore>
@@ -238,44 +238,44 @@
     const tl = gsap.timeline({ paused: true });
     // the pane arrives where the terminal folded
     // the whole app: the chat on one side, the pane opens beside it
-    tl.fromTo("#pn-cam", { scale: 0.58, x: 471, y: 262 }, { scale: 0.58, x: 471, y: 262, duration: 0.01 }, 0);
-    tl.fromTo("#pn-frame", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0);
-    tl.fromTo("#pn-chat", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0);
+    tl.fromTo("#pn-cam", { scale: 0.58, x: 471, y: 262 }, { scale: 0.58, x: 471, y: 262, duration: 0.01 }, 0.0);
+    tl.fromTo("#pn-frame", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0.0);
+    tl.fromTo("#pn-chat", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" }, 0.0);
     tl.fromTo("#pn-panel", { x: 320, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 0.3);
     tl.fromTo(["#pn-card1", "#pn-card2"], { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out", stagger: 0.1 }, 0.55);
-    tl.fromTo("#pn-r2-star", { opacity: 0, scale: 0.4 }, { opacity: 0, scale: 0.4, duration: 0.01 }, 0);
-    tl.fromTo("#pn-drawer", { opacity: 0, y: 40 }, { opacity: 0, y: 40, duration: 0.01 }, 0);
+    tl.fromTo("#pn-r2-star", { opacity: 0, scale: 0.4 }, { opacity: 0, scale: 0.4, duration: 0.01 }, 0.0);
+    tl.fromTo("#pn-drawer", { opacity: 0, y: 40 }, { opacity: 0, y: 40, duration: 0.01 }, 0.0);
     tl.to(".pc-spin", { rotation: 360, duration: 0.6, ease: "none", repeat: 2 }, 0.1);
     // into the pane
     tl.to("#pn-cam", { scale: 1, x: 0, y: 0, duration: 0.55, ease: "power2.inOut" }, 1.25);
 
     // the five-hour meter: push in, the bar fills 42% → 67%, pull back
-    tl.to("#pn-cam", { scale: 1.75, x: 5, y: 29, duration: 0.45, ease: "power2.inOut" }, 1.9);
+    tl.to("#pn-cam", { scale: 1.75, x: 5, y: 29, duration: 0.45, ease: "power2.inOut" }, 2.85);
     const meter = { v: 42 };
-    tl.to(meter, { v: 67, duration: 0.65, ease: "none", onUpdate: () => { document.querySelector("#pn-pct").textContent = Math.round(meter.v); } }, 2.25);
-    tl.set("#pn-c5", { color: "#3a4a52" }, 2.33);
-    tl.set("#pn-c6", { color: "#3a4a52" }, 2.58);
-    tl.set("#pn-c7", { color: "#3a4a52" }, 2.84);
-    tl.to("#pn-cam", { scale: 1, x: 0, y: 0, duration: 0.45, ease: "power2.inOut" }, 3.0);
+    tl.to(meter, { v: 67, duration: 1.8, ease: "none", onUpdate: () => { document.querySelector("#pn-pct").textContent = Math.round(meter.v); } }, 3.4);
+    tl.set("#pn-c5", { color: "#3a4a52" }, 3.5);
+    tl.set("#pn-c6", { color: "#3a4a52" }, 4.2);
+    tl.set("#pn-c7", { color: "#3a4a52" }, 4.95);
+    tl.to("#pn-cam", { scale: 1, x: 0, y: 0, duration: 0.45, ease: "power2.inOut" }, 5.75);
 
     // who is thinking: Opus's dots breathe; then הסופר finishes (★, ✓, סיים)
-    tl.fromTo("#pn-r1-mark", { opacity: 1 }, { opacity: 0.35, duration: 0.4, ease: "sine.inOut", yoyo: true, repeat: 5 }, 3.35);
-    tl.set("#pn-r2-mark", { textContent: "✓" }, 4.3);
-    tl.set("#pn-r2-word", { textContent: "סיים" }, 4.3);
-    tl.set("#pn-r2-dot", { textContent: "○", color: "#5f7077" }, 4.3);
-    tl.set("#pn-c-work", { textContent: "1" }, 4.3);
-    tl.set("#pn-c-done", { textContent: "15" }, 4.3);
-    tl.set("#pn-card1-n", { textContent: "●1 ✓3" }, 4.3);
-    tl.to("#pn-r2-star", { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 4.3);
+    tl.fromTo("#pn-r1-mark", { opacity: 1 }, { opacity: 0.35, duration: 0.4, ease: "sine.inOut", yoyo: true, repeat: 5 }, 6.57);
+    tl.set("#pn-r2-mark", { textContent: "✓" }, 7.52);
+    tl.set("#pn-r2-word", { textContent: "סיים" }, 7.52);
+    tl.set("#pn-r2-dot", { textContent: "○", color: "#5f7077" }, 7.52);
+    tl.set("#pn-c-work", { textContent: "1" }, 7.52);
+    tl.set("#pn-c-done", { textContent: "15" }, 7.52);
+    tl.set("#pn-card1-n", { textContent: "●1 ✓3" }, 7.52);
+    tl.to("#pn-r2-star", { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, 7.52);
 
     // a click on the name opens the drawer with the result
-    tl.fromTo("#pn-cursor", { x: 300, y: 1120 }, { x: 760, y: 486, duration: 0.5, ease: "power3.out" }, 4.45);
-    tl.to("#pn-cursor", { scale: 0.82, duration: 0.07, ease: "power2.in" }, 4.95);
-    tl.to("#pn-cursor", { scale: 1, duration: 0.1, ease: "power2.out" }, 5.02);
-    tl.to(["#pn-card2", "#pn-foot"], { opacity: 0, duration: 0.2, ease: "power2.in" }, 4.98);
-    tl.to("#pn-drawer", { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 5.0);
-    tl.to("#pn-cursor", { x: 300, y: 1150, duration: 0.45, ease: "power2.in" }, 6.0);
-    tl.to("#pn-clip", { opacity: 0, y: -60, duration: 0.3, ease: "power2.in" }, 6.95);
+    tl.fromTo("#pn-cursor", { x: 300, y: 1120 }, { x: 760, y: 486, duration: 0.5, ease: "power3.out" }, 7.67);
+    tl.to("#pn-cursor", { scale: 0.82, duration: 0.07, ease: "power2.in" }, 8.17);
+    tl.to("#pn-cursor", { scale: 1, duration: 0.1, ease: "power2.out" }, 8.24);
+    tl.to(["#pn-card2", "#pn-foot"], { opacity: 0, duration: 0.2, ease: "power2.in" }, 8.2);
+    tl.to("#pn-drawer", { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 8.22);
+    tl.to("#pn-cursor", { x: 300, y: 1150, duration: 0.45, ease: "power2.in" }, 9.22);
+    tl.to("#pn-clip", { opacity: 0, y: -60, duration: 0.3, ease: "power2.in" }, 10.17);
     window.__timelines["pane"] = tl;
   </script>
 </template>

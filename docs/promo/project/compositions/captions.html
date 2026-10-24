@@ -56,12 +56,13 @@
     <div id="cap-2" class="cap clip" data-start="3.42" data-duration="1.65"><span>מריצים כמה סוכנים במקביל?</span></div>
     <div id="cap-3" class="cap clip" data-start="5.45" data-duration="2.05"><span>קשה לעקוב <b>מי עושה מה</b></span></div>
     <div id="cap-4" class="cap clip" data-start="7.83" data-duration="2.5"><span>בתיאטרון, כל שיחה מקבלת <b>כרטיס</b></span></div>
-    <div id="cap-5" class="cap clip" data-start="10.45" data-duration="2.05"><span>רואים מי חושב ומי <b>סיים</b></span></div>
-    <div id="cap-6" class="cap clip" data-start="12.58" data-duration="2.2"><span>ולחיצה אחת פותחת את <b>התוצאה</b></span></div>
+    <div id="cap-5h" class="cap clip" data-start="10.48" data-duration="3.05"><span>ואת מגבלת 5 השעות רואים <b>בזמן אמת</b></span></div>
+    <div id="cap-5" class="cap clip" data-start="13.67" data-duration="2.05"><span>רואים מי חושב ומי <b>סיים</b></span></div>
+    <div id="cap-6" class="cap clip" data-start="15.80" data-duration="2.2"><span>ולחיצה אחת פותחת את <b>התוצאה</b></span></div>
   </div>
   <script>
     const tl = gsap.timeline({ paused: true });
-    ["#cap-2", "#cap-3", "#cap-4", "#cap-5", "#cap-6"].forEach((id) => {
+    ["#cap-2", "#cap-3", "#cap-4", "#cap-5h", "#cap-5", "#cap-6"].forEach((id) => {
       const start = parseFloat(document.querySelector(id).dataset.start);
       tl.fromTo(`${id} span`, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.2, ease: "power2.out" }, start);
     });

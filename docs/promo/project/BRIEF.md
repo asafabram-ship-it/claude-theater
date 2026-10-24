@@ -7,7 +7,7 @@ destination: linkedin
 aspect: "1:1"
 width: 1080
 height: 1080
-length: 20
+length: 24
 language: he
 audience: Claude Code users, Israeli tech / legal-tech LinkedIn
 voiceover: yes

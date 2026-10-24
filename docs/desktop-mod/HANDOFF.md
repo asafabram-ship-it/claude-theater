@@ -1,6 +1,14 @@
 # HANDOFF — תיאטרון הסוכנים כמוד לאפליקציית הדסקטופ
 
-עודכן: 2026-10-23 21:30 (0.5.0 מוכן לפרסום, PR ל-main) · ענף: `feat/desktop-mod` · ריפו: `C:\Users\asafa\agent-theater` (GitHub: asafabram-ship-it/claude-theater)
+עודכן: 2026-10-24 00:10 (0.5.0 מוזג ל-main; נעצר; פרומפט פרומו) · ענף: `main` (0.5.0 מוזג; `feat/desktop-mod` שווה לו) · ריפו: `C:\Users\asafa\agent-theater` (GitHub: asafabram-ship-it/claude-theater)
+
+## נקודת שמירה 2026-10-23 22:00 - 0.5.0 מוזג ל-main וציבורי ב-GitHub; הועלה למדף ב-claude.ai, הספרייה חסומה במדיניות הארגון; נעצר לבקשת אסף (גובר על כל מה שמתחתיו)
+
+**מצב (נכון ל-22:00):** PR #12 (`feat/desktop-mod` → `main`) **מוזג** - `cf7b341`, 23.10 18:45Z, ה-CI ירוק כולו (המיזוג דרך `gh pr merge --auto --merge` עם חשבון `asafabram-ship-it`; ה-auto-merge של האפליקציה נכשל כי חשבון ה-gh הפעיל `legalmindcode` אינו שותף בריפו - לכל פעולת gh על הריפו: `GH_TOKEN="$(gh auth token --user asafabram-ship-it)"`). **הצ'קאאוט עכשיו על `main`** (= `feat/desktop-mod`); מסמכי נקודת השמירה הזאת **לא מקומטים** (אסף ביקש שמירה בלבד) - לקמט ולדחוף בתחילת הסשן הבא. ההתקנה הציבורית: `/plugin marketplace add asafabram-ship-it/claude-theater` + `/plugin install agent-theater@claude-theater` - **טרם אומתה** בשיחה חדשה. **PublishPlugin:** המוד הועלה למדף של אסף ב-claude.ai (`https://claude.ai/customize/plugins/plugin_019WJVc7mn4yLKZ1XVQxHupQ`), אבל "Your organization doesn't accept member submissions" - מנהל הארגון צריך לקבוע publishing policy, ואז לפרסם מהעמוד או להריץ שוב. 302 בדיקות על 2.1.308. בלי תג `v0.5.0` ובלי PyPI (רק אם אסף יבקש).
+
+- **24.10 00:10, לפני סגירה:** אסף שאל אם המוד יעבוד גם ב-**Cowork** - לא נבדק ולא ידוע (המוד הוא תוסף של מנוע Claude Code עם ממשק החלוניות; Cowork הוא מצב אחר של האפליקציה) - לבדוק בניסיון: אם ב-Cowork יש תפריט Plugins, להוסיף את ה-marketplace ולראות אם "🎭 Theater" נפתח כשסוכן מתחיל. אסף ביקש **פרומפט לסרטון פרומו ב-HyperFrames** - נכתב: `docs/desktop-mod/פרומפט לסרטון פרומו - Claude Theater 0.5.0.md` (סשן חדש, לא נוגע בקוד המוד).
+
+**הבא:** (1) לקמט ולדחוף את מסמכי 22:00-00:10 (HANDOFF, הפרומפט, פרומפט הפרומו); (2) לאמת את ההתקנה הציבורית בשיחה חדשה (האפליקציה: ＋ → Plugins → Add marketplace; הטרמינל: שתי הפקודות) ולתעד; (3) צילום ההדגמה באנגלית ל-README (להחליף את `docs/screenshots/desktop-office.png` ולעבור ל-URL מוחלט בשביל PyPI); (4) מדיניות הפרסום בארגון → פרסום לספרייה; (5) Task 1.5 (CPU נקי), 4.1 (שיבוטים בדיסק אם נשארו), אייקוני הסרגל/ההגדרות (אסף לא הכריע), צורת ה-overscan, פתיחה מיידית עם "סורק…", סרטון פרומו ב-HyperFrames (רעיון). **כלל קבוע:** אין עריכה תחת `desktop-mod/` בזמן שלאסף יש חלונית פתוחה.
 
 ## נקודת שמירה 2026-10-23 21:30 - 0.5.0 מוכן לפרסום: מיתוג (טורקיז, לוגו, זכויות), סימנים חד-צבעיים, README/CHANGELOG/marketplace; PR ל-main (גובר על כל מה שמתחתיו)
 

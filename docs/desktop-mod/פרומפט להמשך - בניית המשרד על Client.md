@@ -1,6 +1,30 @@
 # פרומפט להמשך: בניית המשרד על Client (תיאטרון הסוכנים בדסקטופ)
 
-נשמר: 2026-10-22 12:33 (שלב ב' נבנה ונסקר; נשארו הסקירה הכוללת ובדיקה חיה 8) · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 כבקר (אסף 22.10); סוכני משנה לפי חלוקת מודלים - מימוש המודול על Fable, מכני על Sonnet, סקירות Sonnet/Opus · subagent-driven-development עם Agent (בלי Workflow)
+נשמר: 2026-10-23 22:00 (0.5.0 מוזג ל-main; נעצר) · לשיחה חדשה בלשונית Code · מודל: Fable 5.1 כבקר; סוכני משנה לפי חלוקת מודלים · subagent-driven-development עם Agent
+
+---
+
+**הדבק את זה כהודעה הראשונה בשיחה חדשה:**
+
+אתה ממשיך את העבודה על המוד "תיאטרון הסוכנים" (ריפו `C:\Users\asafa\agent-theater`, **ענף `main`** - 0.5.0 מוזג ב-23.10). עבור לתיקייה הזו (change_directory) לפני כל דבר.
+
+**תור ראשון:** `get_usage` (self) בשקט (בלי CronCreate). אם `git status` מראה קבצים לא מקומטים - אלה מסמכי נקודת השמירה של 23.10 22:00: קמט ודחוף ל-main (`docs(mod): checkpoint 2026-10-23 22:00`, trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`). קרא: `docs/desktop-mod/HANDOFF.md` - הסעיף העליון "נקודת שמירה 2026-10-23 22:00" (ואחריו 21:30 ו-12:00); אפיון `docs/superpowers/specs/2026-10-10-client-office-and-usage-design.md` סעיף 2 פריטים 25-30; הלדג'ר `.superpowers/sdd/2026-10-22-office-phase-b-plan/progress.md` (לא בגיט; השורות האחרונות: המיזוג וה-PublishPlugin).
+
+**איפה אנחנו:** Claude Theater 0.5.0 עם המוד לדסקטופ ציבורי ב-GitHub (PR #12 מוזג, `cf7b341`); README עם הוראות התקנה, CHANGELOG, marketplace בריפו; המוד הועלה למדף של אסף ב-claude.ai אבל הארגון לא מקבל הגשות (מדיניות פרסום). 302 בדיקות על המנוע 2.1.308 (`C:/Users/asafa/AppData/Roaming/Claude/claude-code/2.1.308/c17a819afb40/claude.exe`; tsc: `C:/Users/asafa/AppData/Local/Temp/theater-tsc`).
+
+**המשימה, לפי הסדר:**
+1. **לאמת את ההתקנה הציבורית** עם אסף בשיחה חדשה: באפליקציה ＋ → Plugins → Add marketplace `asafabram-ship-it/claude-theater` → Add plugin `agent-theater` (או בטרמינל `/plugin marketplace add asafabram-ship-it/claude-theater` ואז `/plugin install agent-theater@claude-theater`); לוודא שהמשרד נפתח; לתקן את ה-README אם הצעדים שונים.
+2. **צילום ההדגמה באנגלית ל-README** (⚙️ → English, ⚙️ → Demo, רוחב בינוני): להחליף את `docs/screenshots/desktop-office.png` ולעבור בקישור ל-URL מוחלט (`https://raw.githubusercontent.com/asafabram-ship-it/claude-theater/main/docs/screenshots/desktop-office.png`) בשביל PyPI.
+3. **ספריית הארגון:** אם אסף פתח מדיניות פרסום - PublishPlugin שוב (או שהוא מפרסם מהעמוד `https://claude.ai/customize/plugins/plugin_019WJVc7mn4yLKZ1XVQxHupQ`).
+4. **פתוח, לפי בחירת אסף:** אייקוני הסרגל/ההגדרות לסט חד-צבעי (☐/☑, 🔔→♪, ⚙️→⚙︎, 🎬→▶, 🌐→EN/עב); Task 1.5 - מדידת CPU נקייה; Task 4.1 - שיבוטים בדיסק אם נשארו; צורת ה-overscan לפי סטייה מדודה (20+ כרטיסים); פתיחת החלונית מיד עם "סורק…"; סרטון פרומו ב-HyperFrames; תג `v0.5.0` + PyPI רק אם אסף מבקש.
+
+**כללים שאסף קבע (אל תשאל שוב):** עברית פשוטה בלבד בשיחה; קוד וקומיטים באנגלית, `Co-Authored-By: Claude Fable 5.1`; commit + push אחרי כל משימה; בדיקות עם המנוע של הדסקטופ. **אין עריכה תחת `desktop-mod/` בזמן שלאסף יש חלונית פתוחה** - המנוע טוען מחדש את המוד בכל השיחות הפתוחות וטעינה באמצע כתיבה מפילה אותו. **עובדות הציור בדסקטופ (הכרעות 26, 28):** כפתור שומר רק מודגש ועמום; אין ריחוף; `Link` ותמונות לא מצוירים בתוך ה-Client (רק בעץ הפאנל: Markdown עם `data:image/png;base64`; `Image` לא מצויר כלל); עמום לא פועל על אימוג'י. **כלל העברית:** ריצה עברית אחת, אייקון ליד מילה דרך `iconLabel`, בלי תווי כיוון. לכל פעולת gh על הריפו: `GH_TOKEN="$(gh auth token --user asafabram-ship-it)"` (החשבון הפעיל `legalmindcode` אינו שותף). ממצאי Minor נרשמים בלדג'ר.
+
+**תנאי עצירה:** כשהמכסה מתקרבת - `save-documents`, פרומפט המשך חדש בראש הקובץ הזה.
+
+---
+
+## בוצע 2026-10-23 22:00 (שלב ב' ובדיקה חיה 8, המיתוג, 0.5.0 מוזג ל-main - נשארו אימות ההתקנה, צילום ה-README, הספרייה - עברו לפרומפט שמעל) - הפרומפט הקודם, נשמר 2026-10-23 12:33, לתיעוד בלבד
 
 ---
 

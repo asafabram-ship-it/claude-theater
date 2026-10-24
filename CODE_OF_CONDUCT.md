@@ -12,7 +12,7 @@ a welcoming space for everyone.
 ## Reporting
 
 To report unacceptable behavior, contact the maintainer privately at
-`asafabram@gmail.com`. Reports will be handled confidentially, in line with the
+`asaf@legalmind.co.il`. Reports will be handled confidentially, in line with the
 enforcement guidelines of the Contributor Covenant.
 
 [cc]: https://www.contributor-covenant.org

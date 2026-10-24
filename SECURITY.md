@@ -30,7 +30,7 @@ Please **do not** open a public issue for security problems.
 
 1. Preferred: GitHub **private vulnerability reporting** — the
    *Security → Report a vulnerability* button on this repository.
-2. Alternatively, email the maintainer at `asafabram@gmail.com` with the subject
+2. Alternatively, email the maintainer at `asaf@legalmind.co.il` with the subject
    `claude-theater security`.
 
 Please include reproduction steps, the affected version, and your OS / Python

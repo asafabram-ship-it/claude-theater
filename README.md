@@ -11,14 +11,14 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 <!-- Absolute raw URL so the image renders on PyPI too (relative paths don't). -->
-<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/hero.gif" alt="Claude Theater — a live office of Claude Code subagents at work: agents walk in, type, and finish with confetti" width="820">
+<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/screenshots/desktop-pane.png" alt="The Theater pane in the Claude desktop app: a card per conversation, a row per subagent with its persona, model and status, the 5-hour usage meter, and the Legal Mind credit" width="420">
 
-<sub>The demo office (`claude-theater --demo`): conversations and subagents at work, each agent walks in, sits, head-bobs while it types, then confetti on finish. A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
+<sub>The 🎭 Theater pane in the Claude desktop app's Code tab (0.5.0): a card per conversation, a row per subagent, the 5-hour usage meter. A community visualizer **for Claude Code** — not affiliated with Anthropic.</sub>
 
 </div>
 
 Try it now, no Claude Code session required — `pipx run claude-theater --demo`
-spins up the office above with synthetic agents.
+spins up the browser office with synthetic agents.
 
 **Why?** When you fan out a handful of subagents, the terminal becomes a wall of
 interleaved JSON. Claude Theater turns it into a glance — who's working, who's
@@ -49,10 +49,6 @@ edit to the `I18N` table in `claude_theater.py`; the server stays language-neutr
 right inside its **Code tab**. `desktop-mod/` is a Claude Code plugin (a "mod")
 that adds a **🎭 Theater** pane beside your chat — no browser tab, no server, no
 separate install of the Python app.
-
-<!-- Relative on purpose until the PNG is on main; swap in the absolute raw URL (like the images below) so it renders on PyPI too. -->
-
-![Claude Theater in the Claude desktop app](docs/screenshots/desktop-office.png)
 
 - **One framed card per open conversation**, titled by its subject, with **one row
   per subagent**: its persona, its model, what it's doing right now — and ✓ when
@@ -106,28 +102,6 @@ own it reads is its small logo, which ships in the mod's folder. It writes nothi
 outside its own settings (language, sound, pins), makes **no network calls** and
 sends no telemetry. For transcripts too big to read directly it runs local
 read-only helpers (`head`/`tail`/`ps`, or PowerShell and `tasklist` on Windows).
-
-## Screenshots
-
-<!-- Absolute raw URLs so the images render on PyPI too (relative paths don't). -->
-
-**Your real sessions** — every conversation is a room; the conversation itself and
-each subagent is a character at a desk (avatar, name, the tool it's using now, a timer).
-
-<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/sessions-view.png" alt="Claude Theater showing real Claude Code conversations as rooms, one agent thinking and a room of finished subagents" width="820">
-
-<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/real-rooms.png" alt="A real conversation fanning out many subagents, each shown as a character with its status" width="820">
-
-**Bilingual — English ⇄ Hebrew (RTL).** One click flips the whole office; the choice
-is remembered and the layout switches to RTL.
-
-| English | Hebrew (RTL) |
-| :--: | :--: |
-| <img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/phase1-en.png" alt="The demo office in English (left-to-right)" width="410"> | <img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/phase1-he.png" alt="The same office in Hebrew, flipped to right-to-left" width="410"> |
-
-**Try it with no session — `claude-theater --demo`** spins up the office with synthetic agents.
-
-<img src="https://raw.githubusercontent.com/legalmindcode/claude-theater/main/docs/phase0-demo.png" alt="The demo office with synthetic agents working across two rooms" width="820">
 
 ## Quick start
 
